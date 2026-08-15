@@ -10,6 +10,8 @@
 
 Domain層およびApplication層はUIフレームワークに依存しない.NETクラスライブラリとし、.NET MAUIのPresentation層からApplication層をプロジェクト参照して同一プロセス内で呼び出す。Android固有機能はApplication層のインターフェースをInfrastructure層で実装する。
 
+初期リリースはAndroidだけを対象にするため、.NET MAUIアプリプロジェクトのターゲットはAndroidへ限定する。利用しないiOS、Mac CatalystおよびWindows向けターゲットをビルド対象へ含めない。
+
 採用バージョンは実装開始時点の最新安定版とする。調査時点の安定版は.NET MAUI 10だが、サポート終了は2027-05-11であるため、バージョンを固定したまま長期保守せず、サポート終了前に後継安定版へ更新する。
 
 ## 判断理由
@@ -47,6 +49,30 @@ Angularを維持する技術的な経路自体は存在する。しかし、本�
 | オフライン／権限 | 成立 | Releaseマニフェストから`INTERNET`と`ACCESS_NETWORK_STATE`を除き、生成APKの最終マニフェストを検査する |
 
 「成立」は、採用技術に公式な実装経路があり、要件と矛盾しないことを確認した結果を示す。現在のローカル環境には.NET SDK、Android SDK、JDK、Node.jsおよび接続済みAndroid端末がなく、一時SDKの導入も行わなかったため、コンパイル、APK生成および端末上の動作は未実施である。これらを実施済みとは扱わない。
+
+## プロジェクト境界と依存方向
+
+実装時は少なくとも次のプロジェクト境界を設ける。フォルダー名は変更してよいが、依存方向は維持する。
+
+```text
+TkpSalaryCalculator.App (.NET MAUI / Android)
+  ├─ Presentation、MauiProgram、Android固有アダプター
+  ├─> TkpSalaryCalculator.Application
+  └─> TkpSalaryCalculator.Infrastructure
+          └─> TkpSalaryCalculator.Application
+                  └─> TkpSalaryCalculator.Domain
+
+TkpSalaryCalculator.Infrastructure ──> TkpSalaryCalculator.Domain
+TkpSalaryCalculator.Domain ──> 外側のプロジェクトを参照しない
+```
+
+- Domainは給与計算、給与期間、金額、分数および設定スナップショットの規則だけを保持する。
+- Applicationはユースケース、入力の正規化、トランザクション境界の抽象、リポジトリとファイル入出力のインターフェースを保持する。
+- InfrastructureはSQLite、JSONエクスポート／インポートおよび時刻などの外部実装を保持する。
+- AppはXAML、ViewModel、ナビゲーション、依存性注入の構成およびStorage Access FrameworkなどAndroid固有アダプターを保持する。
+- ViewModelはSQL、JSONまたは給与計算式を直接扱わず、Applicationのユースケースだけを呼び出す。
+- DB、ファイル入出力および大規模集計はUIスレッドを占有しない非同期処理とし、画面状態の更新だけをUIスレッドで行う。
+- プロジェクト参照の禁止方向をアーキテクチャテストで検証する。
 
 ## 実装開始時の実行検証
 

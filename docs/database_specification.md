@@ -11,7 +11,7 @@
 
 ## 2. 目的と関連文書
 
-本書は、[要件定義書](requirements.md)および[設定履歴データモデル](setting_history_data_model.md)をSQLiteへ実装するためのテーブル、制約、索引、トランザクションおよびマイグレーション方針を定義する。
+本書は、[要件定義書](requirements.md)、[給与計算仕様書](salary_calculation_specification.md)および[設定履歴データモデル](setting_history_data_model.md)をSQLiteへ実装するためのテーブル、制約、索引、トランザクションおよびマイグレーション方針を定義する。
 
 本書の対象は端末内データベースである。画面状態の一時データ、再生成可能な計算キャッシュ、永続ログおよび給与計算に不要な個人情報は保存しない。
 
@@ -93,7 +93,6 @@ PRAGMA synchronous = FULL;
 | --- | --- |
 | `service_preset` | サービス種類と時間を組み合わせた入力補助 |
 | `basic_shift` | 曜日ごとの基本シフト |
-| `work_template` | 曜日に依存しない定型勤務 |
 | `work_record` | 確定済みの勤務記録 |
 
 ### 4.4 給与期間・休日
@@ -119,10 +118,14 @@ PRAGMA synchronous = FULL;
 | `initial_snapshot_id` | `TEXT` | 可 | 初期設定スナップショット |
 | `export_format_version` | `INTEGER` | 不可 | 1以上 |
 | `last_exported_at_utc` | `TEXT` | 可 | 最後に正常終了したエクスポート日時 |
+| `last_data_changed_at_utc` | `TEXT` | 可 | 設定または勤務データを最後に確定変更した日時 |
+| `backup_reminder_deferred_until_date` | `TEXT` | 可 | バックアップ案内を再表示しないローカル日付 |
 | `created_at_utc` | `TEXT` | 不可 | 作成日時 |
 | `updated_at_utc` | `TEXT` | 不可 | 更新日時 |
 
 `CHECK(id = 1)`を設ける。`initial_setup_status = 'Completed'`の場合、初期スナップショット、締め日および計算に必要な設定が存在することはアプリケーション層でも検証する。
+
+`last_data_changed_at_utc`は設定、基本シフト、月額手当または勤務記録を確定変更するトランザクション内で更新する。エクスポート成功と案内延期だけでは更新しない。バックアップ案内の状態は給与計算の再現に不要な端末設定であるため、エクスポート対象外としてよい。
 
 ### 5.2 `setting_snapshot`
 
@@ -182,6 +185,8 @@ CHECK (
 
 主キーは`snapshot_id, service_id`とする。同じスナップショット内で、前後の空白を除去した表示名が重複しないようアプリケーション層で検証する。
 
+`is_enabled`は新規入力候補への表示可否を表す。既存勤務が参照するサービス行は、無効でも単価選択と計算に使用できる。
+
 ### 5.6 `snapshot_time_category`
 
 | 列 | 型 | NULL | 制約・内容 |
@@ -195,6 +200,8 @@ CHECK (
 | `is_enabled` | `INTEGER` | 不可 | 0または1 |
 
 主キーは`snapshot_id, time_category_id`とする。`snapshot_id, service_id`から`snapshot_service`への複合外部キーを設ける。
+
+`is_enabled`の意味は`snapshot_service`と同じとし、無効な時間区分も既存勤務の計算根拠として使用できる。
 
 ### 5.7 `snapshot_rate`
 
@@ -220,7 +227,7 @@ ON snapshot_rate(snapshot_id, service_id, time_category_id)
 WHERE time_category_id IS NOT NULL;
 ```
 
-時間区分単位とサービス種類単位のどちらを優先するか、任意時間入力へ固定額を適用できるかは給与計算仕様書で確定する。
+時間区分単位の単価をサービス種類単位の単価より優先する。任意時間入力はサービス種類単位の単価を使用し、`rate_type`が`FixedPerRecord`でも適用できる。詳細は[給与計算仕様書](salary_calculation_specification.md)に従う。
 
 ### 5.8 `snapshot_premium`
 
@@ -237,7 +244,7 @@ WHERE time_category_id IS NOT NULL;
 | `uses_national_holidays` | `INTEGER` | 不可 | 0または1 |
 | `is_enabled` | `INTEGER` | 不可 | 0または1 |
 
-主キーは`snapshot_id, premium_id`とする。加算方式に応じ、割合と金額のどちらか一方だけが設定されるCHECKを設ける。開始時刻と終了時刻は両方NULLまたは両方非NULLとする。
+主キーは`snapshot_id, premium_id`とする。加算方式に応じ、割合と金額のどちらか一方だけが設定されるCHECKを設ける。開始時刻と終了時刻は両方NULLまたは両方非NULLとし、両方非NULLの場合は同じ値を許可しない。
 
 子テーブル：
 
@@ -273,7 +280,7 @@ WHERE time_category_id IS NOT NULL;
 | `display_name` | `TEXT` | 不可 | 例：身体1 |
 | `service_id` | `TEXT` | 不可 | サービス種類の論理ID |
 | `time_category_id` | `TEXT` | 可 | 使用する時間区分 |
-| `default_work_minutes` | `INTEGER` | 不可 | 1以上 |
+| `default_work_minutes` | `INTEGER` | 不可 | 1～1440 |
 | `display_order` | `INTEGER` | 不可 | 0以上 |
 | `is_enabled` | `INTEGER` | 不可 | 0または1 |
 | `created_at_utc` | `TEXT` | 不可 | 作成日時 |
@@ -291,7 +298,7 @@ WHERE time_category_id IS NOT NULL;
 | `service_id` | `TEXT` | 不可 | 具体的なサービス種類 |
 | `time_category_id` | `TEXT` | 可 | 具体的な時間区分 |
 | `input_mode` | `TEXT` | 不可 | `TimeRange`または`Duration` |
-| `work_minutes` | `INTEGER` | 不可 | 1以上 |
+| `work_minutes` | `INTEGER` | 不可 | 1～1440 |
 | `start_time_minutes` | `INTEGER` | 可 | 0～1439 |
 | `end_time_minutes` | `INTEGER` | 可 | 0～1439 |
 | `display_order` | `INTEGER` | 不可 | 0以上 |
@@ -301,27 +308,7 @@ WHERE time_category_id IS NOT NULL;
 
 基本シフトは現在の内容だけを保持する。変更履歴や適用開始日は保持しない。
 
-### 5.12 `work_template`
-
-曜日に依存しない定型勤務を保持する。
-
-| 列 | 型 | NULL | 制約・内容 |
-| --- | --- | --- | --- |
-| `id` | `TEXT` | 不可 | 主キー |
-| `display_name` | `TEXT` | 不可 | 定型名 |
-| `service_preset_id` | `TEXT` | 可 | 入力元サービス設定 |
-| `service_id` | `TEXT` | 不可 | サービス種類 |
-| `time_category_id` | `TEXT` | 可 | 時間区分 |
-| `input_mode` | `TEXT` | 不可 | `TimeRange`または`Duration` |
-| `work_minutes` | `INTEGER` | 不可 | 1以上 |
-| `start_time_minutes` | `INTEGER` | 可 | 0～1439 |
-| `end_time_minutes` | `INTEGER` | 可 | 0～1439 |
-| `display_order` | `INTEGER` | 不可 | 0以上 |
-| `is_enabled` | `INTEGER` | 不可 | 0または1 |
-| `created_at_utc` | `TEXT` | 不可 | 作成日時 |
-| `updated_at_utc` | `TEXT` | 不可 | 更新日時 |
-
-### 5.13 `work_record`
+### 5.12 `work_record`
 
 | 列 | 型 | NULL | 制約・内容 |
 | --- | --- | --- | --- |
@@ -330,7 +317,7 @@ WHERE time_category_id IS NOT NULL;
 | `service_id` | `TEXT` | 不可 | サービス種類の論理ID |
 | `time_category_id` | `TEXT` | 可 | 時間区分の論理ID |
 | `input_mode` | `TEXT` | 不可 | `TimeRange`または`Duration` |
-| `work_minutes` | `INTEGER` | 不可 | 1以上 |
+| `work_minutes` | `INTEGER` | 不可 | 1～1440 |
 | `start_time_minutes` | `INTEGER` | 可 | 0～1439 |
 | `end_time_minutes` | `INTEGER` | 可 | 0～1439 |
 | `source_service_preset_id` | `TEXT` | 可 | 入力補助として使用したサービス設定 |
@@ -341,9 +328,9 @@ WHERE time_category_id IS NOT NULL;
 
 勤務記録には単価、割増額、件数加算額および設定スナップショットIDを保存しない。
 
-`input_mode = 'TimeRange'`の場合は開始・終了時刻を必須とする。終了時刻が開始時刻以前の場合は翌日とし、正規化した`work_minutes`と時刻差が一致することをアプリケーション層で検証する。
+`input_mode = 'TimeRange'`の場合は開始・終了時刻を必須とする。終了時刻が開始時刻より後の場合は同日、以前の場合は翌日とし、正規化した`work_minutes`と時刻差が一致することをアプリケーション層で検証する。開始・終了時刻が同じ場合は1440分とする。
 
-`input_mode = 'Duration'`の場合も、時刻条件を持つ割増を適用するには開始・終了時刻を保存する。時刻がない場合は、時刻条件を持つ割増を推測で適用しない。
+`input_mode = 'Duration'`で、対象サービスに適用可能な時刻条件付き割増がある場合は開始時刻を必須とし、終了時刻を開始時刻と`work_minutes`から算出して保存する。利用者へ終了時刻を重複入力させない。時刻条件付き割増がない場合は開始・終了時刻をNULLにできる。
 
 同じ基本シフトを同じ日へ二重反映しないため、次の部分一意索引を設ける。
 
@@ -355,7 +342,7 @@ WHERE source_basic_shift_id IS NOT NULL;
 
 類似する手入力記録との重複はDB制約で禁止せず、反映前プレビューで警告する。
 
-### 5.14 `closing_rule_history`
+### 5.13 `closing_rule_history`
 
 | 列 | 型 | NULL | 制約・内容 |
 | --- | --- | --- | --- |
@@ -369,7 +356,7 @@ WHERE source_basic_shift_id IS NOT NULL;
 
 給与期間自体はテーブルへ重複保存せず、締め日履歴から決定的に算出する。給与期間キーは終了日が属する年月とする。
 
-### 5.15 `monthly_allowance`
+### 5.14 `monthly_allowance`
 
 | 列 | 型 | NULL | 制約・内容 |
 | --- | --- | --- | --- |
@@ -382,7 +369,7 @@ WHERE source_basic_shift_id IS NOT NULL;
 
 同じ給与期間へ複数登録できる。勤務記録または日単位へ配賦しない。
 
-### 5.16 祝日テーブル
+### 5.15 祝日テーブル
 
 #### `holiday_calendar_version`
 
@@ -414,6 +401,10 @@ WHERE source_basic_shift_id IS NOT NULL;
 | `work_record` → 論理ID | `RESTRICT` | 勤務内容の消失防止 |
 | `work_record.source_basic_shift_id` | 外部キーにせず由来IDを保持 | 削除後も二重反映判定を維持する |
 | `work_record.source_service_preset_id` | `SET NULL` | 入力補助は計算根拠ではない |
+| `work_record.source_work_record_id` | 外部キーにせず由来IDを保持 | 複製元削除後も由来を識別できる |
+| `service_preset` → サービス・時間区分論理ID | `RESTRICT` | 使用中の入力候補の参照切れ防止 |
+| `basic_shift` → サービス・時間区分論理ID | `RESTRICT` | 基本シフトの参照切れ防止 |
+| `basic_shift.service_preset_id` | `SET NULL` | 具体的な勤務内容は基本シフト側に保持する |
 | 祝日データ版 → 祝日日付 | `CASCADE` | 未使用版の保守削除用 |
 
 基本シフト削除後も二重反映判定を維持するため、`source_basic_shift_id`は論理的な由来IDとして残す。基本シフトの表示内容が必要な場合は、勤務記録が保持する具体的なサービス、時間区分、分数および時刻から表示する。
@@ -431,7 +422,6 @@ WHERE source_basic_shift_id IS NOT NULL;
 | `ix_snapshot_count_bonus_snapshot` | `snapshot_count_bonus(snapshot_id, is_enabled)` | 件数加算取得 |
 | `ix_service_preset_order` | `service_preset(is_enabled, display_order)` | 入力候補 |
 | `ix_basic_shift_weekday` | `basic_shift(weekday, is_enabled, display_order)` | 曜日別反映 |
-| `ix_work_template_order` | `work_template(is_enabled, display_order)` | 定型候補 |
 | `ix_work_record_date` | `work_record(work_date)` | 日別・期間集計 |
 | `ix_work_record_service_date` | `work_record(service_id, work_date)` | 対象サービス集計 |
 | `ux_work_record_shift_date` | `work_record(source_basic_shift_id, work_date)` | 基本シフト二重反映防止 |
@@ -439,14 +429,14 @@ WHERE source_basic_shift_id IS NOT NULL;
 | `ix_monthly_allowance_period` | `monthly_allowance(payroll_period_year_month)` | 給与期間集計 |
 | `ix_holiday_date_lookup` | `holiday_date(holiday_calendar_version_id, holiday_date)` | 祝日判定 |
 
-22万件の基準データで実行計画と応答時間を確認し、使用されない索引は追加しない。
+約21.9万件の基準データで実行計画と応答時間を確認し、使用されない索引は追加しない。
 
 ## 8. 主要トランザクション
 
 ### 8.1 対象年月の設定変更
 
 1. `BEGIN IMMEDIATE`で書き込みトランザクションを開始する。
-2. 対象年月の`setting_month`を取得し、存在しない場合は直近月または初期設定を参照して作成する。
+2. 対象年月の`setting_month`を取得する。存在しない場合は直近月または初期設定を引き継ぎ、直近スナップショットの祝日データ版が古いときはスナップショットを複製して、端末内の検証済みデータのうち`source_reference_date`が最も新しい版へ更新してから作成する。
 3. 参照中スナップショットとすべての子行を新しいIDへ複製する。
 4. 変更を複製先へ反映する。
 5. 単価の重複、外部キー、必須値および対象年月の計算可能性を検証する。
@@ -464,7 +454,7 @@ WHERE source_basic_shift_id IS NOT NULL;
 5. キャッシュを採用している場合は影響範囲を無効化する。
 6. コミットする。
 
-計算設定が不足している勤務記録を保存可能とするかは画面・給与計算仕様と合わせる。初期実装では、入力自体が正しくても計算設定だけが不足する場合は警告付き保存を許可し、未計算として表示する方針を推奨する。
+入力自体が正しくても計算設定だけが不足する場合は、警告付き保存を許可して未計算として表示する。日付、サービス、勤務分数または時刻など入力自体が不正な場合は保存しない。詳細は[給与計算仕様書](salary_calculation_specification.md)の保存可否に従う。
 
 ### 8.3 基本シフトの反映
 
@@ -476,12 +466,15 @@ WHERE source_basic_shift_id IS NOT NULL;
 
 ### 8.4 インポート
 
-1. ファイルをデータベース外で読み取り、形式、版、件数、値および参照整合性を検証する。
+1. ファイルをデータベース外で読み取り、形式、版、件数、値、初期スナップショットIDおよび参照整合性を検証する。大容量ファイルをオブジェクトグラフとして全件メモリへ展開しない。
 2. 利用者の確認後に書き込みトランザクションを開始する。
 3. インポート対象テーブルを外部キー順序に従って置換する。
 4. `PRAGMA foreign_key_check`と業務整合性検証を実行する。
-5. 成功した場合だけコミットする。
-6. 失敗時はロールバックし、既存データを維持する。
+5. エクスポートに含まれる初期スナップショットIDを`app_metadata.initial_snapshot_id`へ設定して初期設定状態を`Completed`とし、最終データ変更日時と最終エクスポート日時をインポート完了時刻へ設定する。バックアップ案内の延期状態は引き継がない。
+6. 成功した場合だけコミットする。
+7. 失敗時はロールバックし、既存データを維持する。
+
+Androidの選択元ストリームを再読込できない場合は、アプリ専用キャッシュへ一時コピーしてからストリーミング検証する。一時ファイルは自動バックアップ対象外とし、取消、成功、失敗および次回起動時の残存確認で削除する。確認前に既存データベースは変更しない。
 
 ## 9. 設定スナップショットの不変条件
 
@@ -529,20 +522,27 @@ Start(period_key) <= work_date <= End(period_key)
   "createdAtUtc": "2026-08-15T00:00:00Z",
   "appVersion": "1.0.0",
   "data": {
+    "initialSnapshotId": "00000000-0000-0000-0000-000000000000",
     "settingMonths": [],
     "settingSnapshots": [],
     "closingRuleHistory": [],
     "monthlyAllowances": [],
+    "serviceDefinitions": [],
+    "timeCategoryDefinitions": [],
+    "premiumDefinitions": [],
+    "countBonusDefinitions": [],
     "servicePresets": [],
     "basicShifts": [],
-    "workTemplates": [],
     "workRecords": [],
-    "holidayCalendarVersions": []
+    "holidayCalendarVersions": [],
+    "holidayDates": []
   }
 }
 ```
 
-エクスポートには参照中のスナップショットだけを含めてよい。内部のSQLite行番号や再生成可能なキャッシュは含めない。将来フィールドを追加した場合に旧版で安全に拒否または無視できるよう、形式版ごとの互換規則を定義する。
+`settingSnapshots`の各要素には、サービス種類、時間区分、単価、割増とその条件、件数加算とその条件を子要素として含める。エクスポートには初期スナップショット、年月から参照中のスナップショット、参照される論理ID、およびそれらが参照する祝日データ版に属するすべての祝日日付を含める。内部のSQLite行番号、バックアップ案内状態および再生成可能なキャッシュは含めない。将来フィールドを追加した場合に旧版で安全に拒否または無視できるよう、形式版ごとの互換規則を定義する。
+
+エクスポートとインポートは逐次読み書きし、約21.9万件の勤務記録を全件メモリへ保持しない。
 
 ## 12. マイグレーション
 
@@ -560,7 +560,7 @@ Start(period_key) <= work_date <= End(period_key)
 - 給与期間集計は期間開始日と終了日の範囲検索を使用する。
 - 勤務記録、設定スナップショットおよび祝日データを必要な単位でまとめて読み込み、勤務記録ごとのN+1クエリを避ける。
 - 初期リリースでは日別合計と給与期間合計を正本として保存しない。
-- 22万件の勤務記録を持つデータベースで、保存後再計算、カレンダー表示および給与期間集計を代表端末上で2秒以内に完了させる。
+- 約21.9万件の勤務記録を持つデータベースで、保存後再計算、カレンダー表示および給与期間集計を代表端末上で2秒以内に完了させる。
 - 性能条件を満たさないことを計測で確認した場合だけ、再構築可能な集計キャッシュを追加する。
 
 ## 14. セキュリティ・プライバシー
@@ -576,9 +576,5 @@ Start(period_key) <= work_date <= End(period_key)
 ## 15. 実装前に確定する事項
 
 - 使用するSQLiteアクセスライブラリとトランザクションAPI
-- 任意時間入力に対する単価行の選択規則
-- 時刻入力と勤務時間入力を併用した場合の整合性規則
-- 設定不備がある勤務記録の保存を許可する最終方針
-- 祝日データをエクスポートへ全件含めるか、版と対象日だけを含めるか
 - アプリ固有エクスポートファイルの拡張子
 - マイグレーション失敗時の利用者向け復旧導線
