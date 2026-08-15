@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\TkpSalaryCalculator.Application\TkpSalaryCalculator.Application.csproj" />
+    <ProjectReference Include="..\TkpSalaryCalculator.Domain\TkpSalaryCalculator.Domain.csproj" />
+  </ItemGroup>
+</Project>
