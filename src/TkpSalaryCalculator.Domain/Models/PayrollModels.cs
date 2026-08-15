@@ -2,15 +2,15 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Domain.Models;
 
-/// <summary>Contains a normalized, persisted work record used by the pure calculator.</summary>
-/// <param name="Id">The work record identifier.</param>
-/// <param name="WorkDate">The local calendar date on which work began.</param>
-/// <param name="ServiceId">The selected service.</param>
-/// <param name="TimeCategoryId">The selected time category, or <see langword="null"/> for arbitrary-duration input.</param>
-/// <param name="InputMode">The input mode used to normalize the interval.</param>
-/// <param name="WorkMinutes">The normalized duration.</param>
-/// <param name="StartTime">The local start time when required by the input mode or premiums.</param>
-/// <param name="EndTime">The normalized local end time when required; an earlier value means the following day.</param>
+/// <summary>副作用のない計算処理で使用する、正規化された保存済み勤務記録を保持します。</summary>
+/// <param name="Id">勤務記録識別子。</param>
+/// <param name="WorkDate">勤務を開始した現地暦日。</param>
+/// <param name="ServiceId">選択されたサービス。</param>
+/// <param name="TimeCategoryId">選択された時間区分。任意時間入力の場合は <see langword="null"/>。</param>
+/// <param name="InputMode">勤務時間の正規化に使用した入力モード。</param>
+/// <param name="WorkMinutes">正規化済みの勤務時間。</param>
+/// <param name="StartTime">入力モードまたは割増条件で必要となる現地開始時刻。</param>
+/// <param name="EndTime">必要な場合の正規化済み現地終了時刻。開始時刻より前の値は翌日を表します。</param>
 public sealed record WorkRecord(
     WorkRecordId Id,
     DateOnly WorkDate,
@@ -21,20 +21,20 @@ public sealed record WorkRecord(
     MinuteOfDay? StartTime,
     MinuteOfDay? EndTime);
 
-/// <summary>Describes a service as it existed in one immutable snapshot.</summary>
-/// <param name="Id">The stable logical identifier.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="DisplayOrder">The display order.</param>
-/// <param name="IsEnabled">Whether the service is offered for new input in the snapshot month.</param>
+/// <summary>不変スナップショット内に存在するサービスを表します。</summary>
+/// <param name="Id">安定した論理識別子。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="DisplayOrder">表示順。</param>
+/// <param name="IsEnabled">スナップショット対象月の新規入力でサービスを提示するかどうか。</param>
 public sealed record SnapshotService(ServiceId Id, string DisplayName, DisplayOrder DisplayOrder, bool IsEnabled);
 
-/// <summary>Describes a time category as it existed in one immutable snapshot.</summary>
-/// <param name="Id">The stable logical identifier.</param>
-/// <param name="ServiceId">The owning service.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="StandardMinutes">The standard duration.</param>
-/// <param name="DisplayOrder">The display order.</param>
-/// <param name="IsEnabled">Whether the category is offered for new input in the snapshot month.</param>
+/// <summary>不変スナップショット内に存在する時間区分を表します。</summary>
+/// <param name="Id">安定した論理識別子。</param>
+/// <param name="ServiceId">所属するサービス。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="StandardMinutes">標準勤務時間。</param>
+/// <param name="DisplayOrder">表示順。</param>
+/// <param name="IsEnabled">スナップショット対象月の新規入力で時間区分を提示するかどうか。</param>
 public sealed record SnapshotTimeCategory(
     TimeCategoryId Id,
     ServiceId ServiceId,
@@ -43,30 +43,30 @@ public sealed record SnapshotTimeCategory(
     DisplayOrder DisplayOrder,
     bool IsEnabled);
 
-/// <summary>Defines one base rate in an immutable snapshot.</summary>
-/// <param name="ServiceId">The target service.</param>
-/// <param name="TimeCategoryId">The target category, or <see langword="null"/> for a service-wide rate.</param>
-/// <param name="RateType">The calculation method.</param>
-/// <param name="Amount">The configured whole-yen amount.</param>
+/// <summary>不変スナップショット内の基本単価を定義します。</summary>
+/// <param name="ServiceId">対象サービス。</param>
+/// <param name="TimeCategoryId">対象時間区分。サービス全体の単価の場合は <see langword="null"/>。</param>
+/// <param name="RateType">計算方法。</param>
+/// <param name="Amount">設定された円単位の金額。</param>
 public sealed record SnapshotRate(
     ServiceId ServiceId,
     TimeCategoryId? TimeCategoryId,
     RateType RateType,
     YenAmount Amount);
 
-/// <summary>Defines one premium rule in an immutable snapshot.</summary>
-/// <param name="Id">The stable logical identifier.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="CalculationType">The calculation method.</param>
-/// <param name="Percentage">The percentage for percentage rules.</param>
-/// <param name="Amount">The amount for fixed-amount rules.</param>
-/// <param name="StartTime">The inclusive daily start time, when time-limited.</param>
-/// <param name="EndTime">The exclusive daily end time, when time-limited.</param>
-/// <param name="UsesNationalHolidays">Whether national holidays are a date condition.</param>
-/// <param name="Weekdays">The matching weekdays; an empty set contributes no weekday condition.</param>
-/// <param name="Dates">The matching individual dates; an empty set contributes no individual-date condition.</param>
-/// <param name="ServiceIds">The target services; an empty set means all services.</param>
-/// <param name="IsEnabled">Whether the rule applies in this snapshot.</param>
+/// <summary>不変スナップショット内の割増ルールを定義します。</summary>
+/// <param name="Id">安定した論理識別子。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="CalculationType">計算方法。</param>
+/// <param name="Percentage">割合ルールに使用する割合。</param>
+/// <param name="Amount">固定額ルールに使用する金額。</param>
+/// <param name="StartTime">時間制限がある場合の日単位の開始時刻。この時刻を含みます。</param>
+/// <param name="EndTime">時間制限がある場合の日単位の終了時刻。この時刻を含みません。</param>
+/// <param name="UsesNationalHolidays">国民の祝日を日付条件とするかどうか。</param>
+/// <param name="Weekdays">一致対象の曜日。空の集合の場合、曜日条件を追加しません。</param>
+/// <param name="Dates">一致対象の個別日付。空の集合の場合、個別日付条件を追加しません。</param>
+/// <param name="ServiceIds">対象サービス。空の集合の場合は全サービスを表します。</param>
+/// <param name="IsEnabled">このスナップショットでルールを適用するかどうか。</param>
 public sealed record SnapshotPremium(
     PremiumId Id,
     string DisplayName,
@@ -81,12 +81,12 @@ public sealed record SnapshotPremium(
     IReadOnlySet<ServiceId> ServiceIds,
     bool IsEnabled);
 
-/// <summary>Defines one per-record count bonus in an immutable snapshot.</summary>
-/// <param name="Id">The stable logical identifier.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="Amount">The whole-yen amount paid once per matching record.</param>
-/// <param name="ServiceIds">The target services; an empty set means all services.</param>
-/// <param name="IsEnabled">Whether the rule applies in this snapshot.</param>
+/// <summary>不変スナップショット内の、記録単位の件数加算を定義します。</summary>
+/// <param name="Id">安定した論理識別子。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="Amount">該当する記録 1 件につき 1 回支給する円単位の金額。</param>
+/// <param name="ServiceIds">対象サービス。空の集合の場合は全サービスを表します。</param>
+/// <param name="IsEnabled">このスナップショットでルールを適用するかどうか。</param>
 public sealed record SnapshotCountBonus(
     CountBonusId Id,
     string DisplayName,
@@ -94,17 +94,17 @@ public sealed record SnapshotCountBonus(
     IReadOnlySet<ServiceId> ServiceIds,
     bool IsEnabled);
 
-/// <summary>Contains all salary settings for one immutable snapshot.</summary>
-/// <param name="Id">The snapshot identifier.</param>
-/// <param name="BasedOnId">The lineage source, when any; it is not consulted during calculation.</param>
-/// <param name="HolidayCalendarVersionId">The holiday data version fixed to this snapshot.</param>
-/// <param name="SchemaVersion">The snapshot schema version.</param>
-/// <param name="CreatedAtUtc">The UTC instant at which the snapshot was created.</param>
-/// <param name="Services">The complete service set.</param>
-/// <param name="TimeCategories">The complete time-category set.</param>
-/// <param name="Rates">The complete rate set.</param>
-/// <param name="Premiums">The complete premium set.</param>
-/// <param name="CountBonuses">The complete count-bonus set.</param>
+/// <summary>1 件の不変スナップショットに含まれる給与設定をすべて保持します。</summary>
+/// <param name="Id">スナップショット識別子。</param>
+/// <param name="BasedOnId">派生元。存在しない場合があり、計算時には参照しません。</param>
+/// <param name="HolidayCalendarVersionId">このスナップショットに固定された祝日データのバージョン。</param>
+/// <param name="SchemaVersion">スナップショットのスキーマバージョン。</param>
+/// <param name="CreatedAtUtc">スナップショットを作成した UTC 日時。</param>
+/// <param name="Services">完全なサービス集合。</param>
+/// <param name="TimeCategories">完全な時間区分集合。</param>
+/// <param name="Rates">完全な単価集合。</param>
+/// <param name="Premiums">完全な割増集合。</param>
+/// <param name="CountBonuses">完全な件数加算集合。</param>
 public sealed record SettingSnapshot(
     SettingSnapshotId Id,
     SettingSnapshotId? BasedOnId,
@@ -117,30 +117,30 @@ public sealed record SettingSnapshot(
     IReadOnlyList<SnapshotPremium> Premiums,
     IReadOnlyList<SnapshotCountBonus> CountBonuses);
 
-/// <summary>Contains the fixed holiday dates used by a setting snapshot.</summary>
-/// <param name="VersionId">The holiday calendar version.</param>
-/// <param name="Holidays">The holidays and their display names.</param>
+/// <summary>設定スナップショットで使用する固定済みの祝日を保持します。</summary>
+/// <param name="VersionId">祝日カレンダーのバージョン。</param>
+/// <param name="Holidays">祝日とその表示名。</param>
 public sealed record HolidayCalendar(
     HolidayCalendarVersionId VersionId,
     IReadOnlyDictionary<DateOnly, string> Holidays);
 
-/// <summary>Defines a closing rule beginning with a payroll-period month.</summary>
-/// <param name="Id">The history identifier.</param>
-/// <param name="EffectiveFrom">The first payroll period key to which this rule applies.</param>
-/// <param name="ClosingDay">The requested closing day, or <see langword="null"/> for month end.</param>
+/// <summary>指定した給与期間の月から始まる締め日ルールを定義します。</summary>
+/// <param name="Id">履歴識別子。</param>
+/// <param name="EffectiveFrom">このルールが適用される最初の給与期間キー。</param>
+/// <param name="ClosingDay">指定された締め日。月末の場合は <see langword="null"/>。</param>
 public sealed record ClosingRule(ClosingRuleId Id, PayrollPeriodKey EffectiveFrom, int? ClosingDay);
 
-/// <summary>Represents the inclusive dates of one payroll period.</summary>
-/// <param name="Key">The period key based on its end month.</param>
-/// <param name="StartDate">The inclusive start date.</param>
-/// <param name="EndDate">The inclusive end date.</param>
+/// <summary>両端の日付を含む 1 給与期間を表します。</summary>
+/// <param name="Key">終了月に基づく期間キー。</param>
+/// <param name="StartDate">期間に含まれる開始日。</param>
+/// <param name="EndDate">期間に含まれる終了日。</param>
 public sealed record PayrollPeriod(PayrollPeriodKey Key, DateOnly StartDate, DateOnly EndDate);
 
-/// <summary>Defines a monthly allowance applied directly to one payroll period.</summary>
-/// <param name="Id">The allowance identifier.</param>
-/// <param name="PayrollPeriodKey">The target payroll period.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="Amount">The whole-yen amount.</param>
+/// <summary>1 給与期間に直接適用する月額手当を定義します。</summary>
+/// <param name="Id">手当識別子。</param>
+/// <param name="PayrollPeriodKey">対象の給与期間。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="Amount">円単位の金額。</param>
 public sealed record MonthlyAllowance(
     MonthlyAllowanceId Id,
     PayrollPeriodKey PayrollPeriodKey,

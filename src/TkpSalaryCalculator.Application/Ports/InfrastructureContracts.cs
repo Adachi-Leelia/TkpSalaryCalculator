@@ -2,35 +2,35 @@ using TkpSalaryCalculator.Application.Contracts;
 
 namespace TkpSalaryCalculator.Application.Ports;
 
-/// <summary>Defines an atomic application transaction boundary.</summary>
+/// <summary>アプリケーションの原子的なトランザクション境界を定義します。</summary>
 public interface ITransactionRunner
 {
-    /// <summary>Runs all operations in one transaction and rolls back if the callback fails or is cancelled.</summary>
+    /// <summary>すべての処理を 1 つのトランザクションで実行し、コールバックの失敗または取り消し時にロールバックします。</summary>
     Task ExecuteAsync(
         Func<CancellationToken, Task> operation,
         CancellationToken cancellationToken);
 
-    /// <summary>Runs all operations in one transaction and returns the callback result after commit.</summary>
+    /// <summary>すべての処理を 1 つのトランザクションで実行し、コミット後にコールバックの結果を返します。</summary>
     Task<TResult> ExecuteAsync<TResult>(
         Func<CancellationToken, Task<TResult>> operation,
         CancellationToken cancellationToken);
 }
 
-/// <summary>Supplies UTC instants to Application without relying directly on the system clock.</summary>
+/// <summary>システム時計に直接依存せず、アプリケーション層へ UTC 日時を提供します。</summary>
 public interface IUtcClock
 {
-    /// <summary>Gets the current UTC instant.</summary>
+    /// <summary>現在の UTC 日時を取得します。</summary>
     DateTimeOffset UtcNow { get; }
 }
 
-/// <summary>Serializes logical export records as a single UTF-8 JSON document incrementally.</summary>
+/// <summary>論理エクスポートレコードを単一の UTF-8 JSON 文書へ逐次シリアル化します。</summary>
 public interface IJsonExportStream
 {
-    /// <summary>Writes the header and records without materializing the full sequence.</summary>
-    /// <param name="destination">A writable stream owned by the caller. The implementation must leave it open and must not dispose it.</param>
-    /// <param name="header">The export header.</param>
-    /// <param name="records">The asynchronously produced logical records.</param>
-    /// <param name="cancellationToken">Stops enumeration and stream I/O.</param>
+    /// <summary>シーケンス全体を実体化せず、ヘッダーとレコードを書き込みます。</summary>
+    /// <param name="destination">呼び出し元が所有する書き込み可能なストリーム。実装側で破棄せず、開いたままにする必要があります。</param>
+    /// <param name="header">エクスポートヘッダー。</param>
+    /// <param name="records">非同期に生成される論理レコード。</param>
+    /// <param name="cancellationToken">列挙処理とストリーム入出力を中止します。</param>
     Task WriteAsync(
         Stream destination,
         ExportDocumentHeader header,
@@ -38,51 +38,51 @@ public interface IJsonExportStream
         CancellationToken cancellationToken);
 }
 
-/// <summary>Parses one UTF-8 JSON export document incrementally.</summary>
+/// <summary>1 件の UTF-8 JSON エクスポート文書を逐次解析します。</summary>
 public interface IJsonImportStream
 {
-    /// <summary>Yields logical records in document order without creating a full object graph.</summary>
-    /// <param name="source">A readable stream owned by the caller. The implementation must leave it open, must not dispose it, and must not require seeking.</param>
-    /// <param name="cancellationToken">Stops parsing and stream I/O.</param>
-    /// <returns>A sequence whose metadata record precedes data-section records.</returns>
+    /// <summary>完全なオブジェクトグラフを作成せず、文書内の順序で論理レコードを返します。</summary>
+    /// <param name="source">呼び出し元が所有する読み取り可能なストリーム。実装側で破棄せず、開いたままにし、シークを要求しない必要があります。</param>
+    /// <param name="cancellationToken">解析処理とストリーム入出力を中止します。</param>
+    /// <returns>データセクションのレコードより先にメタデータレコードを返すシーケンス。</returns>
     IAsyncEnumerable<DataTransferRecord> ReadAsync(
         Stream source,
         CancellationToken cancellationToken);
 }
 
-/// <summary>Streams the live logical data set in export order.</summary>
+/// <summary>本番の論理データセットをエクスポート順でストリーミングします。</summary>
 public interface IExportDataSource
 {
-    /// <summary>Yields only data required to reproduce settings, shifts, work, allowances, and holiday results.</summary>
+    /// <summary>設定、シフト、勤務、手当、および祝日結果の再現に必要なデータだけを返します。</summary>
     IAsyncEnumerable<DataTransferRecord> StreamAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>Stages and validates imported records separately from the live data set.</summary>
+/// <summary>インポートしたレコードを本番データセットから分離して準備および検証します。</summary>
 public interface IImportStagingRepository
 {
-    /// <summary>Creates an empty staging area.</summary>
+    /// <summary>空の準備領域を作成します。</summary>
     Task<PreparedImportId> CreateAsync(CancellationToken cancellationToken);
 
-    /// <summary>Appends a bounded batch without requiring all import records in memory.</summary>
+    /// <summary>すべてのインポートレコードをメモリへ読み込まず、上限付きのバッチを追加します。</summary>
     Task AppendBatchAsync(
         PreparedImportId preparedImportId,
         IReadOnlyList<DataTransferRecord> records,
         CancellationToken cancellationToken);
 
-    /// <summary>Validates counts, values, versions, uniqueness, and referential integrity of the complete staging area.</summary>
+    /// <summary>準備領域全体の件数、値、バージョン、一意性、および参照整合性を検証します。</summary>
     Task<ImportPreviewDto> ValidateAsync(
         PreparedImportId preparedImportId,
         CancellationToken cancellationToken);
 
-    /// <summary>Atomically replaces all live data from a validated staging area.</summary>
+    /// <summary>検証済みの準備領域を使用して、本番データをすべて原子的に置換します。</summary>
     Task ReplaceLiveDataAsync(
         PreparedImportId preparedImportId,
         DateTimeOffset importedAtUtc,
         CancellationToken cancellationToken);
 
-    /// <summary>Deletes a staging area and any temporary files.</summary>
+    /// <summary>準備領域とすべての一時ファイルを削除します。</summary>
     Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken);
 
-    /// <summary>Deletes abandoned staging data left by an interrupted earlier run.</summary>
+    /// <summary>以前の処理中断によって残された未使用の準備データを削除します。</summary>
     Task DiscardAbandonedAsync(CancellationToken cancellationToken);
 }

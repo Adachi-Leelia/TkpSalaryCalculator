@@ -2,18 +2,18 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Application.Contracts;
 
-/// <summary>Describes a reusable basic shift.</summary>
-/// <param name="Id">The shift identifier.</param>
-/// <param name="Weekday">The target weekday.</param>
-/// <param name="ServicePresetId">The source preset, when any.</param>
-/// <param name="ServiceId">The concrete service copied into a work record.</param>
-/// <param name="TimeCategoryId">The concrete time category, when any.</param>
-/// <param name="InputMode">The input mode.</param>
-/// <param name="WorkMinutes">The normalized duration.</param>
-/// <param name="StartTime">The start time when present.</param>
-/// <param name="EndTime">The end time when present.</param>
-/// <param name="DisplayOrder">The order within the weekday.</param>
-/// <param name="IsEnabled">Whether the shift is available for new application.</param>
+/// <summary>再利用可能な基本シフトを表します。</summary>
+/// <param name="Id">シフト識別子。</param>
+/// <param name="Weekday">対象の曜日。</param>
+/// <param name="ServicePresetId">元のプリセット。存在しない場合があります。</param>
+/// <param name="ServiceId">勤務記録へコピーする具体的なサービス。</param>
+/// <param name="TimeCategoryId">具体的な時間区分。存在しない場合があります。</param>
+/// <param name="InputMode">入力モード。</param>
+/// <param name="WorkMinutes">正規化済みの勤務時間。</param>
+/// <param name="StartTime">開始時刻。存在しない場合があります。</param>
+/// <param name="EndTime">終了時刻。存在しない場合があります。</param>
+/// <param name="DisplayOrder">曜日内での表示順。</param>
+/// <param name="IsEnabled">新規反映に使用できるシフトかどうか。</param>
 public sealed record BasicShiftDto(
     BasicShiftId Id,
     DayOfWeek Weekday,
@@ -27,18 +27,18 @@ public sealed record BasicShiftDto(
     DisplayOrder DisplayOrder,
     bool IsEnabled);
 
-/// <summary>Contains input for creating or replacing a basic shift.</summary>
-/// <param name="Id">The existing identifier, or <see langword="null"/> for a new shift.</param>
-/// <param name="Weekday">The target weekday.</param>
-/// <param name="ServicePresetId">The source preset, when any.</param>
-/// <param name="ServiceId">The concrete service.</param>
-/// <param name="TimeCategoryId">The concrete time category, when any.</param>
-/// <param name="InputMode">The input mode.</param>
-/// <param name="WorkMinutes">The entered duration for <see cref="WorkInputMode.Duration"/>; <see langword="null"/> for <see cref="WorkInputMode.TimeRange"/>, where Application derives it from start and end times.</param>
-/// <param name="StartTime">The start time when present.</param>
-/// <param name="EndTime">The end time when present.</param>
-/// <param name="DisplayOrder">The order within the weekday.</param>
-/// <param name="IsEnabled">Whether the shift is available for application.</param>
+/// <summary>基本シフトを作成または置換するための入力内容を保持します。</summary>
+/// <param name="Id">既存の識別子。新規シフトの場合は <see langword="null"/>。</param>
+/// <param name="Weekday">対象の曜日。</param>
+/// <param name="ServicePresetId">元のプリセット。存在しない場合があります。</param>
+/// <param name="ServiceId">具体的なサービス。</param>
+/// <param name="TimeCategoryId">具体的な時間区分。存在しない場合があります。</param>
+/// <param name="InputMode">入力モード。</param>
+/// <param name="WorkMinutes"><see cref="WorkInputMode.Duration"/> の場合に入力された勤務時間。<see cref="WorkInputMode.TimeRange"/> の場合は <see langword="null"/> となり、アプリケーション層が開始時刻と終了時刻から算出します。</param>
+/// <param name="StartTime">開始時刻。存在しない場合があります。</param>
+/// <param name="EndTime">終了時刻。存在しない場合があります。</param>
+/// <param name="DisplayOrder">曜日内での表示順。</param>
+/// <param name="IsEnabled">反映に使用できるシフトかどうか。</param>
 public sealed record SaveBasicShiftCommand(
     BasicShiftId? Id,
     DayOfWeek Weekday,
@@ -52,12 +52,12 @@ public sealed record SaveBasicShiftCommand(
     DisplayOrder DisplayOrder,
     bool IsEnabled);
 
-/// <summary>Describes one shift candidate and any reason it cannot be applied.</summary>
-/// <param name="Shift">The source shift.</param>
-/// <param name="CanApply">Whether it is valid for the selected date.</param>
-/// <param name="IsAlreadyApplied">Whether this shift was already applied to the date.</param>
-/// <param name="HasSimilarManualRecord">Whether a potentially duplicate manual record exists.</param>
-/// <param name="Issues">Blocking or warning issues.</param>
+/// <summary>1 件のシフト候補と、反映できない場合の理由を表します。</summary>
+/// <param name="Shift">元のシフト。</param>
+/// <param name="CanApply">選択した日付に対して有効かどうか。</param>
+/// <param name="IsAlreadyApplied">このシフトが対象日へ反映済みかどうか。</param>
+/// <param name="HasSimilarManualRecord">重複の可能性がある手動入力記録が存在するかどうか。</param>
+/// <param name="Issues">処理を妨げる問題または警告。</param>
 public sealed record BasicShiftCandidateDto(
     BasicShiftDto Shift,
     bool CanApply,
@@ -65,16 +65,16 @@ public sealed record BasicShiftCandidateDto(
     bool HasSimilarManualRecord,
     IReadOnlyList<IssueDto> Issues);
 
-/// <summary>Contains the unpersisted shift-application preview for one date.</summary>
-/// <param name="WorkDate">The selected date.</param>
-/// <param name="Candidates">The candidates in display order.</param>
-/// <param name="ExistingWorkRecordCount">The current number of work records for the date.</param>
+/// <summary>1 日分の、未保存のシフト反映プレビューを保持します。</summary>
+/// <param name="WorkDate">選択した日付。</param>
+/// <param name="Candidates">表示順に並んだ候補。</param>
+/// <param name="ExistingWorkRecordCount">対象日に現在存在する勤務記録の件数。</param>
 public sealed record BasicShiftPreviewDto(
     DateOnly WorkDate,
     IReadOnlyList<BasicShiftCandidateDto> Candidates,
     int ExistingWorkRecordCount);
 
-/// <summary>Commits selected shift candidates as independent work records.</summary>
-/// <param name="WorkDate">The selected date.</param>
-/// <param name="BasicShiftIds">The selected source shifts.</param>
+/// <summary>選択したシフト候補を独立した勤務記録として確定します。</summary>
+/// <param name="WorkDate">選択した日付。</param>
+/// <param name="BasicShiftIds">選択した元シフト。</param>
 public sealed record ApplyBasicShiftsCommand(DateOnly WorkDate, IReadOnlyList<BasicShiftId> BasicShiftIds);

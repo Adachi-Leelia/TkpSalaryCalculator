@@ -3,17 +3,17 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Application.Contracts;
 
-/// <summary>Contains the settings presented for one calendar month.</summary>
-/// <param name="YearMonth">The target calendar month.</param>
-/// <param name="Snapshot">The immutable snapshot currently referenced by the month.</param>
+/// <summary>1 暦月について表示する設定を保持します。</summary>
+/// <param name="YearMonth">対象の暦月。</param>
+/// <param name="Snapshot">その月が現在参照している不変スナップショット。</param>
 public sealed record MonthSettingsDto(YearMonth YearMonth, SettingSnapshot Snapshot);
 
-/// <summary>Contains the complete replacement content for a cloned setting snapshot.</summary>
-/// <param name="Services">The replacement service rows.</param>
-/// <param name="TimeCategories">The replacement time-category rows.</param>
-/// <param name="Rates">The replacement rate rows.</param>
-/// <param name="Premiums">The replacement premium rows.</param>
-/// <param name="CountBonuses">The replacement count-bonus rows.</param>
+/// <summary>複製した設定スナップショットの完全な置換内容を保持します。</summary>
+/// <param name="Services">置換後のサービス行。</param>
+/// <param name="TimeCategories">置換後の時間区分行。</param>
+/// <param name="Rates">置換後の単価行。</param>
+/// <param name="Premiums">置換後の割増行。</param>
+/// <param name="CountBonuses">置換後の件数加算行。</param>
 public sealed record SettingSnapshotReplacementDto(
     IReadOnlyList<SnapshotService> Services,
     IReadOnlyList<SnapshotTimeCategory> TimeCategories,
@@ -21,13 +21,13 @@ public sealed record SettingSnapshotReplacementDto(
     IReadOnlyList<SnapshotPremium> Premiums,
     IReadOnlyList<SnapshotCountBonus> CountBonuses);
 
-/// <summary>Contains the predicted effect of replacing one month's snapshot.</summary>
-/// <param name="TargetMonth">The month whose reference would change.</param>
-/// <param name="AffectedWorkRecordCount">The number of existing records whose result would change.</param>
-/// <param name="CurrentCalculatedSubtotal">The current calculated subtotal.</param>
-/// <param name="ReplacementCalculatedSubtotal">The predicted calculated subtotal.</param>
-/// <param name="ResultingUncalculatedCount">The predicted number of uncalculated records.</param>
-/// <param name="Issues">Validation issues that must be resolved before commit.</param>
+/// <summary>1 か月分のスナップショットを置換した場合の予測結果を保持します。</summary>
+/// <param name="TargetMonth">参照先が変更される月。</param>
+/// <param name="AffectedWorkRecordCount">結果が変わる既存勤務記録の件数。</param>
+/// <param name="CurrentCalculatedSubtotal">現在の計算済み小計。</param>
+/// <param name="ReplacementCalculatedSubtotal">置換後に予測される計算済み小計。</param>
+/// <param name="ResultingUncalculatedCount">置換後に予測される未計算記録数。</param>
+/// <param name="Issues">確定前に解決する必要がある検証上の問題。</param>
 public sealed record SettingReplacementPreviewDto(
     YearMonth TargetMonth,
     int AffectedWorkRecordCount,
@@ -36,27 +36,27 @@ public sealed record SettingReplacementPreviewDto(
     int ResultingUncalculatedCount,
     IReadOnlyList<IssueDto> Issues);
 
-/// <summary>Contains a closing-rule replacement effective from one payroll-period month.</summary>
-/// <param name="EffectiveFrom">The first affected payroll period.</param>
-/// <param name="ClosingDay">A day from 1 through 31, or <see langword="null"/> for month-end closing.</param>
+/// <summary>指定した給与期間の月から有効になる締め日ルールの置換内容を保持します。</summary>
+/// <param name="EffectiveFrom">最初に影響を受ける給与期間。</param>
+/// <param name="ClosingDay">1 日から 31 日までの日付。月末締めの場合は <see langword="null"/>。</param>
 public sealed record ReplaceClosingRuleCommand(PayrollPeriodKey EffectiveFrom, int? ClosingDay);
 
-/// <summary>Describes the closing rule effective for a requested payroll period.</summary>
-/// <param name="PayrollPeriodKey">The requested payroll period.</param>
-/// <param name="RuleId">The effective history entry.</param>
-/// <param name="EffectiveFrom">The first period to which the history entry applies.</param>
-/// <param name="ClosingDay">The configured day from 1 through 31, or <see langword="null"/> for month end.</param>
+/// <summary>指定した給与期間に有効な締め日ルールを表します。</summary>
+/// <param name="PayrollPeriodKey">指定された給与期間。</param>
+/// <param name="RuleId">有効な履歴項目。</param>
+/// <param name="EffectiveFrom">履歴項目が適用される最初の期間。</param>
+/// <param name="ClosingDay">設定された 1 日から 31 日までの日付。月末の場合は <see langword="null"/>。</param>
 public sealed record EffectiveClosingRuleDto(
     PayrollPeriodKey PayrollPeriodKey,
     ClosingRuleId RuleId,
     PayrollPeriodKey EffectiveFrom,
     int? ClosingDay);
 
-/// <summary>Contains input for a monthly allowance.</summary>
-/// <param name="Id">The existing identifier, or <see langword="null"/> for a new allowance.</param>
-/// <param name="PayrollPeriodKey">The target payroll period.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="Amount">The whole-yen amount.</param>
+/// <summary>月額手当の入力内容を保持します。</summary>
+/// <param name="Id">既存の識別子。新規手当の場合は <see langword="null"/>。</param>
+/// <param name="PayrollPeriodKey">対象の給与期間。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="Amount">円単位の金額。</param>
 public sealed record SaveMonthlyAllowanceCommand(
     MonthlyAllowanceId? Id,
     PayrollPeriodKey PayrollPeriodKey,

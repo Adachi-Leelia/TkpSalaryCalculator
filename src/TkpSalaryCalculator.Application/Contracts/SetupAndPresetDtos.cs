@@ -2,34 +2,34 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Application.Contracts;
 
-/// <summary>Describes progress through the minimum required initial setup.</summary>
+/// <summary>必須となる最小限の初期設定の進捗を表します。</summary>
 public enum InitialSetupStatus
 {
-    /// <summary>Initial setup has not started.</summary>
+    /// <summary>初期設定が開始されていません。</summary>
     NotStarted,
-    /// <summary>Initial setup is partially saved and can be resumed.</summary>
+    /// <summary>初期設定が途中まで保存されており、再開できます。</summary>
     InProgress,
-    /// <summary>All minimum salary settings are valid.</summary>
+    /// <summary>最低限必要な給与設定がすべて有効です。</summary>
     Completed,
 }
 
-/// <summary>Contains the resumable initial-setup state.</summary>
-/// <param name="Status">The overall setup status.</param>
-/// <param name="Step">The stable current step identifier, when any.</param>
-/// <param name="Issues">Missing minimum requirements.</param>
+/// <summary>再開可能な初期設定の状態を保持します。</summary>
+/// <param name="Status">初期設定全体の状態。</param>
+/// <param name="Step">安定した現在のステップ識別子。存在しない場合があります。</param>
+/// <param name="Issues">不足している必須要件。</param>
 public sealed record InitialSetupStateDto(
     InitialSetupStatus Status,
     string? Step,
     IReadOnlyList<IssueDto> Issues);
 
-/// <summary>Represents the persisted single-row application metadata contract.</summary>
-/// <param name="InitialSetupStatus">The persisted initial-setup status.</param>
-/// <param name="InitialSetupStep">The stable resume step, when setup is in progress.</param>
-/// <param name="InitialSnapshotId">The initial setting snapshot, when one has been established.</param>
-/// <param name="ExportFormatVersion">The current export format version.</param>
-/// <param name="LastExportedAtUtc">The most recent successful export instant.</param>
-/// <param name="LastDataChangedAtUtc">The most recent committed settings or work-data change.</param>
-/// <param name="BackupReminderDeferredUntilDate">The device-local date before which the backup reminder remains hidden.</param>
+/// <summary>単一行で保存するアプリケーションメタデータの契約を表します。</summary>
+/// <param name="InitialSetupStatus">保存済みの初期設定状態。</param>
+/// <param name="InitialSetupStep">初期設定進行中の、再開に使用する安定したステップ。</param>
+/// <param name="InitialSnapshotId">初期設定スナップショット。まだ確立されていない場合があります。</param>
+/// <param name="ExportFormatVersion">現在のエクスポート形式バージョン。</param>
+/// <param name="LastExportedAtUtc">直近でエクスポートに成功した日時。</param>
+/// <param name="LastDataChangedAtUtc">直近で確定した設定または勤務データの変更日時。</param>
+/// <param name="BackupReminderDeferredUntilDate">バックアップ通知を非表示にする期限を表す端末現地日付。</param>
 public sealed record AppMetadata(
     InitialSetupStatus InitialSetupStatus,
     string? InitialSetupStep,
@@ -39,13 +39,13 @@ public sealed record AppMetadata(
     DateTimeOffset? LastDataChangedAtUtc,
     DateOnly? BackupReminderDeferredUntilDate);
 
-/// <summary>Contains the backup-reminder state calculated for Presentation.</summary>
-/// <param name="EvaluatedOnLocalDate">The device-local date used for date-based decisions.</param>
-/// <param name="ShouldShow">Whether the reminder should currently be visible.</param>
-/// <param name="HasWorkRecords">Whether any work data exists to back up.</param>
-/// <param name="LastExportedAtUtc">The most recent successful export instant.</param>
-/// <param name="LastDataChangedAtUtc">The most recent committed data-change instant.</param>
-/// <param name="DeferredUntilDate">The device-local date before which the reminder is hidden.</param>
+/// <summary>プレゼンテーション層向けに計算したバックアップ通知の状態を保持します。</summary>
+/// <param name="EvaluatedOnLocalDate">日付に基づく判定に使用した端末現地日付。</param>
+/// <param name="ShouldShow">現在通知を表示する必要があるかどうか。</param>
+/// <param name="HasWorkRecords">バックアップ対象となる勤務データが存在するかどうか。</param>
+/// <param name="LastExportedAtUtc">直近でエクスポートに成功した日時。</param>
+/// <param name="LastDataChangedAtUtc">直近で確定したデータ変更日時。</param>
+/// <param name="DeferredUntilDate">通知を非表示にする期限を表す端末現地日付。</param>
 public sealed record BackupReminderStateDto(
     DateOnly EvaluatedOnLocalDate,
     bool ShouldShow,
@@ -54,14 +54,14 @@ public sealed record BackupReminderStateDto(
     DateTimeOffset? LastDataChangedAtUtc,
     DateOnly? DeferredUntilDate);
 
-/// <summary>Describes a current service preset used only as input assistance.</summary>
-/// <param name="Id">The preset identifier.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="ServiceId">The concrete service copied into work input.</param>
-/// <param name="TimeCategoryId">The concrete category copied into work input, when any.</param>
-/// <param name="DefaultWorkMinutes">The default duration.</param>
-/// <param name="DisplayOrder">The candidate order.</param>
-/// <param name="IsEnabled">Whether the preset is offered for new input.</param>
+/// <summary>入力補助にのみ使用する現在のサービスプリセットを表します。</summary>
+/// <param name="Id">プリセット識別子。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="ServiceId">勤務入力へコピーする具体的なサービス。</param>
+/// <param name="TimeCategoryId">勤務入力へコピーする具体的な時間区分。存在しない場合があります。</param>
+/// <param name="DefaultWorkMinutes">既定の勤務時間。</param>
+/// <param name="DisplayOrder">候補の表示順。</param>
+/// <param name="IsEnabled">新規入力用の候補として提示するかどうか。</param>
 public sealed record ServicePresetDto(
     ServicePresetId Id,
     string DisplayName,
@@ -71,14 +71,14 @@ public sealed record ServicePresetDto(
     DisplayOrder DisplayOrder,
     bool IsEnabled);
 
-/// <summary>Contains input for creating or replacing a service preset.</summary>
-/// <param name="Id">The existing identifier, or <see langword="null"/> for a new preset.</param>
-/// <param name="DisplayName">The user-facing name.</param>
-/// <param name="ServiceId">The concrete service.</param>
-/// <param name="TimeCategoryId">The concrete category, when any.</param>
-/// <param name="DefaultWorkMinutes">The default duration.</param>
-/// <param name="DisplayOrder">The candidate order.</param>
-/// <param name="IsEnabled">Whether the preset is offered for input.</param>
+/// <summary>サービスプリセットを作成または置換するための入力内容を保持します。</summary>
+/// <param name="Id">既存の識別子。新規プリセットの場合は <see langword="null"/>。</param>
+/// <param name="DisplayName">利用者向けの名称。</param>
+/// <param name="ServiceId">具体的なサービス。</param>
+/// <param name="TimeCategoryId">具体的な時間区分。存在しない場合があります。</param>
+/// <param name="DefaultWorkMinutes">既定の勤務時間。</param>
+/// <param name="DisplayOrder">候補の表示順。</param>
+/// <param name="IsEnabled">入力用の候補として提示するかどうか。</param>
 public sealed record SaveServicePresetCommand(
     ServicePresetId? Id,
     string DisplayName,

@@ -2,77 +2,77 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Application.Contracts;
 
-/// <summary>Identifies a prepared import staged outside the live data set.</summary>
-/// <param name="Value">The opaque prepared-import identifier.</param>
+/// <summary>本番データセットの外部に準備されたインポートを識別します。</summary>
+/// <param name="Value">内部構造を公開しない準備済みインポート識別子。</param>
 public readonly record struct PreparedImportId(Guid Value);
 
-/// <summary>Identifies the current data-transfer format shown by Presentation.</summary>
-/// <param name="Format">The stable format identifier.</param>
-/// <param name="FormatVersion">The independently versioned data-transfer format number.</param>
+/// <summary>プレゼンテーション層に表示する現在のデータ転送形式を識別します。</summary>
+/// <param name="Format">安定した形式識別子。</param>
+/// <param name="FormatVersion">独立してバージョン管理されるデータ転送形式の番号。</param>
 public sealed record DataTransferFormatDto(string Format, int FormatVersion);
 
-/// <summary>Contains export document metadata.</summary>
-/// <param name="Format">The stable document format identifier.</param>
-/// <param name="FormatVersion">The independent export-format version.</param>
-/// <param name="CreatedAtUtc">The UTC creation instant.</param>
-/// <param name="AppVersion">The creating application version.</param>
+/// <summary>エクスポート文書のメタデータを保持します。</summary>
+/// <param name="Format">安定した文書形式識別子。</param>
+/// <param name="FormatVersion">独立したエクスポート形式のバージョン。</param>
+/// <param name="CreatedAtUtc">UTC での作成日時。</param>
+/// <param name="AppVersion">作成元アプリケーションのバージョン。</param>
 public sealed record ExportDocumentHeader(
     string Format,
     int FormatVersion,
     DateTimeOffset CreatedAtUtc,
     string AppVersion);
 
-/// <summary>Identifies one logical section of an export document.</summary>
+/// <summary>エクスポート文書の論理セクションを識別します。</summary>
 public enum DataTransferSection
 {
-    /// <summary>Document metadata.</summary>
+    /// <summary>文書メタデータ。</summary>
     Metadata,
-    /// <summary>Setting-month references.</summary>
+    /// <summary>設定月の参照。</summary>
     SettingMonths,
-    /// <summary>Immutable setting snapshots and child data.</summary>
+    /// <summary>不変の設定スナップショットと子データ。</summary>
     SettingSnapshots,
-    /// <summary>Closing-rule history.</summary>
+    /// <summary>締め日ルールの履歴。</summary>
     ClosingRules,
-    /// <summary>Monthly allowances.</summary>
+    /// <summary>月額手当。</summary>
     MonthlyAllowances,
-    /// <summary>Logical definitions.</summary>
+    /// <summary>論理定義。</summary>
     Definitions,
-    /// <summary>Service presets.</summary>
+    /// <summary>サービスプリセット。</summary>
     ServicePresets,
-    /// <summary>Basic shifts.</summary>
+    /// <summary>基本シフト。</summary>
     BasicShifts,
-    /// <summary>Work records.</summary>
+    /// <summary>勤務記録。</summary>
     WorkRecords,
-    /// <summary>Holiday calendar versions and dates.</summary>
+    /// <summary>祝日カレンダーのバージョンと日付。</summary>
     Holidays,
 }
 
-/// <summary>Provides the non-generic base for one logical streaming record.</summary>
-/// <param name="Section">The containing logical section.</param>
-/// <param name="Sequence">The zero-based order within that section.</param>
+/// <summary>論理ストリーミングレコードの非ジェネリック基底型を提供します。</summary>
+/// <param name="Section">所属する論理セクション。</param>
+/// <param name="Sequence">セクション内での 0 始まりの順序。</param>
 public abstract record DataTransferRecord(DataTransferSection Section, long Sequence);
 
-/// <summary>Contains one strongly typed logical record in a streaming export or import.</summary>
-/// <typeparam name="T">An immutable contract type supported by the format version.</typeparam>
-/// <param name="Section">The containing logical section.</param>
-/// <param name="Sequence">The zero-based order within that section.</param>
-/// <param name="Value">The immutable record value.</param>
+/// <summary>ストリーミング形式のエクスポートまたはインポートに含まれる、厳密に型付けされた論理レコードを保持します。</summary>
+/// <typeparam name="T">形式バージョンが対応する不変の契約型。</typeparam>
+/// <param name="Section">所属する論理セクション。</param>
+/// <param name="Sequence">セクション内での 0 始まりの順序。</param>
+/// <param name="Value">不変のレコード値。</param>
 public sealed record DataTransferRecord<T>(DataTransferSection Section, long Sequence, T Value)
     : DataTransferRecord(Section, Sequence);
 
-/// <summary>Summarizes a fully validated import staged without changing live data.</summary>
-/// <param name="Id">The prepared import identifier.</param>
-/// <param name="FormatVersion">The validated format version.</param>
-/// <param name="ExportCreatedAtUtc">The creation instant recorded in the export document.</param>
-/// <param name="SettingMonthCount">The staged setting-month count.</param>
-/// <param name="BasicShiftCount">The staged basic-shift count.</param>
-/// <param name="WorkRecordCount">The staged work-record count.</param>
-/// <param name="MonthlyAllowanceCount">The staged monthly-allowance count.</param>
-/// <param name="OldestSettingMonth">The oldest staged setting month, when present.</param>
-/// <param name="LatestSettingMonth">The latest staged setting month, when present.</param>
-/// <param name="OldestWorkDate">The oldest staged work date, when present.</param>
-/// <param name="LatestWorkDate">The latest staged work date, when present.</param>
-/// <param name="Warnings">Non-blocking validation warnings.</param>
+/// <summary>本番データを変更せずに準備した、検証済みインポートの概要を保持します。</summary>
+/// <param name="Id">準備済みインポート識別子。</param>
+/// <param name="FormatVersion">検証済みの形式バージョン。</param>
+/// <param name="ExportCreatedAtUtc">エクスポート文書に記録された作成日時。</param>
+/// <param name="SettingMonthCount">準備された設定月の件数。</param>
+/// <param name="BasicShiftCount">準備された基本シフトの件数。</param>
+/// <param name="WorkRecordCount">準備された勤務記録の件数。</param>
+/// <param name="MonthlyAllowanceCount">準備された月額手当の件数。</param>
+/// <param name="OldestSettingMonth">準備された最古の設定月。存在しない場合があります。</param>
+/// <param name="LatestSettingMonth">準備された最新の設定月。存在しない場合があります。</param>
+/// <param name="OldestWorkDate">準備された最古の勤務日。存在しない場合があります。</param>
+/// <param name="LatestWorkDate">準備された最新の勤務日。存在しない場合があります。</param>
+/// <param name="Warnings">処理を妨げない検証警告。</param>
 public sealed record ImportPreviewDto(
     PreparedImportId Id,
     int FormatVersion,

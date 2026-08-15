@@ -1,67 +1,67 @@
 namespace TkpSalaryCalculator.Domain.ValueObjects;
 
-/// <summary>Represents a calendar year and month without a time zone.</summary>
-/// <param name="Year">The year from 1 through 9999.</param>
-/// <param name="Month">The month from 1 through 12.</param>
+/// <summary>タイムゾーンを持たない暦年と月を表します。</summary>
+/// <param name="Year">1 から 9999 までの年。</param>
+/// <param name="Month">1 から 12 までの月。</param>
 public readonly record struct YearMonth(int Year, int Month);
 
-/// <summary>Identifies a payroll period by the year and month containing its end date.</summary>
-/// <param name="Value">The payroll period year and month.</param>
+/// <summary>終了日を含む年月によって給与期間を識別します。</summary>
+/// <param name="Value">給与期間の年月。</param>
 public readonly record struct PayrollPeriodKey(YearMonth Value);
 
-/// <summary>Represents a non-negative, whole-yen amount.</summary>
-/// <param name="Value">The amount in yen.</param>
+/// <summary>0 以上の円単位の金額を表します。</summary>
+/// <param name="Value">円単位の金額。</param>
 public readonly record struct YenAmount(long Value);
 
-/// <summary>Represents a whole-minute duration from 1 through 1,440 minutes.</summary>
-/// <param name="Value">The duration in minutes.</param>
+/// <summary>1 分から 1,440 分までの分単位の時間を表します。</summary>
+/// <param name="Value">分単位の時間。</param>
 public readonly record struct WorkMinutes(int Value);
 
-/// <summary>Represents a local wall-clock time as minutes after midnight.</summary>
-/// <param name="Value">The value from 0 through 1,439.</param>
+/// <summary>現地時刻を午前 0 時からの経過分数で表します。</summary>
+/// <param name="Value">0 から 1,439 までの値。</param>
 public readonly record struct MinuteOfDay(int Value);
 
-/// <summary>Represents a non-negative percentage in basis points, where 10,000 is 100%.</summary>
-/// <param name="Value">The percentage in basis points.</param>
+/// <summary>10,000 を 100% とする、0 以上のベーシスポイント値を表します。</summary>
+/// <param name="Value">ベーシスポイント単位の割合。</param>
 public readonly record struct BasisPoints(int Value);
 
-/// <summary>Represents a non-negative display order.</summary>
-/// <param name="Value">The order value.</param>
+/// <summary>0 以上の表示順を表します。</summary>
+/// <param name="Value">表示順の値。</param>
 public readonly record struct DisplayOrder(int Value);
 
-/// <summary>Represents a schema version greater than or equal to one.</summary>
-/// <param name="Value">The version number.</param>
+/// <summary>1 以上のスキーマバージョンを表します。</summary>
+/// <param name="Value">バージョン番号。</param>
 public readonly record struct SchemaVersion(int Value);
 
-/// <summary>Defines how a work interval was entered.</summary>
+/// <summary>勤務時間の入力方法を定義します。</summary>
 public enum WorkInputMode
 {
-    /// <summary>The duration was derived from a start and end time.</summary>
+    /// <summary>開始時刻と終了時刻から勤務時間を算出します。</summary>
     TimeRange,
 
-    /// <summary>The duration was entered directly.</summary>
+    /// <summary>勤務時間を直接入力します。</summary>
     Duration,
 }
 
-/// <summary>Defines how the base pay is calculated.</summary>
+/// <summary>基本給の計算方法を定義します。</summary>
 public enum RateType
 {
-    /// <summary>The configured amount is an hourly rate.</summary>
+    /// <summary>設定金額を時給として扱います。</summary>
     Hourly,
 
-    /// <summary>The configured amount is paid once for the record.</summary>
+    /// <summary>勤務記録 1 件につき設定金額を 1 回支給します。</summary>
     FixedPerRecord,
 }
 
-/// <summary>Defines how a premium amount is calculated.</summary>
+/// <summary>割増額の計算方法を定義します。</summary>
 public enum PremiumCalculationType
 {
-    /// <summary>A percentage of the applicable base-pay portion.</summary>
+    /// <summary>対象となる基本給部分に対する割合で計算します。</summary>
     Percentage,
 
-    /// <summary>A fixed amount per applicable hour.</summary>
+    /// <summary>対象時間 1 時間ごとの固定額で計算します。</summary>
     FixedPerHour,
 
-    /// <summary>A fixed amount once per matching work record.</summary>
+    /// <summary>該当する勤務記録 1 件につき固定額を 1 回支給します。</summary>
     FixedPerRecord,
 }
