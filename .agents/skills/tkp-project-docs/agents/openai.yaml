@@ -1,0 +1,7 @@
+interface:
+  display_name: "TKP Project Docs"
+  short_description: "Read project docs before implementation and review"
+  default_prompt: "Use $tkp-project-docs to inspect the repository documentation before implementing or reviewing this task."
+
+policy:
+  allow_implicit_invocation: true
