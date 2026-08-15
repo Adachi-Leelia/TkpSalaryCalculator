@@ -117,7 +117,7 @@ public sealed class SalaryCalculator : ISalaryCalculator
         var allowanceSubtotal = MoneyMath.Sum(allowanceCopy.Select(static allowance => allowance.Amount.Value));
         var calculatedSubtotal = MoneyMath.Sum(
             dayCopy.Select(static day => day.CalculatedSubtotal.Value)
-                .Concat(new[] { allowanceSubtotal }));
+                .Concat([allowanceSubtotal]));
 
         return new PayrollPeriodSalaryCalculation(
             period,
@@ -278,14 +278,16 @@ public sealed class SalaryCalculator : ISalaryCalculator
         ServiceId serviceId,
         IReadOnlyList<SnapshotCountBonus> rules)
     {
-        return rules
+        return [.. rules
             .Where(rule => rule.IsEnabled && MatchesService(rule.ServiceIds, serviceId))
-            .Select(rule => new AppliedCountBonus(rule.Id, rule.DisplayName, rule.Amount))
-            .ToList();
+            .Select(rule => new AppliedCountBonus(rule.Id, rule.DisplayName, rule.Amount))];
     }
 
-    private static bool MatchesService(IReadOnlySet<ServiceId> serviceIds, ServiceId serviceId) =>
-        serviceIds.Count == 0 || serviceIds.Contains(serviceId);
+    private static bool MatchesService(IReadOnlySet<ServiceId> serviceIds, ServiceId serviceId)
+    {
+        return serviceIds.Count == 0 || serviceIds.Contains(serviceId);
+    }
+
 
     private static bool MatchesDate(
         SnapshotPremium rule,
@@ -508,10 +510,17 @@ public sealed class SalaryCalculator : ISalaryCalculator
         return new ReadOnlyCollection<T>(copy);
     }
 
-    private static IReadOnlyList<T> AsReadOnly<T>(IEnumerable<T> values) =>
-        new ReadOnlyCollection<T>(values.ToArray());
+    private static IReadOnlyList<T> AsReadOnly<T>(IEnumerable<T> values)
+    {
+        return new ReadOnlyCollection<T>([.. values]);
+    }
 
-    private static IReadOnlyList<T> EmptyReadOnly<T>() => Array.Empty<T>();
+
+    private static IReadOnlyList<T> EmptyReadOnly<T>()
+    {
+        return [];
+    }
+
 }
 
 internal static class MoneyMath

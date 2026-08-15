@@ -49,6 +49,7 @@ public sealed record WorkRecordDto(
 /// <param name="StartTime">必要な場合に入力された開始時刻。</param>
 /// <param name="EndTime">時刻範囲入力モードで入力された終了時刻。</param>
 /// <param name="SourceServicePresetId">入力補助に使用したプリセット。存在しない場合があります。</param>
+/// <param name="OperationId">新規保存の再試行と連続操作を一意に識別する値。更新では省略できます。</param>
 public sealed record SaveWorkRecordCommand(
     WorkRecordId? Id,
     DateOnly WorkDate,
@@ -58,7 +59,8 @@ public sealed record SaveWorkRecordCommand(
     WorkMinutes? WorkMinutes,
     MinuteOfDay? StartTime,
     MinuteOfDay? EndTime,
-    ServicePresetId? SourceServicePresetId);
+    ServicePresetId? SourceServicePresetId,
+    Guid? OperationId = null);
 
 /// <summary>勤務入力用のサービスプリセット候補を表します。</summary>
 /// <param name="Preset">現在の入力補助プリセット。</param>

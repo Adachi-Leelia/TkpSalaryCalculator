@@ -28,11 +28,16 @@ internal static class TestData
             null);
     }
 
-    public static SnapshotRate Rate(RateType type, long amount) =>
-        new(ServiceId, null, type, new YenAmount(amount));
+    public static SnapshotRate Rate(RateType type, long amount)
+    {
+        return new(ServiceId, null, type, new YenAmount(amount));
+    }
 
-    public static SnapshotRate CategoryRate(RateType type, long amount) =>
-        new(ServiceId, CategoryId, type, new YenAmount(amount));
+    public static SnapshotRate CategoryRate(RateType type, long amount)
+    {
+        return new(ServiceId, CategoryId, type, new YenAmount(amount));
+    }
+
 
     public static SnapshotPremium PercentagePremium(
         int basisPoints,
@@ -88,13 +93,16 @@ internal static class TestData
             services: services);
     }
 
-    public static SnapshotCountBonus CountBonus(long amount, IEnumerable<ServiceId>? services = null) =>
-        new(
+    public static SnapshotCountBonus CountBonus(long amount, IEnumerable<ServiceId>? services = null)
+    {
+        return new(
             new CountBonusId(Guid.NewGuid()),
             "件数加算",
             new YenAmount(amount),
             Set(services),
             true);
+    }
+
 
     public static SettingSnapshot Snapshot(
         SnapshotRate? rate,
@@ -119,9 +127,8 @@ internal static class TestData
             HolidayVersionId,
             new SchemaVersion(1),
             DateTimeOffset.Parse("2026-08-15T00:00:00Z"),
-            new[] { new SnapshotService(ServiceId, "身体", new DisplayOrder(0), true) },
-            new[]
-            {
+            [new SnapshotService(ServiceId, "身体", new DisplayOrder(0), true)],
+            [
                 new SnapshotTimeCategory(
                     CategoryId,
                     ServiceId,
@@ -129,10 +136,10 @@ internal static class TestData
                     new WorkMinutes(30),
                     new DisplayOrder(0),
                     true),
-            },
+            ],
             rates,
-            premiums ?? Array.Empty<SnapshotPremium>(),
-            bonuses ?? Array.Empty<SnapshotCountBonus>());
+            premiums ?? [],
+            bonuses ?? []);
     }
 
     public static WorkSalaryCalculationRequest Request(
@@ -140,7 +147,7 @@ internal static class TestData
         SettingSnapshot snapshot,
         IEnumerable<DateOnly>? holidays = null)
     {
-        var holidayDictionary = (holidays ?? Array.Empty<DateOnly>())
+        var holidayDictionary = (holidays ?? [])
             .ToDictionary(static date => date, static _ => "祝日");
         return new WorkSalaryCalculationRequest(
             record,
@@ -148,25 +155,32 @@ internal static class TestData
             new HolidayCalendar(HolidayVersionId, holidayDictionary));
     }
 
-    public static PayrollPeriod Period(int year, int month, DateOnly start, DateOnly end) =>
-        new(new PayrollPeriodKey(new YearMonth(year, month)), start, end);
+    public static PayrollPeriod Period(int year, int month, DateOnly start, DateOnly end)
+    {
+        return new(new PayrollPeriodKey(new YearMonth(year, month)), start, end);
+    }
 
-    public static ClosingRule ClosingRule(int year, int month, int? closingDay) =>
-        new(
+    public static ClosingRule ClosingRule(int year, int month, int? closingDay)
+    {
+        return new(
             new ClosingRuleId(Guid.NewGuid()),
             new PayrollPeriodKey(new YearMonth(year, month)),
             closingDay);
+    }
 
-    public static WorkSalaryCalculation CalculatedRecord(long total, Guid? recordId = null) =>
-        new(
+    public static WorkSalaryCalculation CalculatedRecord(long total, Guid? recordId = null)
+    {
+        return new(
             new WorkRecordId(recordId ?? Guid.NewGuid()),
             SalaryCalculationStatus.Calculated,
             Rate(RateType.FixedPerRecord, total),
             new YenAmount(total),
-            Array.Empty<AppliedPremium>(),
-            Array.Empty<AppliedCountBonus>(),
+            [],
+            [],
             new YenAmount(total),
-            Array.Empty<MissingCalculationRequirement>());
+            []);
+    }
+
 
     private static SnapshotPremium Premium(
         PremiumCalculationType type,
@@ -193,6 +207,9 @@ internal static class TestData
             true);
     }
 
-    private static IReadOnlySet<T> Set<T>(IEnumerable<T>? values) =>
-        new HashSet<T>(values ?? Array.Empty<T>());
+    private static IReadOnlySet<T> Set<T>(IEnumerable<T>? values)
+    {
+        return new HashSet<T>(values ?? []);
+    }
+
 }

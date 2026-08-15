@@ -38,7 +38,7 @@ public sealed class SalaryCalculatorTests
     public void Calc004_PercentagePremium()
     {
         var premium = TestData.PercentagePremium(2500);
-        var result = Calculate(TestData.Rate(RateType.Hourly, 1001), 30, new[] { premium });
+        var result = Calculate(TestData.Rate(RateType.Hourly, 1001), 30, [premium]);
 
         Assert.Equal(126, Assert.Single(result.Premiums).Amount.Value);
         Assert.Equal(627, result.Total!.Value.Value);
@@ -48,7 +48,7 @@ public sealed class SalaryCalculatorTests
     public void Calc005_FixedPerHourPremium()
     {
         var premium = TestData.FixedPerHourPremium(301);
-        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, new[] { premium });
+        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, [premium]);
 
         Assert.Equal(151, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -57,7 +57,7 @@ public sealed class SalaryCalculatorTests
     public void Calc006_FixedPerRecordPremium()
     {
         var premium = TestData.FixedPerRecordPremium(200);
-        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, new[] { premium });
+        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, [premium]);
 
         Assert.Equal(200, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -65,18 +65,18 @@ public sealed class SalaryCalculatorTests
     [Fact(DisplayName = "CALC-007 基本給、休日、夜間、件数加算を合計する")]
     public void Calc007_AllComponents()
     {
-        var holiday = TestData.PercentagePremium(2500, weekdays: new[] { DayOfWeek.Saturday });
+        var holiday = TestData.PercentagePremium(2500, weekdays: [DayOfWeek.Saturday]);
         var night = TestData.FixedPerHourPremium(200, start: 22 * 60, end: 5 * 60);
         var bonus = TestData.CountBonus(150);
         var result = Calculate(
             TestData.Rate(RateType.Hourly, 1200),
             60,
-            new[] { holiday, night },
-            new[] { bonus },
+            [holiday, night],
+            [bonus],
             date: new DateOnly(2026, 8, 15),
             start: 21 * 60 + 30);
 
-        Assert.Equal(new long[] { 300, 100 }, result.Premiums.Select(item => item.Amount.Value));
+        Assert.Equal([300, 100], result.Premiums.Select(item => item.Amount.Value));
         Assert.Equal(150, Assert.Single(result.CountBonuses).Amount.Value);
         Assert.Equal(1750, result.Total!.Value.Value);
     }
@@ -87,9 +87,9 @@ public sealed class SalaryCalculatorTests
         var result = Calculate(
             TestData.Rate(RateType.FixedPerRecord, 1000),
             60,
-            new[] { TestData.FixedPerRecordPremium(100), TestData.FixedPerRecordPremium(200) });
+            [TestData.FixedPerRecordPremium(100), TestData.FixedPerRecordPremium(200)]);
 
-        Assert.Equal(new long[] { 100, 200 }, result.Premiums.Select(item => item.Amount.Value));
+        Assert.Equal([100, 200], result.Premiums.Select(item => item.Amount.Value));
         Assert.Equal(1300, result.Total!.Value.Value);
     }
 
@@ -97,10 +97,10 @@ public sealed class SalaryCalculatorTests
     public void Calc009_CountBonusPerRecord()
     {
         var bonus = TestData.CountBonus(150);
-        var first = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, bonuses: new[] { bonus });
-        var second = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, bonuses: new[] { bonus }, recordId: Guid.NewGuid());
+        var first = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, bonuses: [bonus]);
+        var second = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, bonuses: [bonus], recordId: Guid.NewGuid());
 
-        var day = calculator.AggregateDay(new DateOnly(2026, 8, 15), new[] { first, second });
+        var day = calculator.AggregateDay(new DateOnly(2026, 8, 15), [first, second]);
 
         Assert.Equal(300, day.CountBonusSubtotal.Value);
         Assert.Equal(300, day.CalculatedSubtotal.Value);
@@ -114,13 +114,13 @@ public sealed class SalaryCalculatorTests
         var second = TestData.CalculatedRecord(2000, Guid.NewGuid());
         var days = new[]
         {
-            calculator.AggregateDay(new DateOnly(2026, 8, 1), new[] { first }),
-            calculator.AggregateDay(new DateOnly(2026, 8, 2), new[] { second }),
+            calculator.AggregateDay(new DateOnly(2026, 8, 1), [first]),
+            calculator.AggregateDay(new DateOnly(2026, 8, 2), [second]),
         };
         var allowance = new MonthlyAllowance(
             new MonthlyAllowanceId(Guid.NewGuid()), period.Key, "月額手当", new YenAmount(5000));
 
-        var result = calculator.AggregatePeriod(period, days, new[] { allowance });
+        var result = calculator.AggregatePeriod(period, days, [allowance]);
 
         Assert.Equal(5000, result.AllowanceSubtotal.Value);
         Assert.Equal(8750, result.CalculatedSubtotal.Value);
@@ -133,8 +133,8 @@ public sealed class SalaryCalculatorTests
             TestData.WorkRecord(60, start: 22 * 60),
             TestData.Snapshot(
                 TestData.Rate(RateType.Hourly, 1200),
-                premiums: new[] { TestData.FixedPerHourPremium(200, 22 * 60, 5 * 60) },
-                bonuses: new[] { TestData.CountBonus(150) }));
+                premiums: [TestData.FixedPerHourPremium(200, 22 * 60, 5 * 60)],
+                bonuses: [TestData.CountBonus(150)]));
 
         var first = calculator.Calculate(request);
         var second = calculator.Calculate(request);
@@ -164,7 +164,7 @@ public sealed class SalaryCalculatorTests
     public void Calc020_PartialNightOverlap()
     {
         var night = TestData.FixedPerHourPremium(300, 22 * 60, 5 * 60);
-        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 60, new[] { night }, start: 21 * 60 + 30);
+        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 60, [night], start: 21 * 60 + 30);
 
         var applied = Assert.Single(result.Premiums);
         Assert.Equal(30, applied.ApplicableMinutes.Value);
@@ -226,14 +226,14 @@ public sealed class SalaryCalculatorTests
     {
         var holiday = TestData.FixedPerRecordPremium(
             200,
-            weekdays: new[] { DayOfWeek.Saturday },
+            weekdays: [DayOfWeek.Saturday],
             usesNationalHolidays: true);
         var result = Calculate(
             TestData.Rate(RateType.FixedPerRecord, 0),
             60,
-            new[] { holiday },
+            [holiday],
             date: new DateOnly(2026, 8, 15),
-            holidays: new[] { new DateOnly(2026, 8, 15) });
+            holidays: [new DateOnly(2026, 8, 15)]);
 
         Assert.Equal(200, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -241,23 +241,23 @@ public sealed class SalaryCalculatorTests
     [Fact(DisplayName = "CALC-025 異なる休日割増と夜間割増を両方適用する")]
     public void Calc025_HolidayAndNightPremiums()
     {
-        var holiday = TestData.FixedPerRecordPremium(100, weekdays: new[] { DayOfWeek.Saturday });
+        var holiday = TestData.FixedPerRecordPremium(100, weekdays: [DayOfWeek.Saturday]);
         var night = TestData.FixedPerRecordPremium(200, start: 22 * 60, end: 5 * 60);
         var result = Calculate(
             TestData.Rate(RateType.FixedPerRecord, 0),
             60,
-            new[] { holiday, night },
+            [holiday, night],
             date: new DateOnly(2026, 8, 15),
             start: 23 * 60 + 30);
 
-        Assert.Equal(new long[] { 100, 200 }, result.Premiums.Select(item => item.Amount.Value));
+        Assert.Equal([100, 200], result.Premiums.Select(item => item.Amount.Value));
     }
 
     [Fact(DisplayName = "CALC-030 固定基本給を対象時間で按分してから割合を切り上げる")]
     public void Calc030_PartialPercentageOfFixedRate()
     {
         var premium = TestData.PercentagePremium(2500, start: 22 * 60, end: 22 * 60 + 15);
-        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 850), 30, new[] { premium }, start: 22 * 60);
+        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 850), 30, [premium], start: 22 * 60);
 
         Assert.Equal(107, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -266,7 +266,7 @@ public sealed class SalaryCalculatorTests
     public void Calc031_OneMinuteFixedPremium()
     {
         var premium = TestData.FixedPerRecordPremium(200, start: 22 * 60, end: 22 * 60 + 1);
-        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, new[] { premium }, start: 22 * 60);
+        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 30, [premium], start: 22 * 60);
 
         Assert.Equal(1, Assert.Single(result.Premiums).ApplicableMinutes.Value);
         Assert.Equal(200, result.Premiums[0].Amount.Value);
@@ -277,7 +277,7 @@ public sealed class SalaryCalculatorTests
     {
         var snapshot = TestData.Snapshot(
             TestData.Rate(RateType.Hourly, 1200),
-            additionalRates: new[] { TestData.CategoryRate(RateType.FixedPerRecord, 9999) });
+            additionalRates: [TestData.CategoryRate(RateType.FixedPerRecord, 9999)]);
         var result = calculator.Calculate(TestData.Request(TestData.WorkRecord(45, timeCategory: null), snapshot));
 
         Assert.Null(result.AppliedRate!.TimeCategoryId);
@@ -289,7 +289,7 @@ public sealed class SalaryCalculatorTests
     {
         var snapshot = TestData.Snapshot(
             TestData.Rate(RateType.Hourly, 1200),
-            additionalRates: new[] { TestData.CategoryRate(RateType.FixedPerRecord, 850) });
+            additionalRates: [TestData.CategoryRate(RateType.FixedPerRecord, 850)]);
         var result = calculator.Calculate(TestData.Request(TestData.WorkRecord(30, timeCategory: TestData.CategoryId), snapshot));
 
         Assert.Equal(TestData.CategoryId, result.AppliedRate!.TimeCategoryId);
@@ -308,7 +308,7 @@ public sealed class SalaryCalculatorTests
     public void Calc035_CrossMidnightPremiumWindow()
     {
         var premium = TestData.FixedPerHourPremium(60, 22 * 60, 5 * 60);
-        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 60, new[] { premium }, start: 23 * 60 + 30);
+        var result = Calculate(TestData.Rate(RateType.FixedPerRecord, 0), 60, [premium], start: 23 * 60 + 30);
 
         Assert.Equal(60, Assert.Single(result.Premiums).ApplicableMinutes.Value);
         Assert.Equal(60, result.Premiums[0].Amount.Value);
@@ -317,11 +317,11 @@ public sealed class SalaryCalculatorTests
     [Fact(DisplayName = "CALC-036 日付条件は日付またぎ後も勤務開始日だけで判定する")]
     public void Calc036_DateConditionUsesStartDate()
     {
-        var sunday = TestData.FixedPerHourPremium(60, weekdays: new[] { DayOfWeek.Sunday });
+        var sunday = TestData.FixedPerHourPremium(60, weekdays: [DayOfWeek.Sunday]);
         var result = Calculate(
             TestData.Rate(RateType.FixedPerRecord, 0),
             60,
-            new[] { sunday },
+            [sunday],
             date: new DateOnly(2026, 8, 16),
             start: 23 * 60 + 30);
 
@@ -332,7 +332,7 @@ public sealed class SalaryCalculatorTests
     public void Calc037_RoundingOrder()
     {
         var premium = TestData.PercentagePremium(2500);
-        var result = Calculate(TestData.Rate(RateType.Hourly, 1001), 30, new[] { premium });
+        var result = Calculate(TestData.Rate(RateType.Hourly, 1001), 30, [premium]);
 
         Assert.Equal(501, result.BasePay!.Value.Value);
         Assert.Equal(126, Assert.Single(result.Premiums).Amount.Value);
@@ -353,9 +353,15 @@ public sealed class SalaryCalculatorTests
         return calculator.Calculate(TestData.Request(record, snapshot, holidays));
     }
 
-    private static (PremiumId Id, int Minutes, long Amount) ToPremiumTuple(AppliedPremium item) =>
-        (item.Rule.Id, item.ApplicableMinutes.Value, item.Amount.Value);
+    private static (PremiumId Id, int Minutes, long Amount) ToPremiumTuple(AppliedPremium item)
+    {
+        return (item.Rule.Id, item.ApplicableMinutes.Value, item.Amount.Value);
+    }
 
-    private static (CountBonusId Id, long Amount) ToBonusTuple(AppliedCountBonus item) =>
-        (item.CountBonusId, item.Amount.Value);
+
+    private static (CountBonusId Id, long Amount) ToBonusTuple(AppliedCountBonus item)
+    {
+        return (item.CountBonusId, item.Amount.Value);
+    }
+
 }

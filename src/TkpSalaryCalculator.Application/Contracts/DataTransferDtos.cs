@@ -3,8 +3,18 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 namespace TkpSalaryCalculator.Application.Contracts;
 
 /// <summary>本番データセットの外部に準備されたインポートを識別します。</summary>
-/// <param name="Value">内部構造を公開しない準備済みインポート識別子。</param>
-public readonly record struct PreparedImportId(Guid Value);
+public readonly record struct PreparedImportId
+{
+    /// <summary>空でない内部識別子を指定して生成します。</summary>
+    public PreparedImportId(Guid value)
+    {
+        if (value == Guid.Empty) throw new ArgumentException("準備済みインポート識別子を指定してください。", nameof(value));
+        Value = value;
+    }
+
+    /// <summary>内部識別子を取得します。</summary>
+    public Guid Value { get; }
+}
 
 /// <summary>プレゼンテーション層に表示する現在のデータ転送形式を識別します。</summary>
 /// <param name="Format">安定した形式識別子。</param>

@@ -167,8 +167,11 @@ public sealed record SnapshotService
     public bool IsEnabled { get; }
 
     /// <summary>サービスの各値へ分解します。</summary>
-    public void Deconstruct(out ServiceId Id, out string DisplayName, out DisplayOrder DisplayOrder, out bool IsEnabled) =>
+    public void Deconstruct(out ServiceId Id, out string DisplayName, out DisplayOrder DisplayOrder, out bool IsEnabled)
+    {
         (Id, DisplayName, DisplayOrder, IsEnabled) = (this.Id, this.DisplayName, this.DisplayOrder, this.IsEnabled);
+    }
+
 }
 
 /// <summary>設定スナップショット内の時間区分を表します。</summary>
@@ -221,9 +224,12 @@ public sealed record SnapshotTimeCategory
         out string DisplayName,
         out WorkMinutes StandardMinutes,
         out DisplayOrder DisplayOrder,
-        out bool IsEnabled) =>
+        out bool IsEnabled)
+    {
         (Id, ServiceId, DisplayName, StandardMinutes, DisplayOrder, IsEnabled) =
             (this.Id, this.ServiceId, this.DisplayName, this.StandardMinutes, this.DisplayOrder, this.IsEnabled);
+    }
+
 }
 
 /// <summary>設定スナップショット内の基本単価を表します。</summary>
@@ -271,9 +277,12 @@ public sealed record SnapshotRate
         out ServiceId ServiceId,
         out TimeCategoryId? TimeCategoryId,
         out RateType RateType,
-        out YenAmount Amount) =>
+        out YenAmount Amount)
+    {
         (ServiceId, TimeCategoryId, RateType, Amount) =
             (this.ServiceId, this.TimeCategoryId, this.RateType, this.Amount);
+    }
+
 }
 
 /// <summary>設定スナップショット内の割増ルールを表します。</summary>
@@ -484,9 +493,12 @@ public sealed record SnapshotCountBonus
         out string DisplayName,
         out YenAmount Amount,
         out IReadOnlySet<ServiceId> ServiceIds,
-        out bool IsEnabled) =>
+        out bool IsEnabled)
+    {
         (Id, DisplayName, Amount, ServiceIds, IsEnabled) =
             (this.Id, this.DisplayName, this.Amount, this.ServiceIds, this.IsEnabled);
+    }
+
 }
 
 /// <summary>1件の変更不可な設定スナップショットを表します。</summary>
@@ -677,8 +689,11 @@ public sealed record HolidayCalendar
     /// <summary>祝日カレンダーの各値へ分解します。</summary>
     public void Deconstruct(
         out HolidayCalendarVersionId VersionId,
-        out IReadOnlyDictionary<DateOnly, string> Holidays) =>
+        out IReadOnlyDictionary<DateOnly, string> Holidays)
+    {
         (VersionId, Holidays) = (this.VersionId, this.Holidays);
+    }
+
 }
 
 /// <summary>指定した給与期間月から適用される締め日ルールを表します。</summary>
@@ -709,8 +724,11 @@ public sealed record ClosingRule
     public int? ClosingDay { get; }
 
     /// <summary>締め日ルールの各値へ分解します。</summary>
-    public void Deconstruct(out ClosingRuleId Id, out PayrollPeriodKey EffectiveFrom, out int? ClosingDay) =>
+    public void Deconstruct(out ClosingRuleId Id, out PayrollPeriodKey EffectiveFrom, out int? ClosingDay)
+    {
         (Id, EffectiveFrom, ClosingDay) = (this.Id, this.EffectiveFrom, this.ClosingDay);
+    }
+
 }
 
 /// <summary>両端の日付を含む1給与期間を表します。</summary>
@@ -745,11 +763,18 @@ public sealed record PayrollPeriod
     public DateOnly EndDate { get; }
 
     /// <summary>日付が両端を含む期間内かを返します。</summary>
-    public bool Contains(DateOnly date) => StartDate <= date && date <= EndDate;
+    public bool Contains(DateOnly date)
+    {
+        return StartDate <= date && date <= EndDate;
+    }
+
 
     /// <summary>給与期間の各値へ分解します。</summary>
-    public void Deconstruct(out PayrollPeriodKey Key, out DateOnly StartDate, out DateOnly EndDate) =>
+    public void Deconstruct(out PayrollPeriodKey Key, out DateOnly StartDate, out DateOnly EndDate)
+    {
         (Key, StartDate, EndDate) = (this.Key, this.StartDate, this.EndDate);
+    }
+
 }
 
 /// <summary>1給与期間へ直接適用する月額手当を表します。</summary>
@@ -789,9 +814,12 @@ public sealed record MonthlyAllowance
         out MonthlyAllowanceId Id,
         out PayrollPeriodKey PayrollPeriodKey,
         out string DisplayName,
-        out YenAmount Amount) =>
+        out YenAmount Amount)
+    {
         (Id, PayrollPeriodKey, DisplayName, Amount) =
             (this.Id, this.PayrollPeriodKey, this.DisplayName, this.Amount);
+    }
+
 }
 
 internal static class DomainModelGuard

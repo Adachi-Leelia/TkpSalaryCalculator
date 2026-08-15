@@ -11,7 +11,7 @@ public sealed class PayrollPeriodCalculatorTests
     [Fact(DisplayName = "PERIOD-001 20日締めは前月21日から当月20日")]
     public void Period001_ClosingDay20()
     {
-        var period = GetPeriod(2026, 8, new[] { TestData.ClosingRule(2020, 1, 20) });
+        var period = GetPeriod(2026, 8, [TestData.ClosingRule(2020, 1, 20)]);
 
         Assert.Equal(new DateOnly(2026, 7, 21), period.StartDate);
         Assert.Equal(new DateOnly(2026, 8, 20), period.EndDate);
@@ -20,7 +20,7 @@ public sealed class PayrollPeriodCalculatorTests
     [Fact(DisplayName = "PERIOD-002 平年2月の月末締め")]
     public void Period002_EndOfFebruary()
     {
-        var period = GetPeriod(2026, 2, new[] { TestData.ClosingRule(2020, 1, null) });
+        var period = GetPeriod(2026, 2, [TestData.ClosingRule(2020, 1, null)]);
 
         Assert.Equal(new DateOnly(2026, 2, 1), period.StartDate);
         Assert.Equal(new DateOnly(2026, 2, 28), period.EndDate);
@@ -29,7 +29,7 @@ public sealed class PayrollPeriodCalculatorTests
     [Fact(DisplayName = "PERIOD-003 うるう年2月の月末締め")]
     public void Period003_LeapYear()
     {
-        var period = GetPeriod(2024, 2, new[] { TestData.ClosingRule(2020, 1, null) });
+        var period = GetPeriod(2024, 2, [TestData.ClosingRule(2020, 1, null)]);
 
         Assert.Equal(new DateOnly(2024, 2, 29), period.EndDate);
     }
@@ -37,7 +37,7 @@ public sealed class PayrollPeriodCalculatorTests
     [Fact(DisplayName = "PERIOD-004 31日がない月は月末を終了日とする")]
     public void Period004_ClosingDay31InApril()
     {
-        var period = GetPeriod(2026, 4, new[] { TestData.ClosingRule(2020, 1, 31) });
+        var period = GetPeriod(2026, 4, [TestData.ClosingRule(2020, 1, 31)]);
 
         Assert.Equal(new DateOnly(2026, 4, 30), period.EndDate);
     }
@@ -45,7 +45,7 @@ public sealed class PayrollPeriodCalculatorTests
     [Fact(DisplayName = "PERIOD-005 30日がない2月は月末を終了日とする")]
     public void Period005_ClosingDay30InFebruary()
     {
-        var period = GetPeriod(2026, 2, new[] { TestData.ClosingRule(2020, 1, 30) });
+        var period = GetPeriod(2026, 2, [TestData.ClosingRule(2020, 1, 30)]);
 
         Assert.Equal(new DateOnly(2026, 2, 28), period.EndDate);
     }
@@ -70,7 +70,7 @@ public sealed class PayrollPeriodCalculatorTests
     [Fact(DisplayName = "PERIOD-007 年をまたぐ期間は両端に異なる年を保持する")]
     public void Period007_CrossYear()
     {
-        var period = GetPeriod(2026, 1, new[] { TestData.ClosingRule(2020, 1, 20) });
+        var period = GetPeriod(2026, 1, [TestData.ClosingRule(2020, 1, 20)]);
 
         Assert.Equal(new DateOnly(2025, 12, 21), period.StartDate);
         Assert.Equal(new DateOnly(2026, 1, 20), period.EndDate);
@@ -128,6 +128,9 @@ public sealed class PayrollPeriodCalculatorTests
         Assert.Throws<ArgumentException>(() => GetPeriod(2026, 8, rules));
     }
 
-    private PayrollPeriod GetPeriod(int year, int month, IReadOnlyList<ClosingRule> rules) =>
-        calculator.GetPeriod(new PayrollPeriodKey(new YearMonth(year, month)), rules);
+    private PayrollPeriod GetPeriod(int year, int month, IReadOnlyList<ClosingRule> rules)
+    {
+        return calculator.GetPeriod(new PayrollPeriodKey(new YearMonth(year, month)), rules);
+    }
+
 }

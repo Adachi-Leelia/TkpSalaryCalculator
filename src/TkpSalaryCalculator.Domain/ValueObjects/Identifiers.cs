@@ -8,7 +8,11 @@ public readonly record struct WorkRecordId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>設定月をまたいでサービス定義を識別します。</summary>
@@ -19,7 +23,11 @@ public readonly record struct ServiceId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>設定月をまたいで時間区分を識別します。</summary>
@@ -30,7 +38,11 @@ public readonly record struct TimeCategoryId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>設定月をまたいで割増定義を識別します。</summary>
@@ -41,7 +53,11 @@ public readonly record struct PremiumId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>設定月をまたいで件数加算定義を識別します。</summary>
@@ -52,7 +68,11 @@ public readonly record struct CountBonusId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>不変の設定スナップショットを識別します。</summary>
@@ -63,7 +83,11 @@ public readonly record struct SettingSnapshotId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>締め日ルールの履歴項目を識別します。</summary>
@@ -74,7 +98,11 @@ public readonly record struct ClosingRuleId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>月額手当を識別します。</summary>
@@ -85,7 +113,11 @@ public readonly record struct MonthlyAllowanceId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>祝日カレンダーのバージョンを識別します。</summary>
@@ -96,7 +128,11 @@ public readonly record struct HolidayCalendarVersionId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>再利用可能なサービスプリセットを識別します。</summary>
@@ -107,7 +143,11 @@ public readonly record struct ServicePresetId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>基本シフトを識別します。</summary>
@@ -118,7 +158,11 @@ public readonly record struct BasicShiftId
     /// <summary>GUID値を取得します。</summary>
     public Guid Value { get; }
     /// <summary>GUID値へ分解します。</summary>
-    public void Deconstruct(out Guid Value) => Value = this.Value;
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 internal static class DomainIdGuard

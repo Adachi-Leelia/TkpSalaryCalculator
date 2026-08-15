@@ -101,7 +101,7 @@ public sealed class DomainInvariantTests
     {
         var snapshot = TestData.Snapshot(
             TestData.Rate(RateType.Hourly, 1200),
-            new[] { TestData.FixedPerHourPremium(300, 22 * 60, 5 * 60) });
+            [TestData.FixedPerHourPremium(300, 22 * 60, 5 * 60)]);
 
         Assert.Throws<ArgumentException>(() => new SalaryCalculator().Calculate(
             TestData.Request(TestData.WorkRecord(60), snapshot)));
@@ -121,10 +121,10 @@ public sealed class DomainInvariantTests
             new SchemaVersion(1),
             DateTimeOffset.Parse("2026-08-15T00:00:00Z"),
             services,
-            Array.Empty<SnapshotTimeCategory>(),
-            new[] { TestData.Rate(RateType.Hourly, 1200) },
-            Array.Empty<SnapshotPremium>(),
-            Array.Empty<SnapshotCountBonus>());
+            [],
+            [TestData.Rate(RateType.Hourly, 1200)],
+            [],
+            []);
 
         services.Clear();
 
@@ -137,7 +137,7 @@ public sealed class DomainInvariantTests
     {
         Assert.Throws<ArgumentException>(() => TestData.Snapshot(
             TestData.Rate(RateType.Hourly, 1200),
-            additionalRates: new[] { TestData.Rate(RateType.FixedPerRecord, 850) }));
+            additionalRates: [TestData.Rate(RateType.FixedPerRecord, 850)]));
 
         var unrelatedService = new ServiceId(Guid.NewGuid());
         Assert.Throws<ArgumentException>(() => new SettingSnapshot(
@@ -146,11 +146,11 @@ public sealed class DomainInvariantTests
             TestData.HolidayVersionId,
             new SchemaVersion(1),
             DateTimeOffset.UtcNow,
-            new[] { new SnapshotService(TestData.ServiceId, "身体", new DisplayOrder(0), true) },
-            Array.Empty<SnapshotTimeCategory>(),
-            new[] { new SnapshotRate(unrelatedService, null, RateType.Hourly, new YenAmount(1000)) },
-            Array.Empty<SnapshotPremium>(),
-            Array.Empty<SnapshotCountBonus>()));
+            [new SnapshotService(TestData.ServiceId, "身体", new DisplayOrder(0), true)],
+            [],
+            [new SnapshotRate(unrelatedService, null, RateType.Hourly, new YenAmount(1000))],
+            [],
+            []));
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public sealed class DomainInvariantTests
         var premium = TestData.FixedPerRecordPremium(100);
         var result = new SalaryCalculator().Calculate(TestData.Request(
             TestData.WorkRecord(30),
-            TestData.Snapshot(TestData.Rate(RateType.FixedPerRecord, 100), new[] { premium })));
+            TestData.Snapshot(TestData.Rate(RateType.FixedPerRecord, 100), [premium])));
 
         Assert.Throws<NotSupportedException>(() => ((IList<AppliedPremium>)result.Premiums).Clear());
     }
@@ -208,15 +208,15 @@ public sealed class DomainInvariantTests
         var period = TestData.Period(2026, 8, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20));
         var day = calculator.AggregateDay(
             new DateOnly(2026, 8, 21),
-            new[] { TestData.CalculatedRecord(100) });
-        Assert.Throws<ArgumentException>(() => calculator.AggregatePeriod(period, new[] { day }, Array.Empty<MonthlyAllowance>()));
+            [TestData.CalculatedRecord(100)]);
+        Assert.Throws<ArgumentException>(() => calculator.AggregatePeriod(period, [day], []));
 
         var allowance = new MonthlyAllowance(
             new MonthlyAllowanceId(Guid.NewGuid()),
             new PayrollPeriodKey(new YearMonth(2026, 9)),
             "手当",
             new YenAmount(100));
-        Assert.Throws<ArgumentException>(() => calculator.AggregatePeriod(period, Array.Empty<DailySalaryCalculation>(), new[] { allowance }));
+        Assert.Throws<ArgumentException>(() => calculator.AggregatePeriod(period, [], [allowance]));
     }
 
     [Fact]
