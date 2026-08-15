@@ -1,0 +1,9 @@
+global using Xunit;
+global using TkpSalaryCalculator.Application.Contracts;
+global using TkpSalaryCalculator.Application.Errors;
+global using TkpSalaryCalculator.Application.Ports;
+global using TkpSalaryCalculator.Application.UseCases;
+global using TkpSalaryCalculator.Domain.Contracts;
+global using TkpSalaryCalculator.Domain.Models;
+global using TkpSalaryCalculator.Domain.Services;
+global using TkpSalaryCalculator.Domain.ValueObjects;

@@ -61,6 +61,9 @@ public interface IWorkRecordRepository
     /// <summary>識別子で勤務記録を 1 件検索します。</summary>
     Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken);
 
+    /// <summary>新規保存操作の識別子で、既に確定した勤務記録を検索します。</summary>
+    Task<WorkRecordDto?> FindBySaveOperationIdAsync(Guid operationId, CancellationToken cancellationToken);
+
     /// <summary>記録を日付の昇順、次に安定した識別子順でストリーミングします。</summary>
     IAsyncEnumerable<WorkRecordDto> StreamRangeAsync(
         DateOnly startDate,
@@ -70,6 +73,10 @@ public interface IWorkRecordRepository
     /// <summary>現在のトランザクション内で、正規化済み記録を保存します。</summary>
     Task UpsertAsync(WorkRecordDto workRecord, CancellationToken cancellationToken);
 
+    /// <summary>操作識別子の永続一意制約を使用して、新規勤務を一度だけ保存します。</summary>
+    /// <returns>この呼出しで挿入した場合は <see langword="true"/>、既に同じ操作が確定済みの場合は <see langword="false"/>。</returns>
+    Task<bool> TryInsertAsync(WorkRecordDto workRecord, Guid operationId, CancellationToken cancellationToken);
+
     /// <summary>現在のトランザクション内で記録を削除します。</summary>
     Task DeleteAsync(WorkRecordId id, CancellationToken cancellationToken);
 }
@@ -77,6 +84,9 @@ public interface IWorkRecordRepository
 /// <summary>設定を読み取り、不変の月別スナップショットに対して唯一対応する変更操作を実行します。</summary>
 public interface ISettingSnapshotRepository
 {
+    /// <summary>識別子で不変の設定スナップショットを取得します。</summary>
+    Task<SettingSnapshot?> FindAsync(SettingSnapshotId id, CancellationToken cancellationToken);
+
     /// <summary>作成済みの場合、月から明示的に参照されているスナップショットを取得します。</summary>
     Task<SettingSnapshot?> FindForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken);
 
@@ -88,8 +98,9 @@ public interface ISettingSnapshotRepository
 
     /// <summary>現在の完全なスナップショットを原子的に複製し、給与設定を置換して、対象月だけの参照先を変更します。</summary>
     /// <remarks>この契約では、参照済みスナップショットまたはその子行を直接更新する操作を意図的に公開しません。</remarks>
-    Task<SettingSnapshot> CloneAndReplaceMonthSnapshotAsync(
+    Task<SettingSnapshot?> TryCloneAndReplaceMonthSnapshotAsync(
         YearMonth yearMonth,
+        SettingSnapshotId expectedCurrentSnapshotId,
         SettingSnapshotReplacementDto replacement,
         HolidayCalendarVersionId holidayCalendarVersionId,
         DateTimeOffset createdAtUtc,
@@ -99,11 +110,17 @@ public interface ISettingSnapshotRepository
 /// <summary>締め日ルールの履歴を保存します。</summary>
 public interface IClosingRuleRepository
 {
+    /// <summary>締め日履歴全体と、その同じ読取時点の不透明な版を取得します。</summary>
+    Task<ClosingRuleHistorySnapshot> GetSnapshotAsync(CancellationToken cancellationToken);
+
     /// <summary>締め日ルールを有効な給与期間の月順に取得します。</summary>
     Task<IReadOnlyList<ClosingRule>> GetHistoryAsync(CancellationToken cancellationToken);
 
     /// <summary>過去の履歴を変更せず、指定した有効月のルールを原子的に置換します。</summary>
-    Task ReplaceEffectiveRuleAsync(ClosingRule rule, CancellationToken cancellationToken);
+    Task<bool> TryReplaceEffectiveRuleAsync(
+        ClosingRule rule,
+        ClosingRuleHistoryVersion expectedVersion,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>給与期間に直接適用する手当を保存します。</summary>

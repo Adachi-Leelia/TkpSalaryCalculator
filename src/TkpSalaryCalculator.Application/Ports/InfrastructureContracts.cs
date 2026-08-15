@@ -23,6 +23,13 @@ public interface IUtcClock
     DateTimeOffset UtcNow { get; }
 }
 
+/// <summary>端末の現在のタイムゾーン規則を使用してUTC日時を現地日付へ変換します。</summary>
+public interface ILocalDateConverter
+{
+    /// <summary>指定したUTC日時に対応する端末現地日付を返します。</summary>
+    DateOnly ToLocalDate(DateTimeOffset utcDateTime);
+}
+
 /// <summary>論理エクスポートレコードを単一の UTF-8 JSON 文書へ逐次シリアル化します。</summary>
 public interface IJsonExportStream
 {
@@ -53,6 +60,13 @@ public interface IJsonImportStream
 /// <summary>本番の論理データセットをエクスポート順でストリーミングします。</summary>
 public interface IExportDataSource
 {
+    /// <summary>エクスポート完了まで一貫した読取スナップショットを保持するセッションを開始します。</summary>
+    Task<IExportReadSession> OpenReadSessionAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>エクスポート中の同時更新に影響されない一貫した読取セッションを表します。</summary>
+public interface IExportReadSession : IAsyncDisposable
+{
     /// <summary>設定、シフト、勤務、手当、および祝日結果の再現に必要なデータだけを返します。</summary>
     IAsyncEnumerable<DataTransferRecord> StreamAsync(CancellationToken cancellationToken);
 }
@@ -75,7 +89,7 @@ public interface IImportStagingRepository
         CancellationToken cancellationToken);
 
     /// <summary>検証済みの準備領域を使用して、本番データをすべて原子的に置換します。</summary>
-    Task ReplaceLiveDataAsync(
+    Task<bool> TryConsumeAndReplaceLiveDataAsync(
         PreparedImportId preparedImportId,
         DateTimeOffset importedAtUtc,
         CancellationToken cancellationToken);

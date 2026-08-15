@@ -97,6 +97,7 @@ public interface IMonthSettingsUseCase
     Task<MonthSettingsDto> CloneAndReplaceAsync(
         YearMonth yearMonth,
         SettingSnapshotReplacementDto replacement,
+        SettingReplacementConfirmationToken confirmationToken,
         CancellationToken cancellationToken);
 
     /// <summary>選択月を前月の給与設定で置換した場合の結果をプレビューします。</summary>
@@ -107,12 +108,18 @@ public interface IMonthSettingsUseCase
     /// <summary>対象月の新しい祝日バージョンを維持しながら、前月の給与設定を原子的に複製します。</summary>
     Task<MonthSettingsDto> CopyPreviousMonthAsync(
         YearMonth yearMonth,
+        SettingReplacementConfirmationToken confirmationToken,
         CancellationToken cancellationToken);
 }
 
 /// <summary>給与期間ルールと直接適用する月額手当をプレゼンテーション層へ公開します。</summary>
 public interface IPayrollPeriodSettingsUseCase
 {
+    /// <summary>締め日変更後の最初の給与期間を、副作用なく現在の期間と比較します。</summary>
+    Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
+        ReplaceClosingRuleCommand command,
+        CancellationToken cancellationToken);
+
     /// <summary>指定した給与期間キーに対して有効な締め日ルールを取得します。</summary>
     /// <returns>有効なルール。初期設定で締め日ルールの履歴がまだ作成されていない場合は <see langword="null"/>。</returns>
     Task<EffectiveClosingRuleDto?> GetClosingRuleAsync(
@@ -120,7 +127,10 @@ public interface IPayrollPeriodSettingsUseCase
         CancellationToken cancellationToken);
 
     /// <summary>指定した給与期間の月から有効な締め日ルールを原子的に置換します。</summary>
-    Task ReplaceClosingRuleAsync(ReplaceClosingRuleCommand command, CancellationToken cancellationToken);
+    Task ReplaceClosingRuleAsync(
+        ReplaceClosingRuleCommand command,
+        ClosingRuleReplacementConfirmationToken confirmationToken,
+        CancellationToken cancellationToken);
 
     /// <summary>1 給与期間分の手当をすべて取得します。</summary>
     Task<IReadOnlyList<MonthlyAllowanceDto>> GetAllowancesAsync(
