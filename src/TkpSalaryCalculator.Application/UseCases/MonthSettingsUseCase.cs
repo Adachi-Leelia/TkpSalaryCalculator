@@ -11,29 +11,19 @@ using System.Text;
 namespace TkpSalaryCalculator.Application.UseCases;
 
 /// <summary>不変スナップショットの影響確認、対象月だけの置換、および前月コピーを実装します。</summary>
-public sealed class MonthSettingsUseCase : IMonthSettingsUseCase
+/// <remarks>必要なポートとドメインサービスを指定して生成します。</remarks>
+public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IWorkRecordRepository records,
+    IHolidayCalendarRepository holidays, ISalaryCalculator calculator, ITransactionRunner transactions,
+    IAppMetadataRepository metadata, IUtcClock clock) : IMonthSettingsUseCase
 {
-    private readonly ISettingSnapshotRepository settings;
-    private readonly IWorkRecordRepository records;
-    private readonly IHolidayCalendarRepository holidays;
-    private readonly ISalaryCalculator calculator;
-    private readonly ITransactionRunner transactions;
-    private readonly IAppMetadataRepository metadata;
-    private readonly IUtcClock clock;
+    private readonly ISettingSnapshotRepository settings = settings ?? throw new ArgumentNullException(nameof(settings));
+    private readonly IWorkRecordRepository records = records ?? throw new ArgumentNullException(nameof(records));
+    private readonly IHolidayCalendarRepository holidays = holidays ?? throw new ArgumentNullException(nameof(holidays));
+    private readonly ISalaryCalculator calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
+    private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
+    private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
 
-    /// <summary>必要なポートとドメインサービスを指定して生成します。</summary>
-    public MonthSettingsUseCase(ISettingSnapshotRepository settings, IWorkRecordRepository records,
-        IHolidayCalendarRepository holidays, ISalaryCalculator calculator, ITransactionRunner transactions,
-        IAppMetadataRepository metadata, IUtcClock clock)
-    {
-        this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        this.records = records ?? throw new ArgumentNullException(nameof(records));
-        this.holidays = holidays ?? throw new ArgumentNullException(nameof(holidays));
-        this.calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
-        this.transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
-        this.metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
-        this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
-    }
 
     /// <inheritdoc />
     public async Task<MonthSettingsDto> GetAsync(YearMonth yearMonth, CancellationToken cancellationToken)
@@ -160,7 +150,7 @@ public sealed class MonthSettingsUseCase : IMonthSettingsUseCase
             if (!Equals(before, after)) affected++;
             if (after.Status == SalaryCalculationStatus.Uncalculated) uncalculated++;
         }
-        return new(month, confirmation, affected, new YenAmount(currentTotal), new YenAmount(replacementTotal), uncalculated, Array.Empty<IssueDto>());
+        return new(month, confirmation, affected, new YenAmount(currentTotal), new YenAmount(replacementTotal), uncalculated, []);
     }
 
     private async Task ValidateConfirmationAsync(YearMonth month, SettingSnapshotReplacementDto replacement,
@@ -240,8 +230,12 @@ public sealed class MonthSettingsUseCase : IMonthSettingsUseCase
         builder.Append(';');
     }
 
-    private static ApplicationErrorException ChangedSincePreview() => new(
+    private static ApplicationErrorException ChangedSincePreview()
+    {
+        return new(
         "SETTINGS_PREVIEW_STALE", "確認後に対象月の設定または勤務が変更されました。影響をもう一度確認してください。");
+    }
+
 
     private static SettingSnapshotReplacementDto ValidateReplacement(SettingSnapshot current, SettingSnapshotReplacementDto replacement,
         HolidayCalendarVersionId holidayVersionId)
@@ -260,6 +254,10 @@ public sealed class MonthSettingsUseCase : IMonthSettingsUseCase
         }
     }
 
-    private static SettingSnapshotReplacementDto ToReplacement(SettingSnapshot value) => new(
+    private static SettingSnapshotReplacementDto ToReplacement(SettingSnapshot value)
+    {
+        return new(
         value.Services, value.TimeCategories, value.Rates, value.Premiums, value.CountBonuses);
+    }
+
 }

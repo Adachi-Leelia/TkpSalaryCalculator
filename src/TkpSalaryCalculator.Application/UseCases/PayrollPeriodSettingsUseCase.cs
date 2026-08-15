@@ -9,27 +9,17 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 namespace TkpSalaryCalculator.Application.UseCases;
 
 /// <summary>締め日履歴と給与期間へ直接関連付ける月額手当を管理します。</summary>
-public sealed class PayrollPeriodSettingsUseCase : IPayrollPeriodSettingsUseCase
+/// <remarks>必要なポートを指定して生成します。</remarks>
+public sealed class PayrollPeriodSettingsUseCase(IClosingRuleRepository closingRules,
+    IMonthlyAllowanceRepository allowances, ITransactionRunner transactions,
+    IAppMetadataRepository metadata, IUtcClock clock, IPayrollPeriodCalculator periodCalculator) : IPayrollPeriodSettingsUseCase
 {
-    private readonly IClosingRuleRepository closingRules;
-    private readonly IMonthlyAllowanceRepository allowances;
-    private readonly ITransactionRunner transactions;
-    private readonly IAppMetadataRepository metadata;
-    private readonly IUtcClock clock;
-    private readonly IPayrollPeriodCalculator periodCalculator;
-
-    /// <summary>必要なポートを指定して生成します。</summary>
-    public PayrollPeriodSettingsUseCase(IClosingRuleRepository closingRules,
-        IMonthlyAllowanceRepository allowances, ITransactionRunner transactions,
-        IAppMetadataRepository metadata, IUtcClock clock, IPayrollPeriodCalculator periodCalculator)
-    {
-        this.closingRules = closingRules ?? throw new ArgumentNullException(nameof(closingRules));
-        this.allowances = allowances ?? throw new ArgumentNullException(nameof(allowances));
-        this.transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
-        this.metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
-        this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        this.periodCalculator = periodCalculator ?? throw new ArgumentNullException(nameof(periodCalculator));
-    }
+    private readonly IClosingRuleRepository closingRules = closingRules ?? throw new ArgumentNullException(nameof(closingRules));
+    private readonly IMonthlyAllowanceRepository allowances = allowances ?? throw new ArgumentNullException(nameof(allowances));
+    private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
+    private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
+    private readonly IPayrollPeriodCalculator periodCalculator = periodCalculator ?? throw new ArgumentNullException(nameof(periodCalculator));
 
     /// <inheritdoc />
     public async Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
@@ -97,8 +87,7 @@ public sealed class PayrollPeriodSettingsUseCase : IPayrollPeriodSettingsUseCase
     {
         ApplicationSupport.ValidatePayrollPeriodKey(payrollPeriodKey, nameof(payrollPeriodKey));
         cancellationToken.ThrowIfCancellationRequested();
-        return (await allowances.GetForPeriodAsync(payrollPeriodKey, cancellationToken).ConfigureAwait(false))
-            .Select(x => new MonthlyAllowanceDto(x.Id, x.DisplayName, x.Amount)).ToArray();
+        return [.. (await allowances.GetForPeriodAsync(payrollPeriodKey, cancellationToken).ConfigureAwait(false)).Select(x => new MonthlyAllowanceDto(x.Id, x.DisplayName, x.Amount))];
     }
 
     /// <inheritdoc />
@@ -135,6 +124,10 @@ public sealed class PayrollPeriodSettingsUseCase : IPayrollPeriodSettingsUseCase
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    private static ApplicationErrorException ClosingHistoryChanged() => new(
+    private static ApplicationErrorException ClosingHistoryChanged()
+    {
+        return new(
         "CLOSING_RULE_PREVIEW_STALE", "確認後に締め日履歴が変更されました。給与期間をもう一度確認してください。");
+    }
+
 }

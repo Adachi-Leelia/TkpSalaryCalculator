@@ -8,32 +8,21 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 namespace TkpSalaryCalculator.Application.UseCases;
 
 /// <summary>勤務開始日の暦月設定を選択して、日別・暦月・給与期間の読取モデルを構築します。</summary>
-public sealed class SalaryQueryUseCase : ISalaryQueryUseCase
+/// <remarks>必要な読取ポートとドメインサービスを指定して生成します。</remarks>
+public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSnapshotRepository settings,
+    IHolidayCalendarRepository holidays, IClosingRuleRepository closingRules,
+    IMonthlyAllowanceRepository allowances, IBasicShiftRepository shifts,
+    ISalaryCalculator calculator, IPayrollPeriodCalculator periodCalculator) : ISalaryQueryUseCase
 {
-    private readonly IWorkRecordRepository records;
-    private readonly ISettingSnapshotRepository settings;
-    private readonly IHolidayCalendarRepository holidays;
-    private readonly IClosingRuleRepository closingRules;
-    private readonly IMonthlyAllowanceRepository allowances;
-    private readonly IBasicShiftRepository shifts;
-    private readonly ISalaryCalculator calculator;
-    private readonly IPayrollPeriodCalculator periodCalculator;
+    private readonly IWorkRecordRepository records = records ?? throw new ArgumentNullException(nameof(records));
+    private readonly ISettingSnapshotRepository settings = settings ?? throw new ArgumentNullException(nameof(settings));
+    private readonly IHolidayCalendarRepository holidays = holidays ?? throw new ArgumentNullException(nameof(holidays));
+    private readonly IClosingRuleRepository closingRules = closingRules ?? throw new ArgumentNullException(nameof(closingRules));
+    private readonly IMonthlyAllowanceRepository allowances = allowances ?? throw new ArgumentNullException(nameof(allowances));
+    private readonly IBasicShiftRepository shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
+    private readonly ISalaryCalculator calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
+    private readonly IPayrollPeriodCalculator periodCalculator = periodCalculator ?? throw new ArgumentNullException(nameof(periodCalculator));
 
-    /// <summary>必要な読取ポートとドメインサービスを指定して生成します。</summary>
-    public SalaryQueryUseCase(IWorkRecordRepository records, ISettingSnapshotRepository settings,
-        IHolidayCalendarRepository holidays, IClosingRuleRepository closingRules,
-        IMonthlyAllowanceRepository allowances, IBasicShiftRepository shifts,
-        ISalaryCalculator calculator, IPayrollPeriodCalculator periodCalculator)
-    {
-        this.records = records ?? throw new ArgumentNullException(nameof(records));
-        this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        this.holidays = holidays ?? throw new ArgumentNullException(nameof(holidays));
-        this.closingRules = closingRules ?? throw new ArgumentNullException(nameof(closingRules));
-        this.allowances = allowances ?? throw new ArgumentNullException(nameof(allowances));
-        this.shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
-        this.calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
-        this.periodCalculator = periodCalculator ?? throw new ArgumentNullException(nameof(periodCalculator));
-    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<CalendarDayDto>> GetCalendarMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
@@ -45,7 +34,7 @@ public sealed class SalaryQueryUseCase : ISalaryQueryUseCase
         var byDate = new Dictionary<DateOnly, List<WorkRecordDto>>();
         await foreach (var record in records.StreamRangeAsync(start, end, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            if (!byDate.TryGetValue(record.WorkDate, out var list)) byDate[record.WorkDate] = list = new();
+            if (!byDate.TryGetValue(record.WorkDate, out var list)) byDate[record.WorkDate] = list = [];
             list.Add(record);
         }
         var result = new List<CalendarDayDto>(end.Day);
@@ -81,7 +70,7 @@ public sealed class SalaryQueryUseCase : ISalaryQueryUseCase
         var byDate = new SortedDictionary<DateOnly, List<WorkRecordDto>>();
         await foreach (var record in records.StreamRangeAsync(period.StartDate, period.EndDate, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            if (!byDate.TryGetValue(record.WorkDate, out var list)) byDate[record.WorkDate] = list = new();
+            if (!byDate.TryGetValue(record.WorkDate, out var list)) byDate[record.WorkDate] = list = [];
             list.Add(record);
         }
         var days = new List<DailySalaryDto>();
@@ -95,7 +84,7 @@ public sealed class SalaryQueryUseCase : ISalaryQueryUseCase
         var periodAllowances = await allowances.GetForPeriodAsync(payrollPeriodKey, cancellationToken).ConfigureAwait(false);
         var aggregate = calculator.AggregatePeriod(period, domainDays, periodAllowances);
         return new(aggregate.Period, days,
-            periodAllowances.Select(x => new MonthlyAllowanceDto(x.Id, x.DisplayName, x.Amount)).ToArray(),
+            [.. periodAllowances.Select(x => new MonthlyAllowanceDto(x.Id, x.DisplayName, x.Amount))],
             aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
             aggregate.AllowanceSubtotal, aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
     }
@@ -108,12 +97,16 @@ public sealed class SalaryQueryUseCase : ISalaryQueryUseCase
             new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(value),
                 ApplicationSupport.ForCalculationDate(snapshot, value.WorkDate, holiday), holiday))).ToArray();
         var aggregate = calculator.AggregateDay(date, calculated);
-        return new(date, values.Zip(calculated, static (value, result) => new WorkRecordSalaryDto(value, result)).ToArray(),
+        return new(date, [.. values.Zip(calculated, static (value, result) => new WorkRecordSalaryDto(value, result))],
             aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
             aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
     }
 
-    private static DailySalaryCalculation ToDomain(DailySalaryDto value) => new(value.Date,
-        value.Records.Select(x => x.Calculation).ToArray(), value.BasePaySubtotal, value.PremiumSubtotal,
+    private static DailySalaryCalculation ToDomain(DailySalaryDto value)
+    {
+        return new(value.Date,
+        [.. value.Records.Select(x => x.Calculation)], value.BasePaySubtotal, value.PremiumSubtotal,
         value.CountBonusSubtotal, value.CalculatedSubtotal, value.UncalculatedCount);
+    }
+
 }

@@ -9,7 +9,7 @@ public sealed class ModelInvariantReviewTests
     public void EveryIdentifierRejectsGuidEmptyAndKeepsDeconstruction()
     {
         Action[] invalidConstructions =
-        {
+        [
             () => _ = new WorkRecordId(Guid.Empty),
             () => _ = new ServiceId(Guid.Empty),
             () => _ = new TimeCategoryId(Guid.Empty),
@@ -21,7 +21,7 @@ public sealed class ModelInvariantReviewTests
             () => _ = new HolidayCalendarVersionId(Guid.Empty),
             () => _ = new ServicePresetId(Guid.Empty),
             () => _ = new BasicShiftId(Guid.Empty),
-        };
+        ];
 
         foreach (var construction in invalidConstructions)
         {
@@ -155,19 +155,19 @@ public sealed class ModelInvariantReviewTests
     {
         var service = Service(TestData.ServiceId, "身体");
         Assert.Throws<ArgumentException>(() => Snapshot(
-            services: new[] { service, service }));
+            services: [service, service]));
 
         var category = Category(TestData.CategoryId, TestData.ServiceId, "30分");
         Assert.Throws<ArgumentException>(() => Snapshot(
-            timeCategories: new[] { category, category }));
+            timeCategories: [category, category]));
 
         var premium = TestData.FixedPerRecordPremium(100);
         Assert.Throws<ArgumentException>(() => Snapshot(
-            premiums: new[] { premium, premium }));
+            premiums: [premium, premium]));
 
         var bonus = TestData.CountBonus(100);
         Assert.Throws<ArgumentException>(() => Snapshot(
-            bonuses: new[] { bonus, bonus }));
+            bonuses: [bonus, bonus]));
     }
 
     [Fact]
@@ -175,13 +175,13 @@ public sealed class ModelInvariantReviewTests
     {
         var missingService = new ServiceId(Guid.NewGuid());
         Assert.Throws<ArgumentException>(() => Snapshot(
-            timeCategories: new[] { Category(TestData.CategoryId, missingService, "30分") }));
+            timeCategories: [Category(TestData.CategoryId, missingService, "30分")]));
 
         var premium = Premium(
             PremiumCalculationType.FixedPerRecord,
             amount: new YenAmount(100),
             serviceIds: new HashSet<ServiceId> { missingService });
-        Assert.Throws<ArgumentException>(() => Snapshot(premiums: new[] { premium }));
+        Assert.Throws<ArgumentException>(() => Snapshot(premiums: [premium]));
 
         var bonus = new SnapshotCountBonus(
             new CountBonusId(Guid.NewGuid()),
@@ -189,7 +189,7 @@ public sealed class ModelInvariantReviewTests
             new YenAmount(100),
             new HashSet<ServiceId> { missingService },
             true);
-        Assert.Throws<ArgumentException>(() => Snapshot(bonuses: new[] { bonus }));
+        Assert.Throws<ArgumentException>(() => Snapshot(bonuses: [bonus]));
     }
 
     [Fact]
@@ -197,16 +197,16 @@ public sealed class ModelInvariantReviewTests
     {
         var secondServiceId = new ServiceId(Guid.NewGuid());
         var snapshot = Snapshot(
-            services: new[]
-            {
+            services:
+            [
                 Service(TestData.ServiceId, "身体"),
                 Service(secondServiceId, "生活"),
-            },
-            timeCategories: new[]
-            {
+            ],
+            timeCategories:
+            [
                 Category(TestData.CategoryId, TestData.ServiceId, "30分"),
                 Category(new TimeCategoryId(Guid.NewGuid()), secondServiceId, "30分"),
-            });
+            ]);
 
         Assert.Equal(2, snapshot.TimeCategories.Count);
     }
@@ -226,8 +226,9 @@ public sealed class ModelInvariantReviewTests
         YenAmount? amount = null,
         MinuteOfDay? start = null,
         MinuteOfDay? end = null,
-        IReadOnlySet<ServiceId>? serviceIds = null) =>
-        new(
+        IReadOnlySet<ServiceId>? serviceIds = null)
+    {
+        return new(
             new PremiumId(Guid.NewGuid()),
             "割増",
             type,
@@ -240,6 +241,8 @@ public sealed class ModelInvariantReviewTests
             new HashSet<DateOnly>(),
             serviceIds ?? new HashSet<ServiceId>(),
             true);
+    }
+
 
     private static SettingSnapshot Snapshot(
         IReadOnlyList<SnapshotService>? services = null,
@@ -247,22 +250,31 @@ public sealed class ModelInvariantReviewTests
         IReadOnlyList<SnapshotRate>? rates = null,
         IReadOnlyList<SnapshotPremium>? premiums = null,
         IReadOnlyList<SnapshotCountBonus>? bonuses = null,
-        DateTimeOffset? createdAtUtc = null) =>
-        new(
+        DateTimeOffset? createdAtUtc = null)
+    {
+        return new(
             new SettingSnapshotId(Guid.NewGuid()),
             null,
             TestData.HolidayVersionId,
             new SchemaVersion(1),
             createdAtUtc ?? new DateTimeOffset(2026, 8, 15, 0, 0, 0, TimeSpan.Zero),
-            services ?? new[] { Service(TestData.ServiceId, "身体") },
-            timeCategories ?? Array.Empty<SnapshotTimeCategory>(),
-            rates ?? Array.Empty<SnapshotRate>(),
-            premiums ?? Array.Empty<SnapshotPremium>(),
-            bonuses ?? Array.Empty<SnapshotCountBonus>());
+            services ?? [Service(TestData.ServiceId, "身体")],
+            timeCategories ?? [],
+            rates ?? [],
+            premiums ?? [],
+            bonuses ?? []);
+    }
 
-    private static SnapshotService Service(ServiceId id, string name) =>
-        new(id, name, new DisplayOrder(0), true);
 
-    private static SnapshotTimeCategory Category(TimeCategoryId id, ServiceId serviceId, string name) =>
-        new(id, serviceId, name, new WorkMinutes(30), new DisplayOrder(0), true);
+    private static SnapshotService Service(ServiceId id, string name)
+    {
+        return new(id, name, new DisplayOrder(0), true);
+    }
+
+
+    private static SnapshotTimeCategory Category(TimeCategoryId id, ServiceId serviceId, string name)
+    {
+        return new(id, serviceId, name, new WorkMinutes(30), new DisplayOrder(0), true);
+    }
+
 }

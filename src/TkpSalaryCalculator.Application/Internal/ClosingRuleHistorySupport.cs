@@ -10,7 +10,7 @@ internal static class ClosingRuleHistorySupport
     public static IReadOnlyList<ClosingRule> ForCalculation(IReadOnlyList<ClosingRule> history)
     {
         ArgumentNullException.ThrowIfNull(history);
-        return history.OrderBy(x => x.EffectiveFrom.Value).ToArray();
+        return [.. history.OrderBy(x => x.EffectiveFrom.Value)];
     }
 
     public static IReadOnlyList<ClosingRule> WithReplacementForCalculation(
@@ -20,7 +20,7 @@ internal static class ClosingRuleHistorySupport
         var persistedReplacement = history.Count == 0
             ? new ClosingRule(replacement.Id, Baseline, replacement.ClosingDay)
             : replacement;
-        return ForCalculation(history.Where(x => x.EffectiveFrom != persistedReplacement.EffectiveFrom)
-            .Append(persistedReplacement).ToArray());
+        return ForCalculation([.. history.Where(x => x.EffectiveFrom != persistedReplacement.EffectiveFrom)
+, persistedReplacement]);
     }
 }

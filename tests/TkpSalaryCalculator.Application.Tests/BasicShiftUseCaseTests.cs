@@ -2,10 +2,14 @@ namespace TkpSalaryCalculator.Application.Tests;
 
 public sealed class BasicShiftUseCaseTests
 {
-    private static BasicShiftDto Shift(BasicShiftId? id = null, int order = 0, bool enabled = true) => new(
+    private static BasicShiftDto Shift(BasicShiftId? id = null, int order = 0, bool enabled = true)
+    {
+        return new(
         id ?? new BasicShiftId(Guid.NewGuid()), DayOfWeek.Saturday, null, TestData.ServiceId,
         TestData.CategoryId, WorkInputMode.Duration, new WorkMinutes(60), null, null,
         new DisplayOrder(order), enabled);
+    }
+
 
     [Fact]
     public async Task GetForWeekday_ReturnsDisplayOrder()
@@ -41,7 +45,7 @@ public sealed class BasicShiftUseCaseTests
         var context = new TestContext();
         context.Shifts.Values.AddRange([Shift(order: 0), Shift(order: 1)]);
 
-        var result = await context.ShiftUseCase().ApplyAsync(new(new(2026, 8, 1), context.Shifts.Values.Select(x => x.Id).ToArray()), default);
+        var result = await context.ShiftUseCase().ApplyAsync(new(new(2026, 8, 1), [.. context.Shifts.Values.Select(x => x.Id)]), default);
 
         Assert.Equal(2, result.Count);
         Assert.Equal(2, result.Select(x => x.WorkRecord.Id).Distinct().Count());
@@ -103,7 +107,7 @@ public sealed class BasicShiftUseCaseTests
         context.Works.UpsertFailure = new InvalidOperationException("db");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => context.ShiftUseCase().ApplyAsync(
-            new(new(2026, 8, 1), context.Shifts.Values.Select(x => x.Id).ToArray()), default));
+            new(new(2026, 8, 1), [.. context.Shifts.Values.Select(x => x.Id)]), default));
 
         Assert.Equal(0, context.Transactions.Commits);
         Assert.Null(context.Metadata.Value.LastDataChangedAtUtc);
@@ -118,7 +122,7 @@ public sealed class BasicShiftUseCaseTests
         context.Works.UpsertFailureAtCall = 2;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => context.ShiftUseCase().ApplyAsync(
-            new(new(2026, 8, 1), context.Shifts.Values.Select(x => x.Id).ToArray()), default));
+            new(new(2026, 8, 1), [.. context.Shifts.Values.Select(x => x.Id)]), default));
 
         Assert.Equal(2, context.Works.UpsertCalls);
         Assert.Empty(context.Works.Values);

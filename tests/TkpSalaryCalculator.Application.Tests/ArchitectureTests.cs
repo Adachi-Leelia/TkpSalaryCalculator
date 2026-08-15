@@ -4,7 +4,7 @@ using TkpSalaryCalculator.Application.UseCases;
 
 namespace TkpSalaryCalculator.Application.Tests;
 
-public sealed class ArchitectureTests
+public sealed partial class ArchitectureTests
 {
     [Fact]
     public void ApplicationProject_ReferencesOnlyDomainProjectAndNoPlatformPackages()
@@ -40,8 +40,7 @@ public sealed class ArchitectureTests
             "Microsoft.Maui", "Android", "Microsoft.Data.Sqlite", "System.Data.SQLite",
             "TkpSalaryCalculator.Infrastructure", "TkpSalaryCalculator.Presentation"
         };
-        var usingPattern = new Regex(@"^\s*(?:global\s+)?using\s+(?<namespace>[A-Za-z0-9_.]+)",
-            RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        var usingPattern = MyRegex();
         foreach (var file in Directory.EnumerateFiles(applicationRoot, "*.cs", SearchOption.AllDirectories))
         {
             var source = File.ReadAllText(file);
@@ -57,4 +56,8 @@ public sealed class ArchitectureTests
         while (current is not null && !File.Exists(Path.Combine(current.FullName, "TkpSalaryCalculator.sln"))) current = current.Parent;
         return current?.FullName ?? throw new InvalidOperationException("Repository root not found.");
     }
+
+    [GeneratedRegex(@"^\s*(?:global\s+)?using\s+(?<namespace>[A-Za-z0-9_.]+)", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex MyRegex();
+
 }

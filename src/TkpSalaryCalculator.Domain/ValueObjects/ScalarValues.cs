@@ -41,7 +41,11 @@ public readonly record struct YearMonth : IComparable<YearMonth>
     }
 
     /// <summary>年と月へ分解します。</summary>
-    public void Deconstruct(out int year, out int month) => (year, month) = (Year, Month);
+    public void Deconstruct(out int year, out int month)
+    {
+        (year, month) = (Year, Month);
+    }
+
 }
 
 /// <summary>終了月によって給与期間を識別します。</summary>
@@ -58,7 +62,11 @@ public readonly record struct PayrollPeriodKey
     public YearMonth Value { get; }
 
     /// <summary>値へ分解します。</summary>
-    public void Deconstruct(out YearMonth Value) => Value = this.Value;
+    public void Deconstruct(out YearMonth Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>0以上の整数円を表します。</summary>
@@ -79,7 +87,11 @@ public readonly record struct YenAmount
     public long Value { get; }
 
     /// <summary>値へ分解します。</summary>
-    public void Deconstruct(out long Value) => Value = this.Value;
+    public void Deconstruct(out long Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>1分から1,440分までの勤務時間を表します。</summary>
@@ -100,7 +112,11 @@ public readonly record struct WorkMinutes
     public int Value { get; }
 
     /// <summary>値へ分解します。</summary>
-    public void Deconstruct(out int Value) => Value = this.Value;
+    public void Deconstruct(out int Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>現地時刻を午前0時からの経過分数で表します。</summary>
@@ -121,7 +137,11 @@ public readonly record struct MinuteOfDay
     public int Value { get; }
 
     /// <summary>値へ分解します。</summary>
-    public void Deconstruct(out int Value) => Value = this.Value;
+    public void Deconstruct(out int Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>10,000を100%とする0以上の割合を表します。</summary>
@@ -142,7 +162,11 @@ public readonly record struct BasisPoints
     public int Value { get; }
 
     /// <summary>値へ分解します。</summary>
-    public void Deconstruct(out int Value) => Value = this.Value;
+    public void Deconstruct(out int Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>0以上の表示順を表します。</summary>
@@ -163,7 +187,11 @@ public readonly record struct DisplayOrder
     public int Value { get; }
 
     /// <summary>値へ分解します。</summary>
-    public void Deconstruct(out int Value) => Value = this.Value;
+    public void Deconstruct(out int Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>1以上のスキーマバージョンを表します。</summary>
@@ -184,7 +212,11 @@ public readonly record struct SchemaVersion
     public int Value { get; }
 
     /// <summary>値へ分解します。</summary>
-    public void Deconstruct(out int Value) => Value = this.Value;
+    public void Deconstruct(out int Value)
+    {
+        Value = this.Value;
+    }
+
 }
 
 /// <summary>勤務時間の入力方式を定義します。</summary>
@@ -230,8 +262,11 @@ internal static class DomainValueGuard
         }
     }
 
-    public static void ValidPayrollPeriodKey(PayrollPeriodKey value, string parameterName) =>
+    public static void ValidPayrollPeriodKey(PayrollPeriodKey value, string parameterName)
+    {
         ValidYearMonth(value.Value, parameterName);
+    }
+
 
     public static void NonNegative(YenAmount value, string parameterName)
     {

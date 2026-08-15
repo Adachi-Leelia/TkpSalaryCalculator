@@ -6,7 +6,10 @@ using TkpSalaryCalculator.Application.Ports;
 namespace TkpSalaryCalculator.Application.UseCases;
 
 /// <summary>ストリーミングエクスポートと、確認前に隔離する全置換インポートを実装します。</summary>
-public sealed class DataTransferUseCase : IDataTransferUseCase
+/// <remarks>必要なストリーム、ステージング、およびメタデータポートを指定して生成します。</remarks>
+public sealed class DataTransferUseCase(IJsonExportStream exportStream, IJsonImportStream importStream,
+    IExportDataSource exportData, IImportStagingRepository staging, IAppMetadataRepository metadata,
+    ITransactionRunner transactions, IUtcClock clock) : IDataTransferUseCase
 {
     /// <summary>現在の安定したエクスポート形式識別子です。</summary>
     public const string FormatName = "tkp-salary-calculator";
@@ -14,27 +17,14 @@ public sealed class DataTransferUseCase : IDataTransferUseCase
     public const int CurrentFormatVersion = 1;
     private const int BatchSize = 256;
 
-    private readonly IJsonExportStream exportStream;
-    private readonly IJsonImportStream importStream;
-    private readonly IExportDataSource exportData;
-    private readonly IImportStagingRepository staging;
-    private readonly IAppMetadataRepository metadata;
-    private readonly ITransactionRunner transactions;
-    private readonly IUtcClock clock;
+    private readonly IJsonExportStream exportStream = exportStream ?? throw new ArgumentNullException(nameof(exportStream));
+    private readonly IJsonImportStream importStream = importStream ?? throw new ArgumentNullException(nameof(importStream));
+    private readonly IExportDataSource exportData = exportData ?? throw new ArgumentNullException(nameof(exportData));
+    private readonly IImportStagingRepository staging = staging ?? throw new ArgumentNullException(nameof(staging));
+    private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+    private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
 
-    /// <summary>必要なストリーム、ステージング、およびメタデータポートを指定して生成します。</summary>
-    public DataTransferUseCase(IJsonExportStream exportStream, IJsonImportStream importStream,
-        IExportDataSource exportData, IImportStagingRepository staging, IAppMetadataRepository metadata,
-        ITransactionRunner transactions, IUtcClock clock)
-    {
-        this.exportStream = exportStream ?? throw new ArgumentNullException(nameof(exportStream));
-        this.importStream = importStream ?? throw new ArgumentNullException(nameof(importStream));
-        this.exportData = exportData ?? throw new ArgumentNullException(nameof(exportData));
-        this.staging = staging ?? throw new ArgumentNullException(nameof(staging));
-        this.metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
-        this.transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
-        this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
-    }
 
     /// <inheritdoc />
     public Task<DataTransferFormatDto> GetFormatAsync(CancellationToken cancellationToken)
@@ -76,7 +66,7 @@ public sealed class DataTransferUseCase : IDataTransferUseCase
                 if (record is null) throw new ApplicationErrorException("IMPORT_RECORD_INVALID", "インポートファイルに不正なデータがあります。");
                 batch.Add(record);
                 if (batch.Count < BatchSize) continue;
-                await staging.AppendBatchAsync(id, batch.ToArray(), cancellationToken).ConfigureAwait(false);
+                await staging.AppendBatchAsync(id, [.. batch], cancellationToken).ConfigureAwait(false);
                 batch.Clear();
             }
             if (batch.Count != 0) await staging.AppendBatchAsync(id, batch, cancellationToken).ConfigureAwait(false);

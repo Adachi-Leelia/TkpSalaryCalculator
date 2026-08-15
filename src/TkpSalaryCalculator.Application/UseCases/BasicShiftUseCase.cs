@@ -9,39 +9,28 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 namespace TkpSalaryCalculator.Application.UseCases;
 
 /// <summary>曜日別基本シフトの管理、反映前確認、および重複を防止した反映を実装します。</summary>
-public sealed class BasicShiftUseCase : IBasicShiftUseCase
+/// <remarks>必要なポートとドメインサービスを指定して生成します。</remarks>
+public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordRepository records,
+    ISettingSnapshotRepository settings, IHolidayCalendarRepository holidays, ISalaryCalculator calculator,
+    ITransactionRunner transactions, IAppMetadataRepository metadata, IUtcClock clock) : IBasicShiftUseCase
 {
-    private readonly IBasicShiftRepository shifts;
-    private readonly IWorkRecordRepository records;
-    private readonly ISettingSnapshotRepository settings;
-    private readonly IHolidayCalendarRepository holidays;
-    private readonly ISalaryCalculator calculator;
-    private readonly ITransactionRunner transactions;
-    private readonly IAppMetadataRepository metadata;
-    private readonly IUtcClock clock;
+    private readonly IBasicShiftRepository shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
+    private readonly IWorkRecordRepository records = records ?? throw new ArgumentNullException(nameof(records));
+    private readonly ISettingSnapshotRepository settings = settings ?? throw new ArgumentNullException(nameof(settings));
+    private readonly IHolidayCalendarRepository holidays = holidays ?? throw new ArgumentNullException(nameof(holidays));
+    private readonly ISalaryCalculator calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
+    private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
+    private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
 
-    /// <summary>必要なポートとドメインサービスを指定して生成します。</summary>
-    public BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordRepository records,
-        ISettingSnapshotRepository settings, IHolidayCalendarRepository holidays, ISalaryCalculator calculator,
-        ITransactionRunner transactions, IAppMetadataRepository metadata, IUtcClock clock)
-    {
-        this.shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
-        this.records = records ?? throw new ArgumentNullException(nameof(records));
-        this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        this.holidays = holidays ?? throw new ArgumentNullException(nameof(holidays));
-        this.calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
-        this.transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
-        this.metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
-        this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
-    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday, CancellationToken cancellationToken)
     {
         if (!Enum.IsDefined(weekday)) throw new ArgumentOutOfRangeException(nameof(weekday));
         cancellationToken.ThrowIfCancellationRequested();
-        return (await shifts.GetForWeekdayAsync(weekday, cancellationToken).ConfigureAwait(false))
-            .OrderBy(x => x.DisplayOrder.Value).ThenBy(x => x.Id.Value).ToArray();
+        return [.. (await shifts.GetForWeekdayAsync(weekday, cancellationToken).ConfigureAwait(false))
+            .OrderBy(x => x.DisplayOrder.Value).ThenBy(x => x.Id.Value)];
     }
 
     /// <inheritdoc />
@@ -52,12 +41,12 @@ public sealed class BasicShiftUseCase : IBasicShiftUseCase
         ApplicationSupport.ValidateId(command.ServiceId.Value, nameof(command.ServiceId));
         if (command.TimeCategoryId is { } categoryId) ApplicationSupport.ValidateId(categoryId.Value, nameof(command.TimeCategoryId));
         if (!Enum.IsDefined(command.Weekday)) throw new ApplicationErrorException("SHIFT_WEEKDAY_INVALID", "曜日を選び直してください。", "Weekday");
-        var normalized = ApplicationSupport.Normalize(command.InputMode, command.WorkMinutes, command.StartTime, command.EndTime, false);
-        if (normalized.Issues.Count != 0 || normalized.Minutes is null)
-            throw new ApplicationErrorException(normalized.Issues.First().Code, normalized.Issues.First().Message, normalized.Issues.First().Field);
+        var (Minutes, Start, End, Issues) = ApplicationSupport.Normalize(command.InputMode, command.WorkMinutes, command.StartTime, command.EndTime, false);
+        if (Issues.Count != 0 || Minutes is null)
+            throw new ApplicationErrorException(Issues[0].Code, Issues[0].Message, Issues[0].Field);
         var dto = new BasicShiftDto(command.Id ?? new BasicShiftId(Guid.NewGuid()), command.Weekday,
             command.ServicePresetId, command.ServiceId, command.TimeCategoryId, command.InputMode,
-            normalized.Minutes.Value, normalized.Start, normalized.End, command.DisplayOrder, command.IsEnabled);
+            Minutes.Value, Start, End, command.DisplayOrder, command.IsEnabled);
         await transactions.ExecuteAsync(async token =>
         {
             await shifts.UpsertAsync(dto, token).ConfigureAwait(false);

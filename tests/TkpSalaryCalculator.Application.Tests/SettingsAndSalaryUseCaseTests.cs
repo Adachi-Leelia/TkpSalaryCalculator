@@ -58,7 +58,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         var context = new TestContext();
         var current = TestData.Snapshot();
         var replacement = new SettingSnapshotReplacementDto(
-            new SnapshotService[] { null! },
+            [null!],
             current.TimeCategories,
             current.Rates,
             current.Premiums,

@@ -86,9 +86,15 @@ public sealed class PayrollPeriodHistoryReviewTests
         Assert.Throws<ArgumentNullException>(() => calculator.FindPeriod(new DateOnly(2026, 8, 1), null!));
     }
 
-    private PayrollPeriod GetPeriod(int year, int month, IReadOnlyList<ClosingRule> rules) =>
-        calculator.GetPeriod(Key(year, month), rules);
+    private PayrollPeriod GetPeriod(int year, int month, IReadOnlyList<ClosingRule> rules)
+    {
+        return calculator.GetPeriod(Key(year, month), rules);
+    }
 
-    private static PayrollPeriodKey Key(int year, int month) =>
-        new(new YearMonth(year, month));
+
+    private static PayrollPeriodKey Key(int year, int month)
+    {
+        return new(new YearMonth(year, month));
+    }
+
 }

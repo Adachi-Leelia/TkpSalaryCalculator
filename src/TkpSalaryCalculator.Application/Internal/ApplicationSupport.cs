@@ -9,12 +9,18 @@ namespace TkpSalaryCalculator.Application.Internal;
 
 internal static class ApplicationSupport
 {
-    public static readonly IReadOnlyList<IssueDto> NoIssues = Array.Empty<IssueDto>();
+    public static readonly IReadOnlyList<IssueDto> NoIssues = [];
 
-    public static void ThrowIfCancellationRequested(CancellationToken cancellationToken) =>
+    public static void ThrowIfCancellationRequested(CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
+    }
 
-    public static YearMonth ToYearMonth(DateOnly date) => new(date.Year, date.Month);
+    public static YearMonth ToYearMonth(DateOnly date)
+    {
+        return new(date.Year, date.Month);
+    }
+
 
     public static void ValidateYearMonth(YearMonth value, string parameterName)
     {
@@ -22,22 +28,34 @@ internal static class ApplicationSupport
             throw new ArgumentOutOfRangeException(parameterName, "年月を正しく指定してください。");
     }
 
-    public static void ValidatePayrollPeriodKey(PayrollPeriodKey value, string parameterName) =>
+    public static void ValidatePayrollPeriodKey(PayrollPeriodKey value, string parameterName)
+    {
         ValidateYearMonth(value.Value, parameterName);
+    }
+
 
     public static void ValidateId(Guid value, string parameterName)
     {
         if (value == Guid.Empty) throw new ArgumentException("識別子を指定してください。", parameterName);
     }
 
-    public static WorkRecord ToDomain(WorkRecordDto value) => new(
+    public static WorkRecord ToDomain(WorkRecordDto value)
+    {
+        return new(
         value.Id, value.WorkDate, value.ServiceId, value.TimeCategoryId, value.InputMode,
         value.WorkMinutes, value.StartTime, value.EndTime);
+    }
 
-    public static IssueDto Issue(string code, string message, string? field = null) => new(code, field, message);
+    public static IssueDto Issue(string code, string message, string? field = null)
+    {
+        return new(code, field, message);
+    }
 
-    public static ApplicationErrorException Invalid(string code, string message, string? field = null) =>
-        new(code, message, field);
+    public static ApplicationErrorException Invalid(string code, string message, string? field = null)
+    {
+        return new(code, message, field);
+    }
+
 
     public static (WorkMinutes? Minutes, MinuteOfDay? Start, MinuteOfDay? End, IReadOnlyList<IssueDto> Issues)
         Normalize(
@@ -88,8 +106,12 @@ internal static class ApplicationSupport
     }
 
     public static bool RequiresStartTime(SettingSnapshot settings, ServiceId serviceId, DateOnly workDate,
-        HolidayCalendar holidayCalendar) => settings.Premiums.Any(p => p.IsEnabled && p.StartTime is not null &&
+        HolidayCalendar holidayCalendar)
+    {
+        return settings.Premiums.Any(p => p.IsEnabled && p.StartTime is not null &&
             (p.ServiceIds.Count == 0 || p.ServiceIds.Contains(serviceId)) && MatchesDate(p, workDate, holidayCalendar));
+    }
+
 
     public static IReadOnlyList<IssueDto> ValidateSelection(
         SettingSnapshot settings,
@@ -110,10 +132,12 @@ internal static class ApplicationSupport
         return issues;
     }
 
-    public static IReadOnlyList<IssueDto> CalculationIssues(WorkSalaryCalculation calculation) =>
-        calculation.MissingRequirements.Select(x => Issue(
-            $"CALC_{x.Code}", "給与計算に必要な設定が不足しています。設定画面で内容を確認してください。"))
-            .ToArray();
+    public static IReadOnlyList<IssueDto> CalculationIssues(WorkSalaryCalculation calculation)
+    {
+        return [.. calculation.MissingRequirements.Select(x => Issue(
+            $"CALC_{x.Code}", "給与計算に必要な設定が不足しています。設定画面で内容を確認してください。"))];
+    }
+
 
     public static async Task<WorkSalaryCalculation> CalculateAsync(
         WorkRecordDto record,
@@ -145,6 +169,9 @@ internal static class ApplicationSupport
     public static async Task MarkChangedAsync(
         IAppMetadataRepository metadata,
         IUtcClock clock,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken)
+    {
         await metadata.SetLastDataChangedAtUtcAsync(clock.UtcNow.ToUniversalTime(), cancellationToken).ConfigureAwait(false);
+    }
+
 }

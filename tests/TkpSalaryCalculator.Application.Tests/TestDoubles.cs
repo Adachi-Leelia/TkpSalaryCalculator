@@ -10,22 +10,33 @@ internal static class TestData
 
     public static SettingSnapshot Snapshot(YearMonth? month = null, bool serviceEnabled = true,
         bool categoryEnabled = true, IReadOnlyList<SnapshotPremium>? premiums = null,
-        IReadOnlyList<SnapshotCountBonus>? bonuses = null) => new(
+        IReadOnlyList<SnapshotCountBonus>? bonuses = null)
+    {
+        return new(
         new SettingSnapshotId(Guid.NewGuid()), null, HolidayId, new SchemaVersion(1), DateTimeOffset.UnixEpoch,
         [new SnapshotService(ServiceId, "訪問", new DisplayOrder(0), serviceEnabled)],
         [new SnapshotTimeCategory(CategoryId, ServiceId, "60分", new WorkMinutes(60), new DisplayOrder(0), categoryEnabled)],
         [new SnapshotRate(ServiceId, CategoryId, RateType.FixedPerRecord, new YenAmount(1000)),
          new SnapshotRate(ServiceId, null, RateType.Hourly, new YenAmount(1200))],
         premiums ?? [], bonuses ?? []);
+    }
+
 
     public static WorkRecordDto Work(DateOnly date, WorkRecordId? id = null, BasicShiftId? shiftId = null,
-        WorkMinutes? minutes = null) => new(id ?? new WorkRecordId(Guid.NewGuid()), date, ServiceId, CategoryId,
+        WorkMinutes? minutes = null)
+    {
+        return new(id ?? new WorkRecordId(Guid.NewGuid()), date, ServiceId, CategoryId,
         WorkInputMode.Duration, minutes ?? new WorkMinutes(60), null, null, null, shiftId, null);
+    }
+
 
     public static SaveWorkRecordCommand SaveCommand(DateOnly date, WorkMinutes? minutes = null,
-        MinuteOfDay? start = null, WorkInputMode mode = WorkInputMode.Duration, MinuteOfDay? end = null) =>
-        new(null, date, ServiceId, CategoryId, mode,
+        MinuteOfDay? start = null, WorkInputMode mode = WorkInputMode.Duration, MinuteOfDay? end = null)
+    {
+        return new(null, date, ServiceId, CategoryId, mode,
             mode == WorkInputMode.Duration ? minutes ?? new WorkMinutes(60) : null, start, end, null, Guid.NewGuid());
+    }
+
 }
 
 internal sealed class FakeClock(DateTimeOffset now) : IUtcClock
@@ -35,8 +46,11 @@ internal sealed class FakeClock(DateTimeOffset now) : IUtcClock
 
 internal sealed class FakeLocalDateConverter(TimeSpan offset) : ILocalDateConverter
 {
-    public DateOnly ToLocalDate(DateTimeOffset utcDateTime) =>
-        DateOnly.FromDateTime(utcDateTime.ToOffset(offset).DateTime);
+    public DateOnly ToLocalDate(DateTimeOffset utcDateTime)
+    {
+        return DateOnly.FromDateTime(utcDateTime.ToOffset(offset).DateTime);
+    }
+
 }
 
 internal interface ITransactionalFakeState
@@ -50,7 +64,12 @@ internal sealed class FakeTransactionRunner : ITransactionRunner
     private readonly List<ITransactionalFakeState> participants = [];
     public int Calls { get; private set; }
     public int Commits { get; private set; }
-    public void Register(params ITransactionalFakeState[] values) => participants.AddRange(values);
+    public void Register(params ITransactionalFakeState[] values)
+    {
+        participants.AddRange(values);
+    }
+
+
     public async Task ExecuteAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
     {
         Calls++;
@@ -62,7 +81,7 @@ internal sealed class FakeTransactionRunner : ITransactionRunner
         }
         catch
         {
-            foreach (var value in snapshots.Reverse()) value.Participant.RestoreState(value.State);
+            foreach (var (Participant, State) in snapshots.Reverse()) Participant.RestoreState(State);
             throw;
         }
     }
@@ -78,7 +97,7 @@ internal sealed class FakeTransactionRunner : ITransactionRunner
         }
         catch
         {
-            foreach (var value in snapshots.Reverse()) value.Participant.RestoreState(value.State);
+            foreach (var (Participant, State) in snapshots.Reverse()) Participant.RestoreState(State);
             throw;
         }
     }
@@ -88,7 +107,12 @@ internal sealed class FakeMetadataRepository : IAppMetadataRepository, ITransact
 {
     public AppMetadata Value { get; set; } = new(InitialSetupStatus.NotStarted, null, null, 1, null, null, null);
     public Exception? SetLastDataChangedFailure { get; set; }
-    public Task<AppMetadata> GetAsync(CancellationToken cancellationToken) => Task.FromResult(Value);
+    public Task<AppMetadata> GetAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Value);
+    }
+
+
     public Task SetInitialSetupAsync(InitialSetupStatus status, string? step, SettingSnapshotId? initialSnapshotId, CancellationToken cancellationToken)
     { Value = Value with { InitialSetupStatus = status, InitialSetupStep = step, InitialSnapshotId = initialSnapshotId }; return Task.CompletedTask; }
     public Task SetExportFormatVersionAsync(int exportFormatVersion, CancellationToken cancellationToken)
@@ -103,8 +127,17 @@ internal sealed class FakeMetadataRepository : IAppMetadataRepository, ITransact
     { Value = Value with { LastExportedAtUtc = exportedAtUtc }; return Task.CompletedTask; }
     public Task SetBackupReminderDeferredUntilDateAsync(DateOnly? deferredUntilDate, CancellationToken cancellationToken)
     { Value = Value with { BackupReminderDeferredUntilDate = deferredUntilDate }; return Task.CompletedTask; }
-    public object CaptureState() => Value;
-    public void RestoreState(object snapshot) => Value = (AppMetadata)snapshot;
+    public object CaptureState()
+    {
+        return Value;
+    }
+
+
+    public void RestoreState(object snapshot)
+    {
+        Value = (AppMetadata)snapshot;
+    }
+
 }
 
 internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactionalFakeState
@@ -115,14 +148,33 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
     public int? UpsertFailureAtCall { get; set; }
     public TaskCompletionSource? UpsertGate { get; set; }
     public int UpsertCalls { get; private set; }
-    public Task<bool> AnyAsync(CancellationToken cancellationToken) => Task.FromResult(Values.Count != 0);
-    public Task<WorkRecordDto?> FindMostRecentAsync(CancellationToken cancellationToken) => Task.FromResult(Values.LastOrDefault());
-    public Task<IReadOnlyDictionary<ServicePresetId, long>> GetServicePresetUsageCountsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<ServicePresetId, long>>(Values.Where(x => x.SourceServicePresetId is not null)
-            .GroupBy(x => x.SourceServicePresetId!.Value).ToDictionary(x => x.Key, x => (long)x.Count()));
-    public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken) => Task.FromResult(Values.FirstOrDefault(x => x.Id == id));
-    public Task<WorkRecordDto?> FindBySaveOperationIdAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult(operations.TryGetValue(operationId, out var id) ? Values.FirstOrDefault(x => x.Id == id) : null);
+    public Task<bool> AnyAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Values.Count != 0);
+    }
+
+    public Task<WorkRecordDto?> FindMostRecentAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Values.LastOrDefault());
+    }
+
+    public Task<IReadOnlyDictionary<ServicePresetId, long>> GetServicePresetUsageCountsAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult<IReadOnlyDictionary<ServicePresetId, long>>(Values.Where(x => x.SourceServicePresetId is not null)
+                .GroupBy(x => x.SourceServicePresetId!.Value).ToDictionary(x => x.Key, x => (long)x.Count()));
+    }
+
+    public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Values.FirstOrDefault(x => x.Id == id));
+    }
+
+    public Task<WorkRecordDto?> FindBySaveOperationIdAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(operations.TryGetValue(operationId, out var id) ? Values.FirstOrDefault(x => x.Id == id) : null);
+    }
+
+
     public async IAsyncEnumerable<WorkRecordDto> StreamRangeAsync(DateOnly startDate, DateOnly endDate,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     { foreach (var value in Values.Where(x => x.WorkDate >= startDate && x.WorkDate <= endDate).OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value)) { cancellationToken.ThrowIfCancellationRequested(); yield return value; await Task.Yield(); } }
@@ -148,7 +200,12 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
         }
     }
     public Task DeleteAsync(WorkRecordId id, CancellationToken cancellationToken) { Values.RemoveAll(x => x.Id == id); return Task.CompletedTask; }
-    public object CaptureState() => (Values.ToArray(), operations.ToDictionary(x => x.Key, x => x.Value));
+    public object CaptureState()
+    {
+        return (Values.ToArray(), operations.ToDictionary(x => x.Key, x => x.Value));
+    }
+
+
     public void RestoreState(object snapshot)
     {
         var state = ((WorkRecordDto[] Values, Dictionary<Guid, WorkRecordId> Operations))snapshot;
@@ -165,12 +222,22 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
     public int CloneCalls { get; private set; }
     public Exception? CloneFailure { get; set; }
     public bool ForceCasFailure { get; set; }
-    public Task<SettingSnapshot?> FindAsync(SettingSnapshotId id, CancellationToken cancellationToken) =>
-        Task.FromResult(Months.Values.Append(Fallback).FirstOrDefault(x => x.Id == id));
-    public Task<SettingSnapshot?> FindForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken) =>
-        Task.FromResult(Months.TryGetValue(yearMonth, out var value) ? value : null);
-    public Task<SettingSnapshot> GetEffectiveForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken) =>
-        Task.FromResult(Months.Where(x => x.Key.CompareTo(yearMonth) <= 0).OrderBy(x => x.Key).Select(x => x.Value).LastOrDefault() ?? Fallback);
+    public Task<SettingSnapshot?> FindAsync(SettingSnapshotId id, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Months.Values.Append(Fallback).FirstOrDefault(x => x.Id == id));
+    }
+
+    public Task<SettingSnapshot?> FindForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Months.TryGetValue(yearMonth, out var value) ? value : null);
+    }
+
+    public Task<SettingSnapshot> GetEffectiveForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Months.Where(x => x.Key.CompareTo(yearMonth) <= 0).OrderBy(x => x.Key).Select(x => x.Value).LastOrDefault() ?? Fallback);
+    }
+
+
     public Task<SettingSnapshot> EnsureForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
     { EnsureCalls++; if (!Months.TryGetValue(yearMonth, out var value)) Months[yearMonth] = value = Fallback; return Task.FromResult(value); }
     public Task<SettingSnapshot?> TryCloneAndReplaceMonthSnapshotAsync(YearMonth yearMonth,
@@ -188,7 +255,12 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
         Months[yearMonth] = next;
         return Task.FromResult<SettingSnapshot?>(next);
     }
-    public object CaptureState() => (Months.ToDictionary(x => x.Key, x => x.Value), Fallback);
+    public object CaptureState()
+    {
+        return (Months.ToDictionary(x => x.Key, x => x.Value), Fallback);
+    }
+
+
     public void RestoreState(object snapshot)
     {
         var state = ((Dictionary<YearMonth, SettingSnapshot> Months, SettingSnapshot Fallback))snapshot;
@@ -200,30 +272,61 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
 internal sealed class FakeHolidayRepository : IHolidayCalendarRepository
 {
     public HolidayCalendarVersionId Latest { get; set; } = TestData.HolidayId;
-    public Task<HolidayCalendar> GetAsync(HolidayCalendarVersionId versionId, CancellationToken cancellationToken) =>
-        Task.FromResult(new HolidayCalendar(versionId, new Dictionary<DateOnly, string>()));
-    public Task<HolidayCalendarVersionId> GetLatestVerifiedVersionIdAsync(CancellationToken cancellationToken) => Task.FromResult(Latest);
+    public Task<HolidayCalendar> GetAsync(HolidayCalendarVersionId versionId, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(new HolidayCalendar(versionId, new Dictionary<DateOnly, string>()));
+    }
+
+
+    public Task<HolidayCalendarVersionId> GetLatestVerifiedVersionIdAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Latest);
+    }
+
 }
 
 internal sealed class FakePresetRepository : IServicePresetRepository, ITransactionalFakeState
 {
     public List<ServicePresetDto> Values { get; } = [];
-    public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ServicePresetDto>>(Values.ToArray());
+    public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult<IReadOnlyList<ServicePresetDto>>([.. Values]);
+    }
+
+
     public Task UpsertAsync(ServicePresetDto preset, CancellationToken cancellationToken) { Values.RemoveAll(x => x.Id == preset.Id); Values.Add(preset); return Task.CompletedTask; }
     public Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken) { Values.RemoveAll(x => x.Id == id); return Task.CompletedTask; }
-    public object CaptureState() => Values.ToArray();
+    public object CaptureState()
+    {
+        return Values.ToArray();
+    }
+
+
     public void RestoreState(object snapshot) { Values.Clear(); Values.AddRange((ServicePresetDto[])snapshot); }
 }
 
 internal sealed class FakeShiftRepository : IBasicShiftRepository, ITransactionalFakeState
 {
     public List<BasicShiftDto> Values { get; } = [];
-    public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<BasicShiftDto>>(Values.Where(x => x.Weekday == weekday).ToArray());
-    public Task<BasicShiftDto?> FindAsync(BasicShiftId id, CancellationToken cancellationToken) => Task.FromResult(Values.FirstOrDefault(x => x.Id == id));
+    public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday, CancellationToken cancellationToken)
+    {
+        return Task.FromResult<IReadOnlyList<BasicShiftDto>>([.. Values.Where(x => x.Weekday == weekday)]);
+    }
+
+    public Task<BasicShiftDto?> FindAsync(BasicShiftId id, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(Values.FirstOrDefault(x => x.Id == id));
+    }
+
+
     public Task UpsertAsync(BasicShiftDto basicShift, CancellationToken cancellationToken) { Values.RemoveAll(x => x.Id == basicShift.Id); Values.Add(basicShift); return Task.CompletedTask; }
     public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken) { Values.RemoveAll(x => x.Id == id); return Task.CompletedTask; }
-    public object CaptureState() => Values.ToArray();
+    public object CaptureState()
+    {
+        return Values.ToArray();
+    }
+
+
     public void RestoreState(object snapshot) { Values.Clear(); Values.AddRange((BasicShiftDto[])snapshot); }
 }
 
@@ -233,9 +336,17 @@ internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransacti
     private int version;
     public bool ForceCasFailure { get; set; }
     public int ReplaceCalls { get; private set; }
-    public Task<ClosingRuleHistorySnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new ClosingRuleHistorySnapshot(Values.ToArray(), new ClosingRuleHistoryVersion(version.ToString())));
-    public Task<IReadOnlyList<ClosingRule>> GetHistoryAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ClosingRule>>(Values.ToArray());
+    public Task<ClosingRuleHistorySnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult(new ClosingRuleHistorySnapshot([.. Values], new ClosingRuleHistoryVersion(version.ToString())));
+    }
+
+    public Task<IReadOnlyList<ClosingRule>> GetHistoryAsync(CancellationToken cancellationToken)
+    {
+        return Task.FromResult<IReadOnlyList<ClosingRule>>([.. Values]);
+    }
+
+
     public Task<bool> TryReplaceEffectiveRuleAsync(ClosingRule rule, ClosingRuleHistoryVersion expectedVersion, CancellationToken cancellationToken)
     {
         ReplaceCalls++;
@@ -244,7 +355,12 @@ internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransacti
         Values.RemoveAll(x => x.EffectiveFrom == rule.EffectiveFrom); Values.Add(rule); version++;
         return Task.FromResult(true);
     }
-    public object CaptureState() => (Values.ToArray(), version);
+    public object CaptureState()
+    {
+        return (Values.ToArray(), version);
+    }
+
+
     public void RestoreState(object snapshot)
     {
         var state = ((ClosingRule[] Values, int Version))snapshot;
@@ -255,11 +371,20 @@ internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransacti
 internal sealed class FakeAllowanceRepository : IMonthlyAllowanceRepository, ITransactionalFakeState
 {
     public List<MonthlyAllowance> Values { get; } = [];
-    public Task<IReadOnlyList<MonthlyAllowance>> GetForPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<MonthlyAllowance>>(Values.Where(x => x.PayrollPeriodKey == payrollPeriodKey).ToArray());
+    public Task<IReadOnlyList<MonthlyAllowance>> GetForPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
+    {
+        return Task.FromResult<IReadOnlyList<MonthlyAllowance>>([.. Values.Where(x => x.PayrollPeriodKey == payrollPeriodKey)]);
+    }
+
+
     public Task UpsertAsync(MonthlyAllowance allowance, CancellationToken cancellationToken) { Values.RemoveAll(x => x.Id == allowance.Id); Values.Add(allowance); return Task.CompletedTask; }
     public Task DeleteAsync(MonthlyAllowanceId id, CancellationToken cancellationToken) { Values.RemoveAll(x => x.Id == id); return Task.CompletedTask; }
-    public object CaptureState() => Values.ToArray();
+    public object CaptureState()
+    {
+        return Values.ToArray();
+    }
+
+
     public void RestoreState(object snapshot) { Values.Clear(); Values.AddRange((MonthlyAllowance[])snapshot); }
 }
 
@@ -280,8 +405,17 @@ internal sealed class TestContext
 
     public TestContext() => Transactions.Register(Works, Settings, Presets, Shifts, Closing, Allowances, Metadata);
 
-    public WorkRecordUseCase WorkUseCase() => new(Works, Settings, Presets, Holidays, Salary, Transactions, Metadata, Clock);
-    public BasicShiftUseCase ShiftUseCase() => new(Shifts, Works, Settings, Holidays, Salary, Transactions, Metadata, Clock);
+    public WorkRecordUseCase WorkUseCase()
+    {
+        return new(Works, Settings, Presets, Holidays, Salary, Transactions, Metadata, Clock);
+    }
+
+
+    public BasicShiftUseCase ShiftUseCase()
+    {
+        return new(Shifts, Works, Settings, Holidays, Salary, Transactions, Metadata, Clock);
+    }
+
 }
 
 internal sealed class FakeExportStream : IJsonExportStream
@@ -294,14 +428,14 @@ internal sealed class FakeExportStream : IJsonExportStream
         IAsyncEnumerable<DataTransferRecord> records, CancellationToken cancellationToken)
     {
         Header = header;
-        await destination.WriteAsync(new byte[] { (byte)'{' }, cancellationToken);
+        await destination.WriteAsync("{"u8.ToArray(), cancellationToken);
         await foreach (var _ in records.WithCancellation(cancellationToken))
         {
             Count++;
-            await destination.WriteAsync(new byte[] { (byte)'x' }, cancellationToken);
+            await destination.WriteAsync("x"u8.ToArray(), cancellationToken);
             if (Failure is not null && (FailAfterRecord is null || Count >= FailAfterRecord)) throw Failure;
         }
-        await destination.WriteAsync(new byte[] { (byte)'}' }, cancellationToken);
+        await destination.WriteAsync("}"u8.ToArray(), cancellationToken);
     }
 }
 
@@ -334,7 +468,7 @@ internal sealed class FakeExportDataSource : IExportDataSource
     {
         cancellationToken.ThrowIfCancellationRequested();
         OpenCalls++;
-        return Task.FromResult<IExportReadSession>(new Session(Values.ToArray(), this));
+        return Task.FromResult<IExportReadSession>(new Session([.. Values], this));
     }
 
     private sealed class Session(DataTransferRecord[] snapshot, FakeExportDataSource owner) : IExportReadSession
@@ -361,7 +495,12 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
     private readonly Dictionary<PreparedImportId, (FakeStagingState State, List<DataTransferRecord> Records)> entries = [];
     public List<DataTransferRecord> LiveData { get; } = [];
     public IReadOnlyList<DataTransferRecord> Values => entries.TryGetValue(Id, out var entry) ? entry.Records : [];
-    public FakeStagingState? GetState(PreparedImportId id) => entries.TryGetValue(id, out var entry) ? entry.State : null;
+    public FakeStagingState? GetState(PreparedImportId id)
+    {
+        return entries.TryGetValue(id, out var entry) ? entry.State : null;
+    }
+
+
     public int DiscardCalls { get; private set; }
     public int ReplaceCalls { get; private set; }
     public int AbandonedCalls { get; private set; }
@@ -386,7 +525,7 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
             throw new InvalidOperationException("staging is not validatable");
         entries[preparedImportId] = (FakeStagingState.Validated, entry.Records);
         return Task.FromResult(new ImportPreviewDto(preparedImportId, 1, DateTimeOffset.UnixEpoch, 0, 0, entry.Records.Count, 0,
-            null, null, null, null, Array.Empty<IssueDto>()));
+            null, null, null, null, []));
     }
     public Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId, DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {
@@ -402,7 +541,8 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
     {
         DiscardCalls++;
         if (DiscardFailure is not null) return Task.FromException(DiscardFailure);
-        if (entries.TryGetValue(preparedImportId, out var entry)) entries[preparedImportId] = (FakeStagingState.Discarded, []);
+
+        if (entries.TryGetValue(preparedImportId, out _)) entries[preparedImportId] = (FakeStagingState.Discarded, []);
         return Task.CompletedTask;
     }
     public Task DiscardAbandonedAsync(CancellationToken cancellationToken)
@@ -412,8 +552,13 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
             entries[value.Key] = (FakeStagingState.Discarded, []);
         return Task.CompletedTask;
     }
-    public object CaptureState() => (entries.ToDictionary(x => x.Key,
+    public object CaptureState()
+    {
+        return (entries.ToDictionary(x => x.Key,
         x => (x.Value.State, x.Value.Records.ToList())), LiveData.ToArray());
+    }
+
+
     public void RestoreState(object snapshot)
     {
         var state = ((Dictionary<PreparedImportId, (FakeStagingState State, List<DataTransferRecord> Records)> Entries,

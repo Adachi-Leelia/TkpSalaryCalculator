@@ -14,7 +14,7 @@ public sealed class AggregationReviewTests
     {
         var snapshot = TestData.Snapshot(
             TestData.Rate(RateType.FixedPerRecord, long.MaxValue),
-            bonuses: new[] { TestData.CountBonus(1) });
+            bonuses: [TestData.CountBonus(1)]);
 
         Assert.Throws<OverflowException>(() => calculator.Calculate(
             TestData.Request(TestData.WorkRecord(30), snapshot)));
@@ -37,8 +37,8 @@ public sealed class AggregationReviewTests
     {
         var records = new[]
         {
-            Calculated(premiums: new[] { long.MaxValue }),
-            Calculated(premiums: new[] { long.MaxValue }),
+            Calculated(premiums: [long.MaxValue]),
+            Calculated(premiums: [long.MaxValue]),
         };
 
         Assert.Throws<OverflowException>(() => calculator.AggregateDay(new DateOnly(2026, 8, 15), records));
@@ -49,8 +49,8 @@ public sealed class AggregationReviewTests
     {
         var records = new[]
         {
-            Calculated(bonuses: new[] { long.MaxValue }),
-            Calculated(bonuses: new[] { long.MaxValue }),
+            Calculated(bonuses: [long.MaxValue]),
+            Calculated(bonuses: [long.MaxValue]),
         };
 
         Assert.Throws<OverflowException>(() => calculator.AggregateDay(new DateOnly(2026, 8, 15), records));
@@ -62,7 +62,7 @@ public sealed class AggregationReviewTests
         var records = new[]
         {
             Calculated(basePay: long.MaxValue),
-            Calculated(premiums: new[] { 1L }),
+            Calculated(premiums: [1L]),
         };
 
         Assert.Throws<OverflowException>(() => calculator.AggregateDay(new DateOnly(2026, 8, 15), records));
@@ -74,11 +74,11 @@ public sealed class AggregationReviewTests
         var period = Period();
         var days = new[]
         {
-            calculator.AggregateDay(new DateOnly(2026, 8, 1), new[] { Calculated(basePay: long.MaxValue) }),
-            calculator.AggregateDay(new DateOnly(2026, 8, 2), new[] { Calculated(basePay: long.MaxValue) }),
+            calculator.AggregateDay(new DateOnly(2026, 8, 1), [Calculated(basePay: long.MaxValue)]),
+            calculator.AggregateDay(new DateOnly(2026, 8, 2), [Calculated(basePay: long.MaxValue)]),
         };
 
-        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, days, Array.Empty<MonthlyAllowance>()));
+        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, days, []));
     }
 
     [Fact]
@@ -87,11 +87,11 @@ public sealed class AggregationReviewTests
         var period = Period();
         var days = new[]
         {
-            calculator.AggregateDay(new DateOnly(2026, 8, 1), new[] { Calculated(premiums: new[] { long.MaxValue }) }),
-            calculator.AggregateDay(new DateOnly(2026, 8, 2), new[] { Calculated(premiums: new[] { long.MaxValue }) }),
+            calculator.AggregateDay(new DateOnly(2026, 8, 1), [Calculated(premiums: [long.MaxValue])]),
+            calculator.AggregateDay(new DateOnly(2026, 8, 2), [Calculated(premiums: [long.MaxValue])]),
         };
 
-        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, days, Array.Empty<MonthlyAllowance>()));
+        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, days, []));
     }
 
     [Fact]
@@ -100,11 +100,11 @@ public sealed class AggregationReviewTests
         var period = Period();
         var days = new[]
         {
-            calculator.AggregateDay(new DateOnly(2026, 8, 1), new[] { Calculated(bonuses: new[] { long.MaxValue }) }),
-            calculator.AggregateDay(new DateOnly(2026, 8, 2), new[] { Calculated(bonuses: new[] { long.MaxValue }) }),
+            calculator.AggregateDay(new DateOnly(2026, 8, 1), [Calculated(bonuses: [long.MaxValue])]),
+            calculator.AggregateDay(new DateOnly(2026, 8, 2), [Calculated(bonuses: [long.MaxValue])]),
         };
 
-        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, days, Array.Empty<MonthlyAllowance>()));
+        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, days, []));
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public sealed class AggregationReviewTests
             Allowance(period.Key, long.MaxValue),
         };
 
-        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, Array.Empty<DailySalaryCalculation>(), allowances));
+        Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(period, [], allowances));
     }
 
     [Fact]
@@ -126,12 +126,12 @@ public sealed class AggregationReviewTests
         var period = Period();
         var day = calculator.AggregateDay(
             new DateOnly(2026, 8, 1),
-            new[] { Calculated(basePay: long.MaxValue) });
+            [Calculated(basePay: long.MaxValue)]);
 
         Assert.Throws<OverflowException>(() => calculator.AggregatePeriod(
             period,
-            new[] { day },
-            new[] { Allowance(period.Key, 1) }));
+            [day],
+            [Allowance(period.Key, 1)]));
     }
 
     [Fact]
@@ -140,12 +140,12 @@ public sealed class AggregationReviewTests
         var period = Period();
         var withoutAllowance = calculator.AggregatePeriod(
             period,
-            Array.Empty<DailySalaryCalculation>(),
-            Array.Empty<MonthlyAllowance>());
+            [],
+            []);
         var withAllowances = calculator.AggregatePeriod(
             period,
-            Array.Empty<DailySalaryCalculation>(),
-            new[] { Allowance(period.Key, 100), Allowance(period.Key, 200) });
+            [],
+            [Allowance(period.Key, 100), Allowance(period.Key, 200)]);
 
         Assert.Equal(0, withoutAllowance.AllowanceSubtotal.Value);
         Assert.Equal(0, withoutAllowance.CalculatedSubtotal.Value);
@@ -158,7 +158,7 @@ public sealed class AggregationReviewTests
     {
         var records = new[] { Calculated(basePay: 100), Uncalculated() };
         var day = calculator.AggregateDay(new DateOnly(2026, 8, 1), records);
-        var period = calculator.AggregatePeriod(Period(), new[] { day }, Array.Empty<MonthlyAllowance>());
+        var period = calculator.AggregatePeriod(Period(), [day], []);
 
         Assert.Equal(100, day.CalculatedSubtotal.Value);
         Assert.Equal(1, day.UncalculatedCount);
@@ -172,40 +172,40 @@ public sealed class AggregationReviewTests
         var record = Calculated(basePay: 100);
         Assert.Throws<ArgumentException>(() => calculator.AggregateDay(
             new DateOnly(2026, 8, 1),
-            new[] { record, record }));
+            [record, record]));
 
         var inconsistent = record with { Total = new YenAmount(101) };
         Assert.Throws<ArgumentException>(() => calculator.AggregateDay(
             new DateOnly(2026, 8, 1),
-            new[] { inconsistent }));
+            [inconsistent]));
 
         var guessed = Uncalculated() with { Total = new YenAmount(1) };
         Assert.Throws<ArgumentException>(() => calculator.AggregateDay(
             new DateOnly(2026, 8, 1),
-            new[] { guessed }));
+            [guessed]));
     }
 
     [Fact]
     public void AggregatePeriodRejectsDuplicateDaysAllowancesAndInconsistentDay()
     {
         var period = Period();
-        var day = calculator.AggregateDay(new DateOnly(2026, 8, 1), new[] { Calculated(basePay: 100) });
+        var day = calculator.AggregateDay(new DateOnly(2026, 8, 1), [Calculated(basePay: 100)]);
         Assert.Throws<ArgumentException>(() => calculator.AggregatePeriod(
             period,
-            new[] { day, day },
-            Array.Empty<MonthlyAllowance>()));
+            [day, day],
+            []));
 
         var allowance = Allowance(period.Key, 100);
         Assert.Throws<ArgumentException>(() => calculator.AggregatePeriod(
             period,
-            Array.Empty<DailySalaryCalculation>(),
-            new[] { allowance, allowance }));
+            [],
+            [allowance, allowance]));
 
         var inconsistentDay = day with { CalculatedSubtotal = new YenAmount(101) };
         Assert.Throws<ArgumentException>(() => calculator.AggregatePeriod(
             period,
-            new[] { inconsistentDay },
-            Array.Empty<MonthlyAllowance>()));
+            [inconsistentDay],
+            []));
     }
 
     [Fact]
@@ -217,7 +217,7 @@ public sealed class AggregationReviewTests
         };
         var mutableRecords = new List<WorkSalaryCalculation>
         {
-            Calculated(premiums: new[] { 10L }, premiumDetails: mutablePremiums),
+            Calculated(premiums: [10L], premiumDetails: mutablePremiums),
         };
         var day = calculator.AggregateDay(new DateOnly(2026, 8, 1), mutableRecords);
         mutablePremiums.Clear();
@@ -246,8 +246,8 @@ public sealed class AggregationReviewTests
         IReadOnlyList<AppliedPremium>? premiumDetails = null)
     {
         var appliedPremiums = premiumDetails ??
-            (premiums ?? Array.Empty<long>()).Select(AppliedPremium).ToArray();
-        var appliedBonuses = (bonuses ?? Array.Empty<long>())
+            [.. (premiums ?? []).Select(AppliedPremium)];
+        var appliedBonuses = (bonuses ?? [])
             .Select(amount => new AppliedCountBonus(
                 new CountBonusId(Guid.NewGuid()),
                 "件数",
@@ -262,29 +262,41 @@ public sealed class AggregationReviewTests
             appliedPremiums,
             appliedBonuses,
             new YenAmount(total),
-            Array.Empty<MissingCalculationRequirement>());
+            []);
     }
 
-    private static AppliedPremium AppliedPremium(long amount) =>
-        new(
+    private static AppliedPremium AppliedPremium(long amount)
+    {
+        return new(
             TestData.FixedPerRecordPremium(amount),
             new WorkMinutes(30),
             new YenAmount(amount));
+    }
 
-    private static WorkSalaryCalculation Uncalculated() =>
-        new(
+
+    private static WorkSalaryCalculation Uncalculated()
+    {
+        return new(
             new WorkRecordId(Guid.NewGuid()),
             SalaryCalculationStatus.Uncalculated,
             null,
             null,
-            Array.Empty<AppliedPremium>(),
-            Array.Empty<AppliedCountBonus>(),
+            [],
+            [],
             null,
-            new[] { new MissingCalculationRequirement(MissingCalculationRequirementCodes.Rate, TestData.ServiceId.Value) });
+            [new MissingCalculationRequirement(MissingCalculationRequirementCodes.Rate, TestData.ServiceId.Value)]);
+    }
 
-    private static PayrollPeriod Period() =>
-        TestData.Period(2026, 8, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20));
 
-    private static MonthlyAllowance Allowance(PayrollPeriodKey key, long amount) =>
-        new(new MonthlyAllowanceId(Guid.NewGuid()), key, "手当", new YenAmount(amount));
+    private static PayrollPeriod Period()
+    {
+        return TestData.Period(2026, 8, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20));
+    }
+
+
+    private static MonthlyAllowance Allowance(PayrollPeriodKey key, long amount)
+    {
+        return new(new MonthlyAllowanceId(Guid.NewGuid()), key, "手当", new YenAmount(amount));
+    }
+
 }

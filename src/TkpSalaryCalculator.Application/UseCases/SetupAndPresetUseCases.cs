@@ -8,22 +8,15 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 namespace TkpSalaryCalculator.Application.UseCases;
 
 /// <summary>再開可能な初期設定の状態管理と完了条件の検証を実装します。</summary>
-public sealed class InitialSetupUseCase : IInitialSetupUseCase
+/// <remarks>必要な永続化ポートを指定して生成します。</remarks>
+public sealed class InitialSetupUseCase(IAppMetadataRepository metadata, ISettingSnapshotRepository settings,
+    IClosingRuleRepository closingRules, ITransactionRunner transactions) : IInitialSetupUseCase
 {
-    private readonly IAppMetadataRepository metadata;
-    private readonly ISettingSnapshotRepository settings;
-    private readonly IClosingRuleRepository closingRules;
-    private readonly ITransactionRunner transactions;
+    private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+    private readonly ISettingSnapshotRepository settings = settings ?? throw new ArgumentNullException(nameof(settings));
+    private readonly IClosingRuleRepository closingRules = closingRules ?? throw new ArgumentNullException(nameof(closingRules));
+    private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
 
-    /// <summary>必要な永続化ポートを指定して生成します。</summary>
-    public InitialSetupUseCase(IAppMetadataRepository metadata, ISettingSnapshotRepository settings,
-        IClosingRuleRepository closingRules, ITransactionRunner transactions)
-    {
-        this.metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
-        this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        this.closingRules = closingRules ?? throw new ArgumentNullException(nameof(closingRules));
-        this.transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
-    }
 
     /// <inheritdoc />
     public async Task<InitialSetupStateDto> GetStateAsync(CancellationToken cancellationToken)
@@ -62,7 +55,7 @@ public sealed class InitialSetupUseCase : IInitialSetupUseCase
             var issues = await ValidateAsync(current, token).ConfigureAwait(false);
             if (issues.Count != 0) return new InitialSetupStateDto(InitialSetupStatus.InProgress, current.InitialSetupStep, issues);
             await metadata.SetInitialSetupAsync(InitialSetupStatus.Completed, null, current.InitialSnapshotId, token).ConfigureAwait(false);
-            return new InitialSetupStateDto(InitialSetupStatus.Completed, null, Array.Empty<IssueDto>());
+            return new InitialSetupStateDto(InitialSetupStatus.Completed, null, []);
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -99,22 +92,15 @@ public sealed class InitialSetupUseCase : IInitialSetupUseCase
 }
 
 /// <summary>勤務入力用サービスプリセットを管理します。</summary>
-public sealed class ServicePresetUseCase : IServicePresetUseCase
+/// <remarks>必要なポートを指定して生成します。</remarks>
+public sealed class ServicePresetUseCase(IServicePresetRepository repository, ITransactionRunner transactions,
+    IAppMetadataRepository metadata, IUtcClock clock) : IServicePresetUseCase
 {
-    private readonly IServicePresetRepository repository;
-    private readonly ITransactionRunner transactions;
-    private readonly IAppMetadataRepository metadata;
-    private readonly IUtcClock clock;
+    private readonly IServicePresetRepository repository = repository ?? throw new ArgumentNullException(nameof(repository));
+    private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
+    private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
 
-    /// <summary>必要なポートを指定して生成します。</summary>
-    public ServicePresetUseCase(IServicePresetRepository repository, ITransactionRunner transactions,
-        IAppMetadataRepository metadata, IUtcClock clock)
-    {
-        this.repository = repository ?? throw new ArgumentNullException(nameof(repository));
-        this.transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
-        this.metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
-        this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
-    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken)
@@ -157,22 +143,15 @@ public sealed class ServicePresetUseCase : IServicePresetUseCase
 }
 
 /// <summary>端末内データのバックアップ案内条件を判定します。</summary>
-public sealed class BackupReminderUseCase : IBackupReminderUseCase
+/// <remarks>必要な読み書きポートを指定して生成します。</remarks>
+public sealed class BackupReminderUseCase(IAppMetadataRepository metadata, IWorkRecordRepository records,
+    ITransactionRunner transactions, ILocalDateConverter localDates) : IBackupReminderUseCase
 {
-    private readonly IAppMetadataRepository metadata;
-    private readonly IWorkRecordRepository records;
-    private readonly ITransactionRunner transactions;
-    private readonly ILocalDateConverter localDates;
+    private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
+    private readonly IWorkRecordRepository records = records ?? throw new ArgumentNullException(nameof(records));
+    private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
+    private readonly ILocalDateConverter localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
 
-    /// <summary>必要な読み書きポートを指定して生成します。</summary>
-    public BackupReminderUseCase(IAppMetadataRepository metadata, IWorkRecordRepository records,
-        ITransactionRunner transactions, ILocalDateConverter localDates)
-    {
-        this.metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
-        this.records = records ?? throw new ArgumentNullException(nameof(records));
-        this.transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
-        this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
-    }
 
     /// <inheritdoc />
     public async Task<BackupReminderStateDto> GetStateAsync(DateOnly localToday, CancellationToken cancellationToken)

@@ -15,7 +15,7 @@ public sealed class SalaryCalculatorReviewTests
         var missingService = new ServiceId(Guid.NewGuid());
         var result = Calculate(
             Work(serviceId: missingService),
-            Snapshot(rates: new[] { TestData.Rate(RateType.Hourly, 1200) }));
+            Snapshot(rates: [TestData.Rate(RateType.Hourly, 1200)]));
 
         Assert.Equal(SalaryCalculationStatus.Uncalculated, result.Status);
         Assert.Contains(result.MissingRequirements,
@@ -28,7 +28,7 @@ public sealed class SalaryCalculatorReviewTests
         var missingCategory = new TimeCategoryId(Guid.NewGuid());
         var result = Calculate(
             Work(categoryId: missingCategory),
-            Snapshot(rates: new[] { TestData.Rate(RateType.Hourly, 1200) }));
+            Snapshot(rates: [TestData.Rate(RateType.Hourly, 1200)]));
 
         Assert.Equal(SalaryCalculationStatus.Uncalculated, result.Status);
         Assert.Contains(result.MissingRequirements,
@@ -41,8 +41,8 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(categoryId: TestData.CategoryId, minutes: 30),
             Snapshot(
-                categories: new[] { Category(TestData.CategoryId, TestData.ServiceId, true) },
-                rates: new[] { TestData.Rate(RateType.Hourly, 1200) }));
+                categories: [Category(TestData.CategoryId, TestData.ServiceId, true)],
+                rates: [TestData.Rate(RateType.Hourly, 1200)]));
 
         Assert.Null(result.AppliedRate!.TimeCategoryId);
         Assert.Equal(600, result.BasePay!.Value.Value);
@@ -54,9 +54,9 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(categoryId: TestData.CategoryId),
             Snapshot(
-                services: new[] { Service(TestData.ServiceId, false) },
-                categories: new[] { Category(TestData.CategoryId, TestData.ServiceId, false) },
-                rates: new[] { TestData.CategoryRate(RateType.FixedPerRecord, 850) }));
+                services: [Service(TestData.ServiceId, false)],
+                categories: [Category(TestData.CategoryId, TestData.ServiceId, false)],
+                rates: [TestData.CategoryRate(RateType.FixedPerRecord, 850)]));
 
         Assert.Equal(SalaryCalculationStatus.Calculated, result.Status);
         Assert.Equal(850, result.Total!.Value.Value);
@@ -68,9 +68,9 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 100) },
-                premiums: new[] { Premium(PremiumCalculationType.FixedPerRecord, amount: 200, enabled: false) },
-                bonuses: new[] { Bonus(300, enabled: false) }));
+                rates: [TestData.Rate(RateType.FixedPerRecord, 100)],
+                premiums: [Premium(PremiumCalculationType.FixedPerRecord, amount: 200, enabled: false)],
+                bonuses: [Bonus(300, enabled: false)]));
 
         Assert.Empty(result.Premiums);
         Assert.Empty(result.CountBonuses);
@@ -84,19 +84,19 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(start: 22 * 60, date: new DateOnly(2026, 8, 15)),
             Snapshot(
-                services: new[] { Service(TestData.ServiceId, true), Service(secondService, true) },
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 100) },
-                premiums: new[]
-                {
+                services: [Service(TestData.ServiceId, true), Service(secondService, true)],
+                rates: [TestData.Rate(RateType.FixedPerRecord, 100)],
+                premiums:
+                [
                     Premium(
                         PremiumCalculationType.FixedPerRecord,
                         amount: 200,
                         start: 22 * 60,
                         end: 5 * 60,
-                        weekdays: new[] { DayOfWeek.Saturday },
-                        serviceIds: new[] { secondService }),
-                },
-                bonuses: new[] { Bonus(300, serviceIds: new[] { secondService }) }));
+                        weekdays: [DayOfWeek.Saturday],
+                        serviceIds: [secondService]),
+                ],
+                bonuses: [Bonus(300, serviceIds: [secondService])]));
 
         Assert.Empty(result.Premiums);
         Assert.Empty(result.CountBonuses);
@@ -109,14 +109,14 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(date: new DateOnly(2026, 8, 15)),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                premiums: new[]
-                {
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                premiums:
+                [
                     Premium(
                         PremiumCalculationType.FixedPerRecord,
                         amount: 100,
-                        weekdays: new[] { DayOfWeek.Saturday }),
-                }));
+                        weekdays: [DayOfWeek.Saturday]),
+                ]));
 
         Assert.Equal(100, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -128,15 +128,15 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(date: date),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                premiums: new[]
-                {
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                premiums:
+                [
                     Premium(
                         PremiumCalculationType.FixedPerRecord,
                         amount: 100,
                         usesNationalHolidays: true),
-                }),
-            holidays: new[] { date });
+                ]),
+            holidays: [date]);
 
         Assert.Equal(100, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -148,14 +148,14 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(date: date),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                premiums: new[]
-                {
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                premiums:
+                [
                     Premium(
                         PremiumCalculationType.FixedPerRecord,
                         amount: 100,
-                        dates: new[] { date }),
-                }));
+                        dates: [date]),
+                ]));
 
         Assert.Equal(100, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -166,8 +166,8 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(date: new DateOnly(2026, 8, 19)),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                premiums: new[] { Premium(PremiumCalculationType.FixedPerRecord, amount: 100) }));
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                premiums: [Premium(PremiumCalculationType.FixedPerRecord, amount: 100)]));
 
         Assert.Equal(100, Assert.Single(result.Premiums).Amount.Value);
     }
@@ -178,15 +178,15 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(minutes: 60, start: 21 * 60),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 100) },
-                premiums: new[]
-                {
+                rates: [TestData.Rate(RateType.FixedPerRecord, 100)],
+                premiums:
+                [
                     Premium(
                         PremiumCalculationType.FixedPerHour,
                         amount: 60,
                         start: 22 * 60,
                         end: 5 * 60),
-                }));
+                ]));
 
         Assert.Empty(result.Premiums);
         Assert.Equal(100, result.Total!.Value.Value);
@@ -198,15 +198,15 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(minutes: 1440, start: 0),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                premiums: new[]
-                {
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                premiums:
+                [
                     Premium(
                         PremiumCalculationType.FixedPerHour,
                         amount: 60,
                         start: 22 * 60,
                         end: 5 * 60),
-                }));
+                ]));
 
         var premium = Assert.Single(result.Premiums);
         Assert.Equal(7 * 60, premium.ApplicableMinutes.Value);
@@ -219,10 +219,10 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                bonuses: new[] { Bonus(100), Bonus(200) }));
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                bonuses: [Bonus(100), Bonus(200)]));
 
-        Assert.Equal(new long[] { 100, 200 }, result.CountBonuses.Select(item => item.Amount.Value));
+        Assert.Equal([100, 200], result.CountBonuses.Select(item => item.Amount.Value));
         Assert.Equal(300, result.Total!.Value.Value);
     }
 
@@ -232,13 +232,13 @@ public sealed class SalaryCalculatorReviewTests
         var result = Calculate(
             Work(),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                premiums: new[]
-                {
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                premiums:
+                [
                     Premium(PremiumCalculationType.Percentage, percentage: 0),
                     Premium(PremiumCalculationType.FixedPerRecord, amount: 0),
-                },
-                bonuses: new[] { Bonus(0) }));
+                ],
+                bonuses: [Bonus(0)]));
 
         Assert.Equal(2, result.Premiums.Count);
         Assert.All(result.Premiums, item => Assert.Equal(0, item.Amount.Value));
@@ -252,8 +252,8 @@ public sealed class SalaryCalculatorReviewTests
         Assert.Throws<OverflowException>(() => Calculate(
             Work(),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, long.MaxValue) },
-                premiums: new[] { Premium(PremiumCalculationType.Percentage, percentage: int.MaxValue) })));
+                rates: [TestData.Rate(RateType.FixedPerRecord, long.MaxValue)],
+                premiums: [Premium(PremiumCalculationType.Percentage, percentage: int.MaxValue)])));
     }
 
     [Fact]
@@ -262,8 +262,8 @@ public sealed class SalaryCalculatorReviewTests
         Assert.Throws<OverflowException>(() => Calculate(
             Work(minutes: 1440),
             Snapshot(
-                rates: new[] { TestData.Rate(RateType.FixedPerRecord, 0) },
-                premiums: new[] { Premium(PremiumCalculationType.FixedPerHour, amount: long.MaxValue) })));
+                rates: [TestData.Rate(RateType.FixedPerRecord, 0)],
+                premiums: [Premium(PremiumCalculationType.FixedPerHour, amount: long.MaxValue)])));
     }
 
     [Fact]
@@ -271,7 +271,7 @@ public sealed class SalaryCalculatorReviewTests
     {
         var result = Calculate(
             Work(),
-            Snapshot(rates: new[] { TestData.Rate(RateType.FixedPerRecord, long.MaxValue) }));
+            Snapshot(rates: [TestData.Rate(RateType.FixedPerRecord, long.MaxValue)]));
 
         Assert.Equal(long.MaxValue, result.BasePay!.Value.Value);
         Assert.Equal(long.MaxValue, result.Total!.Value.Value);
@@ -280,16 +280,20 @@ public sealed class SalaryCalculatorReviewTests
     private WorkSalaryCalculation Calculate(
         WorkRecord workRecord,
         SettingSnapshot snapshot,
-        IEnumerable<DateOnly>? holidays = null) =>
-        calculator.Calculate(TestData.Request(workRecord, snapshot, holidays));
+        IEnumerable<DateOnly>? holidays = null)
+    {
+        return calculator.Calculate(TestData.Request(workRecord, snapshot, holidays));
+    }
+
 
     private static WorkRecord Work(
         int minutes = 30,
         DateOnly? date = null,
         int? start = null,
         ServiceId? serviceId = null,
-        TimeCategoryId? categoryId = null) =>
-        new(
+        TimeCategoryId? categoryId = null)
+    {
+        return new(
             new WorkRecordId(Guid.NewGuid()),
             date ?? new DateOnly(2026, 8, 15),
             serviceId ?? TestData.ServiceId,
@@ -298,30 +302,41 @@ public sealed class SalaryCalculatorReviewTests
             new WorkMinutes(minutes),
             start is null ? null : new MinuteOfDay(start.Value),
             null);
+    }
+
 
     private static SettingSnapshot Snapshot(
         IReadOnlyList<SnapshotService>? services = null,
         IReadOnlyList<SnapshotTimeCategory>? categories = null,
         IReadOnlyList<SnapshotRate>? rates = null,
         IReadOnlyList<SnapshotPremium>? premiums = null,
-        IReadOnlyList<SnapshotCountBonus>? bonuses = null) =>
-        new(
+        IReadOnlyList<SnapshotCountBonus>? bonuses = null)
+    {
+        return new(
             new SettingSnapshotId(Guid.NewGuid()),
             null,
             TestData.HolidayVersionId,
             new SchemaVersion(1),
             new DateTimeOffset(2026, 8, 15, 0, 0, 0, TimeSpan.Zero),
-            services ?? new[] { Service(TestData.ServiceId, true) },
-            categories ?? Array.Empty<SnapshotTimeCategory>(),
-            rates ?? Array.Empty<SnapshotRate>(),
-            premiums ?? Array.Empty<SnapshotPremium>(),
-            bonuses ?? Array.Empty<SnapshotCountBonus>());
+            services ?? [Service(TestData.ServiceId, true)],
+            categories ?? [],
+            rates ?? [],
+            premiums ?? [],
+            bonuses ?? []);
+    }
 
-    private static SnapshotService Service(ServiceId id, bool enabled) =>
-        new(id, id == TestData.ServiceId ? "身体" : "生活", new DisplayOrder(0), enabled);
 
-    private static SnapshotTimeCategory Category(TimeCategoryId id, ServiceId serviceId, bool enabled) =>
-        new(id, serviceId, "30分", new WorkMinutes(30), new DisplayOrder(0), enabled);
+    private static SnapshotService Service(ServiceId id, bool enabled)
+    {
+        return new(id, id == TestData.ServiceId ? "身体" : "生活", new DisplayOrder(0), enabled);
+    }
+
+
+    private static SnapshotTimeCategory Category(TimeCategoryId id, ServiceId serviceId, bool enabled)
+    {
+        return new(id, serviceId, "30分", new WorkMinutes(30), new DisplayOrder(0), enabled);
+    }
+
 
     private static SnapshotPremium Premium(
         PremiumCalculationType type,
@@ -333,8 +348,9 @@ public sealed class SalaryCalculatorReviewTests
         IEnumerable<DayOfWeek>? weekdays = null,
         IEnumerable<DateOnly>? dates = null,
         IEnumerable<ServiceId>? serviceIds = null,
-        bool enabled = true) =>
-        new(
+        bool enabled = true)
+    {
+        return new(
             new PremiumId(Guid.NewGuid()),
             "割増",
             type,
@@ -343,19 +359,24 @@ public sealed class SalaryCalculatorReviewTests
             start is null ? null : new MinuteOfDay(start.Value),
             end is null ? null : new MinuteOfDay(end.Value),
             usesNationalHolidays,
-            new HashSet<DayOfWeek>(weekdays ?? Array.Empty<DayOfWeek>()),
-            new HashSet<DateOnly>(dates ?? Array.Empty<DateOnly>()),
-            new HashSet<ServiceId>(serviceIds ?? Array.Empty<ServiceId>()),
+            new HashSet<DayOfWeek>(weekdays ?? []),
+            new HashSet<DateOnly>(dates ?? []),
+            new HashSet<ServiceId>(serviceIds ?? []),
             enabled);
+    }
+
 
     private static SnapshotCountBonus Bonus(
         long amount,
         IEnumerable<ServiceId>? serviceIds = null,
-        bool enabled = true) =>
-        new(
+        bool enabled = true)
+    {
+        return new(
             new CountBonusId(Guid.NewGuid()),
             "件数",
             new YenAmount(amount),
-            new HashSet<ServiceId>(serviceIds ?? Array.Empty<ServiceId>()),
+            new HashSet<ServiceId>(serviceIds ?? []),
             enabled);
+    }
+
 }
