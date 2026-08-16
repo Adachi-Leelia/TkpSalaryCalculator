@@ -12,6 +12,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TkpSalaryCalculator.Domain.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TkpSalaryCalculator.Application.Tests", "tests\TkpSalaryCalculator.Application.Tests\TkpSalaryCalculator.Application.Tests.csproj", "{A6693DA2-BF01-49E0-B91A-4725784BC632}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TkpSalaryCalculator.Infrastructure.Tests", "tests\TkpSalaryCalculator.Infrastructure.Tests\TkpSalaryCalculator.Infrastructure.Tests.csproj", "{C2DF7EA4-475D-4374-A842-F3A194249156}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,5 +40,9 @@ Global
 		{A6693DA2-BF01-49E0-B91A-4725784BC632}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A6693DA2-BF01-49E0-B91A-4725784BC632}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A6693DA2-BF01-49E0-B91A-4725784BC632}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2DF7EA4-475D-4374-A842-F3A194249156}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2DF7EA4-475D-4374-A842-F3A194249156}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2DF7EA4-475D-4374-A842-F3A194249156}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2DF7EA4-475D-4374-A842-F3A194249156}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
