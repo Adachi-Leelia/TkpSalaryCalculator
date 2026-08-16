@@ -286,7 +286,7 @@ public sealed partial class InfrastructureResilienceTests
             await transaction.CommitAsync();
         }
 
-        private static Guid WorkId(int index)
+        public static Guid WorkId(int index)
         {
             Span<byte> bytes = stackalloc byte[16];
             BitConverter.TryWriteBytes(bytes, index + 1);
