@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Setup.InitialSetupFlowPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:viewModels="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Setup"
+    x:DataType="viewModels:InitialSetupFlowViewModel"
+    Title="初期設定"
+    Shell.NavBarIsVisible="False">
+    <ScrollView>
+        <VerticalStackLayout Padding="24" SafeAreaEdges="All" Spacing="20">
+            <Label Style="{StaticResource PageTitleStyle}" Text="初期設定" />
+            <Label Text="{Binding ResumeMessage}" />
+            <Border
+                Padding="20"
+                BackgroundColor="{StaticResource WarningContainer}"
+                IsVisible="{Binding HasMissingRequirements}"
+                Stroke="{StaticResource Warning}"
+                StrokeShape="RoundRectangle 16">
+                <VerticalStackLayout Spacing="8">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="完了に必要な設定" />
+                    <Label
+                        SemanticProperties.Description="初期設定を完了するために不足している項目です"
+                        Text="{Binding MissingRequirements}" />
+                </VerticalStackLayout>
+            </Border>
+            <Label
+                Style="{StaticResource SupportingTextStyle}"
+                Text="初期設定の入力画面は、実装ロードマップの次の段階で追加されます。設定が完了するまでホーム、カレンダー、設定画面には移動できません。" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

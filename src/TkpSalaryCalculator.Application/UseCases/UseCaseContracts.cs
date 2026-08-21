@@ -1,4 +1,5 @@
 using TkpSalaryCalculator.Application.Contracts;
+using TkpSalaryCalculator.Domain.Models;
 using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Application.UseCases;
@@ -115,6 +116,11 @@ public interface IMonthSettingsUseCase
 /// <summary>給与期間ルールと直接適用する月額手当をプレゼンテーション層へ公開します。</summary>
 public interface IPayrollPeriodSettingsUseCase
 {
+    /// <summary>指定した日付を含む給与算定期間を、締め日履歴から取得します。</summary>
+    Task<PayrollPeriod> FindPeriodAsync(
+        DateOnly localDate,
+        CancellationToken cancellationToken);
+
     /// <summary>締め日変更後の最初の給与期間を、副作用なく現在の期間と比較します。</summary>
     Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
         ReplaceClosingRuleCommand command,

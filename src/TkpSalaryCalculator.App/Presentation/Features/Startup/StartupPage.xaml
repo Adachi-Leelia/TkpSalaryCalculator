@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Startup.StartupPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    xmlns:viewModels="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Startup"
+    x:DataType="viewModels:StartupViewModel"
+    Shell.NavBarIsVisible="False">
+    <Grid Padding="24" SafeAreaEdges="All">
+        <VerticalStackLayout
+            HorizontalOptions="Center"
+            Spacing="24"
+            VerticalOptions="Center">
+            <Label
+                HorizontalTextAlignment="Center"
+                Style="{StaticResource PageTitleStyle}"
+                Text="{StaticResource AppTitle}" />
+            <controls:LoadingStateView
+                IsRunning="{Binding IsBusy}"
+                IsVisible="{Binding IsBusy}"
+                Message="アプリのデータを準備しています。" />
+            <controls:ErrorStateView
+                IsVisible="{Binding HasError}"
+                Message="{Binding ErrorMessage}"
+                RetryCommand="{Binding RetryCommand}" />
+        </VerticalStackLayout>
+    </Grid>
+</ContentPage>
