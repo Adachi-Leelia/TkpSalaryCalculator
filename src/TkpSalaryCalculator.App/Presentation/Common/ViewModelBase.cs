@@ -67,5 +67,10 @@ public abstract class ViewModelBase(IUserErrorPresenter errorPresenter) : Observ
     {
         ArgumentNullException.ThrowIfNull(exception);
         ErrorMessage = errorPresenter.GetMessage(exception);
+        OnErrorPresented(exception);
+    }
+
+    protected virtual void OnErrorPresented(Exception exception)
+    {
     }
 }

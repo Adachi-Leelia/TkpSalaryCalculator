@@ -22,9 +22,10 @@
                 VerticalOptions="Center" />
         </Grid>
 
-        <ScrollView Grid.Row="1">
+        <ScrollView x:Name="SetupScrollView" Grid.Row="1">
             <VerticalStackLayout Padding="24,8,24,24" Spacing="16">
                 <Border
+                    AutomationId="Setup.ErrorSummary"
                     Padding="12"
                     BackgroundColor="{StaticResource PrimaryContainer}"
                     IsVisible="{Binding HasResumeMessage}"

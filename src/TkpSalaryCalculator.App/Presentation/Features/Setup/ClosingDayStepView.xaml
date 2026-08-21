@@ -10,11 +10,17 @@
         <VerticalStackLayout Spacing="6">
             <Label FontAttributes="Bold" Text="締め日（必須）" />
             <Picker
+                AutomationId="{Binding FieldId}"
                 ItemsSource="{Binding ClosingDayOptions}"
                 ItemDisplayBinding="{Binding DisplayName}"
                 SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
                 Title="1～31日または月末を選択"
                 SemanticProperties.Description="給与の締め日" />
+            <Label
+                IsVisible="{Binding HasValidationError}"
+                SemanticProperties.Description="締め日の入力エラー"
+                Text="{Binding ValidationError}"
+                TextColor="{StaticResource Error}" />
             <Button
                 Command="{Binding PreviewCommand}"
                 Style="{StaticResource SecondaryButtonStyle}"

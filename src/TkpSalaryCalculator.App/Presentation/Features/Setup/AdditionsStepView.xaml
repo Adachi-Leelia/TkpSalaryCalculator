@@ -28,7 +28,14 @@
                         ItemDisplayBinding="{Binding DisplayName}"
                         SelectedItem="{Binding SelectedCalculationType, Mode=TwoWay}" />
                     <Label Text="{Binding ValueLabel}" />
-                    <Entry Keyboard="Numeric" Text="{Binding ValueText, Mode=TwoWay}" />
+                    <Entry
+                        AutomationId="{Binding ValueFieldId}"
+                        Keyboard="Numeric"
+                        Text="{Binding ValueText, Mode=TwoWay}" />
+                    <Label
+                        IsVisible="{Binding HasValidationError}"
+                        Text="{Binding ValidationError}"
+                        TextColor="{StaticResource Error}" />
                     <Label
                         Style="{StaticResource SupportingTextStyle}"
                         Text="初期条件は土曜日・日曜日・国民の祝日です。" />
@@ -56,23 +63,30 @@
                         ItemDisplayBinding="{Binding DisplayName}"
                         SelectedItem="{Binding SelectedCalculationType, Mode=TwoWay}" />
                     <Label Text="{Binding ValueLabel}" />
-                    <Entry Keyboard="Numeric" Text="{Binding ValueText, Mode=TwoWay}" />
+                    <Entry
+                        AutomationId="{Binding ValueFieldId}"
+                        Keyboard="Numeric"
+                        Text="{Binding ValueText, Mode=TwoWay}" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                         <VerticalStackLayout Spacing="4">
                             <Label Text="開始時刻" />
-                            <Entry
-                                Placeholder="22:00"
+                            <TimePicker
+                                AutomationId="{Binding StartTimeFieldId}"
                                 SemanticProperties.Description="夜間割増の開始時刻"
-                                Text="{Binding StartTimeText, Mode=TwoWay}" />
+                                Time="{Binding StartTime, Mode=TwoWay}" />
                         </VerticalStackLayout>
                         <VerticalStackLayout Grid.Column="1" Spacing="4">
                             <Label Text="終了時刻" />
-                            <Entry
-                                Placeholder="05:00"
+                            <TimePicker
+                                AutomationId="{Binding EndTimeFieldId}"
                                 SemanticProperties.Description="夜間割増の終了時刻"
-                                Text="{Binding EndTimeText, Mode=TwoWay}" />
+                                Time="{Binding EndTime, Mode=TwoWay}" />
                         </VerticalStackLayout>
                     </Grid>
+                    <Label
+                        IsVisible="{Binding HasValidationError}"
+                        Text="{Binding ValidationError}"
+                        TextColor="{StaticResource Error}" />
                 </VerticalStackLayout>
             </VerticalStackLayout>
         </Border>
@@ -92,7 +106,14 @@
                 </Grid>
                 <VerticalStackLayout IsVisible="{Binding IsEnabled}" Spacing="8">
                     <Label Text="1件当たりの加算額（円）" />
-                    <Entry Keyboard="Numeric" Text="{Binding AmountText, Mode=TwoWay}" />
+                    <Entry
+                        AutomationId="{Binding AmountFieldId}"
+                        Keyboard="Numeric"
+                        Text="{Binding AmountText, Mode=TwoWay}" />
+                    <Label
+                        IsVisible="{Binding HasValidationError}"
+                        Text="{Binding ValidationError}"
+                        TextColor="{StaticResource Error}" />
                 </VerticalStackLayout>
             </VerticalStackLayout>
         </Border>

@@ -114,6 +114,99 @@ public sealed class InitialSetupFlowViewModelTests
     }
 
     [Fact]
+    public void UI008_ServiceNameAndMinutesValidationExposeTheirExactFields()
+    {
+        var snapshot = CreateSnapshot(includeRate: true);
+        var step = new ServiceRatesStepViewModel();
+        step.Load(snapshot, []);
+        var service = step.Services[0];
+        service.DisplayName = " ";
+
+        var nameError = Assert.Throws<ApplicationErrorException>(() => step.BuildReplacement(snapshot));
+        Assert.Equal(service.DisplayNameFieldId, nameError.Field);
+
+        service.DisplayName = "身体介護";
+        service.Rates[0].StandardMinutesText = "0";
+        var minutesError = Assert.Throws<ApplicationErrorException>(() => step.BuildReplacement(snapshot));
+        Assert.Equal(service.Rates[0].StandardMinutesFieldId, minutesError.Field);
+    }
+
+    [Fact]
+    public async Task ServiceStep_NewAndUnlinkedRowsKeepStablePresetIdsAcrossRepeatedSaves()
+    {
+        var step = new ServiceRatesStepViewModel();
+        step.Load(CreateSnapshot(includeRate: true), []);
+        step.AddServiceCommand.Execute(null);
+        var presetUseCase = new PresetStub();
+
+        await step.SavePresetsAsync(presetUseCase, CancellationToken.None);
+        var firstIds = presetUseCase.SavedCommands.Select(command => command.Id).ToArray();
+        var countAfterFirstSave = presetUseCase.StoredPresetCount;
+        await step.SavePresetsAsync(presetUseCase, CancellationToken.None);
+        var secondIds = presetUseCase.SavedCommands.Skip(firstIds.Length).Select(command => command.Id).ToArray();
+
+        Assert.All(firstIds, id => Assert.NotNull(id));
+        Assert.Equal(firstIds, secondIds);
+        Assert.Equal(firstIds.Length, firstIds.Distinct().Count());
+        Assert.Equal(countAfterFirstSave, presetUseCase.StoredPresetCount);
+    }
+
+    [Fact]
+    public void ServiceStep_AddsRateToExistingServiceAndPersistsExplicitOrdering()
+    {
+        var snapshot = CreateSnapshot(includeRate: true);
+        var step = new ServiceRatesStepViewModel();
+        step.Load(snapshot, []);
+        var service = Assert.Single(step.Services);
+        var originalFirst = service.Rates[0];
+
+        service.AddRateCommand.Execute(null);
+        Assert.Equal(3, service.Rates.Count);
+        service.Rates[0].MoveDownCommand.Execute(null);
+
+        Assert.Same(originalFirst, service.Rates[1]);
+        foreach (var rate in service.Rates) rate.AmountText = "1200";
+        var replacement = step.BuildReplacement(snapshot);
+        Assert.Equal(service.Rates.Select(rate => rate.Id),
+            replacement.TimeCategories.OrderBy(category => category.DisplayOrder.Value).Select(category => category.Id));
+    }
+
+    [Fact]
+    public void ServiceStep_ReordersServiceTypesAndWritesTheirDisplayOrder()
+    {
+        var snapshot = CreateSnapshot(includeRate: true);
+        var step = new ServiceRatesStepViewModel();
+        step.Load(snapshot, []);
+        step.AddServiceCommand.Execute(null);
+        var added = step.Services[1];
+        added.Rates[0].AmountText = "900";
+
+        added.MoveUpCommand.Execute(null);
+        var replacement = step.BuildReplacement(snapshot);
+
+        Assert.Same(added, step.Services[0]);
+        Assert.Equal(added.Id, replacement.Services.Single(service => service.DisplayOrder.Value == 0).Id);
+    }
+
+    [Fact]
+    public void ServiceStep_BulkDisablesUnusedCandidatesButKeepsACalculableRow()
+    {
+        var step = new ServiceRatesStepViewModel();
+        step.Load(CreateSnapshot(includeRate: false), []);
+        var service = Assert.Single(step.Services);
+        service.Rates[0].AmountText = "1200";
+        service.Rates[1].AmountText = string.Empty;
+
+        step.DisableUnusedCommand.Execute(null);
+
+        Assert.True(service.IsEnabled);
+        Assert.True(service.IsExpanded);
+        Assert.True(service.Rates[0].IsEnabled);
+        Assert.False(service.Rates[1].IsEnabled);
+        Assert.NotEmpty(step.BuildReplacement(CreateSnapshot(includeRate: false)).Rates);
+    }
+
+    [Fact]
     public void UX004_SkipAdditionsNeedsNoAmountOrTimeAndDisablesEveryOptionalRule()
     {
         var snapshot = CreateSnapshot(includeRate: true);
@@ -128,6 +221,59 @@ public sealed class InitialSetupFlowViewModelTests
         Assert.Contains(replacement.Premiums, value => value.DisplayName == "休日");
         Assert.Contains(replacement.Premiums, value => value.DisplayName == "夜間");
         Assert.Contains(replacement.CountBonuses, value => value.DisplayName == "件数加算");
+    }
+
+    [Fact]
+    public void UI014_NightUsesNormalizedPickerTimesAndAllowsAnOvernightRange()
+    {
+        var snapshot = CreateSnapshot(includeRate: true);
+        var step = new AdditionsStepViewModel();
+        step.Load(snapshot);
+        step.Night.IsEnabled = true;
+        step.Night.ValueText = "300";
+        step.Night.StartTime = new TimeSpan(22, 30, 0);
+        step.Night.EndTime = new TimeSpan(5, 15, 0);
+
+        var replacement = step.BuildReplacement(snapshot);
+        var night = replacement.Premiums.Single(premium => premium.DisplayName == "夜間");
+
+        Assert.Equal(22 * 60 + 30, night.StartTime!.Value.Value);
+        Assert.Equal(5 * 60 + 15, night.EndTime!.Value.Value);
+    }
+
+    [Fact]
+    public void UI008_EqualNightPickerTimesReportTheEndTimeField()
+    {
+        var step = new AdditionsStepViewModel();
+        step.Load(CreateSnapshot(includeRate: true));
+        step.Night.IsEnabled = true;
+        step.Night.ValueText = "300";
+        step.Night.StartTime = new TimeSpan(22, 0, 0);
+        step.Night.EndTime = new TimeSpan(22, 0, 0);
+
+        var exception = Assert.Throws<ApplicationErrorException>(() =>
+            step.BuildReplacement(CreateSnapshot(includeRate: true)));
+
+        Assert.Equal(SetupFieldIds.NightEndTime, exception.Field);
+    }
+
+    [Fact]
+    public void UI008_AdditionValuesExposeHolidayAndCountBonusFields()
+    {
+        var snapshot = CreateSnapshot(includeRate: true);
+        var step = new AdditionsStepViewModel();
+        step.Load(snapshot);
+        step.Holiday.IsEnabled = true;
+        step.Holiday.ValueText = "invalid";
+
+        var holidayError = Assert.Throws<ApplicationErrorException>(() => step.BuildReplacement(snapshot));
+        Assert.Equal(SetupFieldIds.HolidayValue, holidayError.Field);
+
+        step.Holiday.IsEnabled = false;
+        step.CountBonus.IsEnabled = true;
+        step.CountBonus.AmountText = "invalid";
+        var countError = Assert.Throws<ApplicationErrorException>(() => step.BuildReplacement(snapshot));
+        Assert.Equal(SetupFieldIds.CountBonusAmount, countError.Field);
     }
 
     [Fact]
@@ -169,6 +315,117 @@ public sealed class InitialSetupFlowViewModelTests
         Assert.Null(fixture.Navigator.Request);
     }
 
+    [Fact]
+    public async Task UI008_ServiceValidationIdentifiesAndRequestsFocusForFirstInvalidField()
+    {
+        var fixture = new FlowFixture(new InitialSetupStateDto(
+            InitialSetupStatus.InProgress, InitialSetupStepIds.Services, []));
+        await fixture.ViewModel.InitializeAsync();
+        var firstRate = fixture.ViewModel.Services.Services[0].Rates[0];
+        firstRate.AmountText = "invalid";
+        string? requestedField = null;
+        fixture.ViewModel.ErrorFocusRequested += (_, field) => requestedField = field;
+
+        await fixture.ViewModel.MoveNextAsync();
+
+        Assert.Equal(firstRate.AmountFieldId, fixture.ViewModel.FirstErrorField);
+        Assert.Equal(firstRate.AmountFieldId, requestedField);
+        Assert.True(firstRate.HasValidationError);
+        Assert.Equal(InitialSetupStep.Services, fixture.ViewModel.CurrentStep);
+        Assert.Equal("invalid", firstRate.AmountText);
+    }
+
+    [Fact]
+    public async Task UI008_ClosingDayValidationIdentifiesAndRequestsFocusForPicker()
+    {
+        var fixture = new FlowFixture(new InitialSetupStateDto(
+            InitialSetupStatus.InProgress, InitialSetupStepIds.ClosingDay, []));
+        await fixture.ViewModel.InitializeAsync();
+        fixture.ViewModel.ClosingDay.SelectedOption = null;
+        string? requestedField = null;
+        fixture.ViewModel.ErrorFocusRequested += (_, field) => requestedField = field;
+
+        await fixture.ViewModel.MoveNextAsync();
+
+        Assert.Equal(SetupFieldIds.ClosingDay, requestedField);
+        Assert.True(fixture.ViewModel.ClosingDay.HasValidationError);
+        Assert.Equal(InitialSetupStep.ClosingDay, fixture.ViewModel.CurrentStep);
+    }
+
+    [Fact]
+    public async Task UI002_ConfirmationIssuesExposeOneStepFixNavigationAndPersistDestination()
+    {
+        var fixture = new FlowFixture(new InitialSetupStateDto(
+            InitialSetupStatus.InProgress,
+            InitialSetupStepIds.Confirmation,
+            [
+                new IssueDto("SETUP_CLOSING_RULE_REQUIRED", null, "締め日を設定してください。"),
+                new IssueDto("SETUP_CALCULATION_SETTINGS_REQUIRED", null, "サービスと単価を設定してください。"),
+            ]));
+        await fixture.ViewModel.InitializeAsync();
+
+        Assert.True(fixture.ViewModel.Confirmation.HasClosingDayIssue);
+        Assert.True(fixture.ViewModel.Confirmation.HasServicesIssue);
+
+        await fixture.ViewModel.GoToClosingDayAsync();
+        Assert.Equal(InitialSetupStep.ClosingDay, fixture.ViewModel.CurrentStep);
+        Assert.Equal(InitialSetupStepIds.ClosingDay, fixture.InitialSetup.SavedSteps[^1]);
+
+        await fixture.ViewModel.GoToServicesAsync();
+        Assert.Equal(InitialSetupStep.Services, fixture.ViewModel.CurrentStep);
+        Assert.Equal(InitialSetupStepIds.Services, fixture.InitialSetup.SavedSteps[^1]);
+    }
+
+    [Fact]
+    public async Task UI002_ReturningToConfirmationReloadsIssuesAndCompletionState()
+    {
+        var fixture = new FlowFixture(new InitialSetupStateDto(
+            InitialSetupStatus.InProgress,
+            InitialSetupStepIds.Confirmation,
+            [new IssueDto("SETUP_CALCULATION_SETTINGS_REQUIRED", null, "サービスと単価を設定してください。")]));
+        await fixture.ViewModel.InitializeAsync();
+        await fixture.ViewModel.GoToServicesAsync();
+        fixture.InitialSetup.SetState(new InitialSetupStateDto(
+            InitialSetupStatus.InProgress, InitialSetupStepIds.Services, []));
+        var callsBeforeCorrection = fixture.InitialSetup.GetStateCalls;
+
+        await fixture.ViewModel.MoveNextAsync();
+        await fixture.ViewModel.MoveNextAsync();
+
+        Assert.Equal(InitialSetupStep.Confirmation, fixture.ViewModel.CurrentStep);
+        Assert.True(fixture.InitialSetup.GetStateCalls > callsBeforeCorrection);
+        Assert.True(fixture.ViewModel.CanComplete);
+        Assert.False(fixture.ViewModel.Confirmation.HasServicesIssue);
+    }
+
+    [Fact]
+    public async Task ViewModelUpdatesAfterRealAsyncSuspensionArePostedToTheCapturedUiContext()
+    {
+        var fixture = new FlowFixture(new InitialSetupStateDto(
+            InitialSetupStatus.InProgress, InitialSetupStepIds.Services, []), completeAsynchronously: true);
+        var context = new TrackingSynchronizationContext();
+        var notificationsOnContext = true;
+        fixture.ViewModel.Services.Services.CollectionChanged += (_, _) =>
+            notificationsOnContext &= ReferenceEquals(SynchronizationContext.Current, context);
+
+        await Task.Run(async () =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            try
+            {
+                await fixture.ViewModel.InitializeAsync();
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+
+        Assert.True(context.PostCount > 0);
+        Assert.True(notificationsOnContext);
+        Assert.NotEmpty(fixture.ViewModel.Services.Services);
+    }
+
     private static SettingSnapshot CreateSnapshot(bool includeRate)
     {
         var serviceId = new ServiceId(Guid.Parse("10000000-0000-4000-8000-000000000010"));
@@ -202,17 +459,18 @@ public sealed class InitialSetupFlowViewModelTests
 
     private sealed class FlowFixture
     {
-        public FlowFixture(InitialSetupStateDto state)
+        public FlowFixture(InitialSetupStateDto state, bool completeAsynchronously = false)
         {
-            InitialSetup = new InitialSetupStub(state);
+            InitialSetup = new InitialSetupStub(state, completeAsynchronously);
             MonthSettings = new MonthSettingsStub(CreateSnapshot(includeRate: true));
             PayrollPeriods = new PayrollPeriodStub();
             Navigator = new NavigatorStub();
             Session = new AppSessionState(new DateOnly(2026, 8, 21)) { InitialSetupState = state };
+            Presets = new PresetStub();
             ViewModel = new InitialSetupFlowViewModel(
                 InitialSetup,
                 MonthSettings,
-                new PresetStub(),
+                Presets,
                 PayrollPeriods,
                 Navigator,
                 Session,
@@ -226,22 +484,28 @@ public sealed class InitialSetupFlowViewModelTests
         public InitialSetupStub InitialSetup { get; }
         public MonthSettingsStub MonthSettings { get; }
         public PayrollPeriodStub PayrollPeriods { get; }
+        public PresetStub Presets { get; }
         public NavigatorStub Navigator { get; }
         public AppSessionState Session { get; }
     }
 
-    private sealed class InitialSetupStub(InitialSetupStateDto state) : IInitialSetupUseCase
+    private sealed class InitialSetupStub(InitialSetupStateDto state, bool completeAsynchronously = false) : IInitialSetupUseCase
     {
         private InitialSetupStateDto state = state;
 
         public List<string> SavedSteps { get; } = [];
         public int CompleteCalls { get; private set; }
+        public int GetStateCalls { get; private set; }
 
-        public Task<InitialSetupStateDto> GetStateAsync(CancellationToken cancellationToken)
+        public async Task<InitialSetupStateDto> GetStateAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(state);
+            GetStateCalls++;
+            if (completeAsynchronously) await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+            return state;
         }
+
+        public void SetState(InitialSetupStateDto value) => state = value;
 
         public Task SaveProgressAsync(string step, CancellationToken cancellationToken)
         {
@@ -308,6 +572,12 @@ public sealed class InitialSetupFlowViewModelTests
 
     private sealed class PresetStub : IServicePresetUseCase
     {
+        private readonly Dictionary<ServicePresetId, ServicePresetDto> storedPresets = [];
+
+        public List<SaveServicePresetCommand> SavedCommands { get; } = [];
+
+        public int StoredPresetCount => storedPresets.Count;
+
         public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -317,9 +587,12 @@ public sealed class InitialSetupFlowViewModelTests
         public Task<ServicePresetDto> SaveAsync(SaveServicePresetCommand command, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(new ServicePresetDto(command.Id ?? new ServicePresetId(Guid.NewGuid()),
+            SavedCommands.Add(command);
+            var value = new ServicePresetDto(command.Id ?? new ServicePresetId(Guid.NewGuid()),
                 command.DisplayName, command.ServiceId, command.TimeCategoryId, command.DefaultWorkMinutes,
-                command.DisplayOrder, command.IsEnabled));
+                command.DisplayOrder, command.IsEnabled);
+            storedPresets[value.Id] = value;
+            return Task.FromResult(value);
         }
 
         public Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -402,5 +675,30 @@ public sealed class InitialSetupFlowViewModelTests
     private sealed class LocalDateStub(DateOnly localDate) : ILocalDateConverter
     {
         public DateOnly ToLocalDate(DateTimeOffset utcDateTime) => localDate;
+    }
+
+    private sealed class TrackingSynchronizationContext : SynchronizationContext
+    {
+        private int postCount;
+
+        public int PostCount => Volatile.Read(ref postCount);
+
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            Interlocked.Increment(ref postCount);
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var previous = Current;
+                SetSynchronizationContext(this);
+                try
+                {
+                    callback(state);
+                }
+                finally
+                {
+                    SetSynchronizationContext(previous);
+                }
+            });
+        }
     }
 }

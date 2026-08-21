@@ -49,6 +49,32 @@ public static class InitialSetupStepIds
     };
 }
 
+public static class SetupFieldIds
+{
+    public const string ClosingDay = "Setup.ClosingDay";
+    public const string Services = "Setup.Services";
+    public const string Additions = "Setup.Additions";
+    public const string HolidayValue = "Setup.Additions.Holiday.Value";
+    public const string NightValue = "Setup.Additions.Night.Value";
+    public const string NightStartTime = "Setup.Additions.Night.StartTime";
+    public const string NightEndTime = "Setup.Additions.Night.EndTime";
+    public const string CountBonusAmount = "Setup.Additions.CountBonus.Amount";
+
+    public static string ForErrorCode(string code) => code switch
+    {
+        "SETUP_CLOSING_DAY_REQUIRED" => ClosingDay,
+        "SETUP_PREMIUM_PERCENTAGE_INVALID" or "SETUP_PREMIUM_AMOUNT_INVALID" => Additions,
+        "SETUP_PREMIUM_TIME_REQUIRED" or "SETUP_PREMIUM_TIME_INVALID" => NightStartTime,
+        "SETUP_COUNT_AMOUNT_INVALID" => CountBonusAmount,
+        _ when code.StartsWith("SETUP_SERVICE", StringComparison.Ordinal) ||
+            code.StartsWith("SETUP_RATE", StringComparison.Ordinal) ||
+            code.StartsWith("SETUP_CATEGORY", StringComparison.Ordinal) ||
+            code.StartsWith("SETUP_MINUTES", StringComparison.Ordinal) ||
+            code.StartsWith("SETUP_ENABLED_SERVICE", StringComparison.Ordinal) => Services,
+        _ => Additions,
+    };
+}
+
 /// <summary>SCR-INIT-01～05 の再開可能な初期設定フローを統括します。</summary>
 public sealed class InitialSetupFlowViewModel : ViewModelBase
 {
@@ -65,6 +91,8 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
     private readonly AsyncCommand backCommand;
     private readonly AsyncCommand skipAdditionsCommand;
     private readonly AsyncCommand previewClosingDayCommand;
+    private readonly AsyncCommand fixClosingDayCommand;
+    private readonly AsyncCommand fixServicesCommand;
     private InitialSetupStep currentStep;
     private bool initialized;
     private bool canComplete;
@@ -112,6 +140,12 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
             () => CurrentStep == InitialSetupStep.ClosingDay && ClosingDay.SelectedOption is not null);
         Additions.SkipCommand = skipAdditionsCommand;
         ClosingDay.PreviewCommand = previewClosingDayCommand;
+        fixClosingDayCommand = new AsyncCommand(
+            GoToClosingDayAsync, PresentError);
+        fixServicesCommand = new AsyncCommand(
+            GoToServicesAsync, PresentError);
+        Confirmation.FixClosingDayCommand = fixClosingDayCommand;
+        Confirmation.FixServicesCommand = fixServicesCommand;
     }
 
     public WelcomeStepViewModel Welcome { get; }
@@ -231,48 +265,66 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
 
     public ICommand SkipAdditionsCommand => skipAdditionsCommand;
 
+    public string? FirstErrorField { get; private set; }
+
+    public event EventHandler<string>? ErrorFocusRequested;
+
     public Task InitializeAsync()
     {
         if (initialized) return Task.CompletedTask;
         return RunBusyAsync(InitializeCoreAsync);
     }
 
-    public Task MoveNextAsync() => RunBusyAsync(MoveNextCoreAsync);
+    public Task MoveNextAsync()
+    {
+        ClearValidationErrors();
+        return RunBusyAsync(MoveNextCoreAsync);
+    }
 
-    public Task MoveBackAsync() => RunBusyAsync(MoveBackCoreAsync);
+    public Task MoveBackAsync()
+    {
+        ClearValidationErrors();
+        return RunBusyAsync(MoveBackCoreAsync);
+    }
 
     public Task SkipAdditionsAsync() => RunBusyAsync(async cancellationToken =>
     {
+        ClearValidationErrors();
         if (CurrentStep != InitialSetupStep.Additions) return;
         Additions.DisableAll();
-        await SaveAdditionsAsync(cancellationToken).ConfigureAwait(false);
-        await MoveToAsync(InitialSetupStep.Confirmation, cancellationToken).ConfigureAwait(false);
-        await RefreshConfirmationAsync(cancellationToken).ConfigureAwait(false);
+        await SaveAdditionsAsync(cancellationToken);
+        await MoveToAsync(InitialSetupStep.Confirmation, cancellationToken);
+        await RefreshConfirmationAsync(cancellationToken);
     });
 
     public Task PreviewClosingDayAsync() => RunBusyAsync(async cancellationToken =>
     {
+        ClearValidationErrors();
         if (ClosingDay.SelectedOption is null) return;
-        var preview = await GetClosingDayPreviewAsync(cancellationToken).ConfigureAwait(false);
+        var preview = await GetClosingDayPreviewAsync(cancellationToken);
         ClosingDay.SetPreview(preview.ReplacementPeriod, formatter);
     });
 
+    public Task GoToClosingDayAsync() => MoveToStepAsync(InitialSetupStep.ClosingDay);
+
+    public Task GoToServicesAsync() => MoveToStepAsync(InitialSetupStep.Services);
+
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        var state = await initialSetup.GetStateAsync(cancellationToken).ConfigureAwait(false);
+        var state = await initialSetup.GetStateAsync(cancellationToken);
         sessionState.InitialSetupState = state;
         CurrentStep = InitialSetupStepIds.ToStep(state.Step);
         ResumeMessage = state.Status == InitialSetupStatus.InProgress && !string.IsNullOrWhiteSpace(state.Step)
             ? $"保存済みの「{StepTitle}」から再開しました。"
             : null;
 
-        var settings = await monthSettings.GetAsync(setupMonth, cancellationToken).ConfigureAwait(false);
-        var presetValues = await presets.GetAllAsync(cancellationToken).ConfigureAwait(false);
+        var settings = await monthSettings.GetAsync(setupMonth, cancellationToken);
+        var presetValues = await presets.GetAllAsync(cancellationToken);
         Services.Load(settings.Snapshot, presetValues);
         Additions.Load(settings.Snapshot);
-        await LoadClosingDayAsync(cancellationToken).ConfigureAwait(false);
+        await LoadClosingDayAsync(cancellationToken);
         if (CurrentStep == InitialSetupStep.Confirmation)
-            await RefreshConfirmationAsync(cancellationToken).ConfigureAwait(false);
+            await RefreshConfirmationAsync(cancellationToken);
         else
             ApplyIssues(state.Issues);
         initialized = true;
@@ -281,11 +333,11 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
     private async Task LoadClosingDayAsync(CancellationToken cancellationToken)
     {
         var lookupKey = new PayrollPeriodKey(setupMonth);
-        var existing = await payrollPeriods.GetClosingRuleAsync(lookupKey, cancellationToken).ConfigureAwait(false);
+        var existing = await payrollPeriods.GetClosingRuleAsync(lookupKey, cancellationToken);
         if (existing is null) return;
 
         ClosingDay.Select(existing.ClosingDay);
-        var period = await payrollPeriods.FindPeriodAsync(localToday, cancellationToken).ConfigureAwait(false);
+        var period = await payrollPeriods.FindPeriodAsync(localToday, cancellationToken);
         ClosingDay.SetPreview(period, formatter);
         sessionState.PayrollPeriod = period.Key;
     }
@@ -295,23 +347,23 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
         switch (CurrentStep)
         {
             case InitialSetupStep.Welcome:
-                await MoveToAsync(InitialSetupStep.ClosingDay, cancellationToken).ConfigureAwait(false);
+                await MoveToAsync(InitialSetupStep.ClosingDay, cancellationToken);
                 break;
             case InitialSetupStep.ClosingDay:
-                await SaveClosingDayAsync(cancellationToken).ConfigureAwait(false);
-                await MoveToAsync(InitialSetupStep.Services, cancellationToken).ConfigureAwait(false);
+                await SaveClosingDayAsync(cancellationToken);
+                await MoveToAsync(InitialSetupStep.Services, cancellationToken);
                 break;
             case InitialSetupStep.Services:
-                await SaveServicesAsync(cancellationToken).ConfigureAwait(false);
-                await MoveToAsync(InitialSetupStep.Additions, cancellationToken).ConfigureAwait(false);
+                await SaveServicesAsync(cancellationToken);
+                await MoveToAsync(InitialSetupStep.Additions, cancellationToken);
                 break;
             case InitialSetupStep.Additions:
-                await SaveAdditionsAsync(cancellationToken).ConfigureAwait(false);
-                await MoveToAsync(InitialSetupStep.Confirmation, cancellationToken).ConfigureAwait(false);
-                await RefreshConfirmationAsync(cancellationToken).ConfigureAwait(false);
+                await SaveAdditionsAsync(cancellationToken);
+                await MoveToAsync(InitialSetupStep.Confirmation, cancellationToken);
+                await RefreshConfirmationAsync(cancellationToken);
                 break;
             case InitialSetupStep.Confirmation:
-                await CompleteAsync(cancellationToken).ConfigureAwait(false);
+                await CompleteAsync(cancellationToken);
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
@@ -322,13 +374,13 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
     {
         if (!CanGoBack) return;
         var destination = (InitialSetupStep)((int)CurrentStep - 1);
-        await MoveToAsync(destination, cancellationToken).ConfigureAwait(false);
+        await MoveToAsync(destination, cancellationToken);
     }
 
     private async Task MoveToAsync(InitialSetupStep step, CancellationToken cancellationToken)
     {
         var id = InitialSetupStepIds.FromStep(step);
-        await initialSetup.SaveProgressAsync(id, cancellationToken).ConfigureAwait(false);
+        await initialSetup.SaveProgressAsync(id, cancellationToken);
         var state = new InitialSetupStateDto(InitialSetupStatus.InProgress, id,
             sessionState.InitialSetupState?.Issues ?? []);
         sessionState.InitialSetupState = state;
@@ -339,14 +391,14 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
     private async Task SaveClosingDayAsync(CancellationToken cancellationToken)
     {
         if (ClosingDay.SelectedOption is null)
-            throw new ApplicationErrorException("SETUP_CLOSING_DAY_REQUIRED", "締め日を選択してください。", "ClosingDay");
+            throw new ApplicationErrorException("SETUP_CLOSING_DAY_REQUIRED", "締め日を選択してください。", SetupFieldIds.ClosingDay);
 
         var closingDay = ClosingDay.SelectedOption.Value;
         var key = GetCurrentPayrollPeriodKey(localToday, closingDay);
         var command = new ReplaceClosingRuleCommand(key, closingDay);
-        var preview = await GetClosingDayPreviewAsync(cancellationToken).ConfigureAwait(false);
+        var preview = await GetClosingDayPreviewAsync(cancellationToken);
         ClosingDay.SetPreview(preview.ReplacementPeriod, formatter);
-        await payrollPeriods.ReplaceClosingRuleAsync(command, preview.ConfirmationToken, cancellationToken).ConfigureAwait(false);
+        await payrollPeriods.ReplaceClosingRuleAsync(command, preview.ConfirmationToken, cancellationToken);
         sessionState.PayrollPeriod = preview.ReplacementPeriod.Key;
     }
 
@@ -354,7 +406,7 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
     {
         var closingDay = ClosingDay.SelectedOption?.Value;
         if (ClosingDay.SelectedOption is null)
-            throw new ApplicationErrorException("SETUP_CLOSING_DAY_REQUIRED", "締め日を選択してください。", "ClosingDay");
+            throw new ApplicationErrorException("SETUP_CLOSING_DAY_REQUIRED", "締め日を選択してください。", SetupFieldIds.ClosingDay);
         var key = GetCurrentPayrollPeriodKey(localToday, closingDay);
         return payrollPeriods.PreviewClosingRuleReplacementAsync(
             new ReplaceClosingRuleCommand(key, closingDay), cancellationToken);
@@ -362,40 +414,36 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
 
     private async Task SaveServicesAsync(CancellationToken cancellationToken)
     {
-        var current = await monthSettings.GetAsync(setupMonth, cancellationToken).ConfigureAwait(false);
+        var current = await monthSettings.GetAsync(setupMonth, cancellationToken);
         var replacement = Services.BuildReplacement(current.Snapshot);
-        var preview = await monthSettings.PreviewReplacementAsync(setupMonth, replacement, cancellationToken).ConfigureAwait(false);
+        var preview = await monthSettings.PreviewReplacementAsync(setupMonth, replacement, cancellationToken);
         if (preview.Issues.Count != 0)
-            throw new ApplicationErrorException("SETUP_SERVICE_SETTINGS_INVALID",
-                string.Join(Environment.NewLine, preview.Issues.Select(issue => issue.Message)));
+            throw ToApplicationError(preview.Issues[0], SetupFieldIds.Services);
 
-        await monthSettings.CloneAndReplaceAsync(setupMonth, replacement, preview.ConfirmationToken, cancellationToken)
-            .ConfigureAwait(false);
-        await Services.SavePresetsAsync(presets, cancellationToken).ConfigureAwait(false);
+        await monthSettings.CloneAndReplaceAsync(setupMonth, replacement, preview.ConfirmationToken, cancellationToken);
+        await Services.SavePresetsAsync(presets, cancellationToken);
     }
 
     private async Task SaveAdditionsAsync(CancellationToken cancellationToken)
     {
-        var current = await monthSettings.GetAsync(setupMonth, cancellationToken).ConfigureAwait(false);
+        var current = await monthSettings.GetAsync(setupMonth, cancellationToken);
         var replacement = Additions.BuildReplacement(current.Snapshot);
-        var preview = await monthSettings.PreviewReplacementAsync(setupMonth, replacement, cancellationToken).ConfigureAwait(false);
+        var preview = await monthSettings.PreviewReplacementAsync(setupMonth, replacement, cancellationToken);
         if (preview.Issues.Count != 0)
-            throw new ApplicationErrorException("SETUP_ADDITIONS_INVALID",
-                string.Join(Environment.NewLine, preview.Issues.Select(issue => issue.Message)));
+            throw ToApplicationError(preview.Issues[0], SetupFieldIds.Additions);
 
-        await monthSettings.CloneAndReplaceAsync(setupMonth, replacement, preview.ConfirmationToken, cancellationToken)
-            .ConfigureAwait(false);
+        await monthSettings.CloneAndReplaceAsync(setupMonth, replacement, preview.ConfirmationToken, cancellationToken);
     }
 
     private async Task RefreshConfirmationAsync(CancellationToken cancellationToken)
     {
-        var state = await initialSetup.GetStateAsync(cancellationToken).ConfigureAwait(false);
-        var settings = await monthSettings.GetAsync(setupMonth, cancellationToken).ConfigureAwait(false);
+        var state = await initialSetup.GetStateAsync(cancellationToken);
+        var settings = await monthSettings.GetAsync(setupMonth, cancellationToken);
         sessionState.InitialSetupState = state;
         ApplyIssues(state.Issues);
         CanComplete = state.Issues.Count == 0;
 
-        var period = await TryFindCurrentPeriodAsync(cancellationToken).ConfigureAwait(false);
+        var period = await TryFindCurrentPeriodAsync(cancellationToken);
         var closing = ClosingDay.SelectedOption?.DisplayName ?? "未設定";
         ClosingSummary = period is null
             ? $"締め日: {closing}"
@@ -414,14 +462,14 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
             ? "有効な割増・件数加算: なし"
             : $"有効な割増・件数加算: {string.Join("、", enabledAdditions)}";
 
-        Confirmation.Update(ClosingSummary, ServiceSummary, AdditionsSummary, MissingRequirements);
+        Confirmation.Update(ClosingSummary, ServiceSummary, AdditionsSummary, state.Issues);
     }
 
     private async Task<PayrollPeriod?> TryFindCurrentPeriodAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var period = await payrollPeriods.FindPeriodAsync(localToday, cancellationToken).ConfigureAwait(false);
+            var period = await payrollPeriods.FindPeriodAsync(localToday, cancellationToken);
             sessionState.PayrollPeriod = period.Key;
             return period;
         }
@@ -433,21 +481,20 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
 
     private async Task CompleteAsync(CancellationToken cancellationToken)
     {
-        var result = await initialSetup.CompleteAsync(cancellationToken).ConfigureAwait(false);
+        var result = await initialSetup.CompleteAsync(cancellationToken);
         sessionState.InitialSetupState = result;
         ApplyIssues(result.Issues);
         CanComplete = result.Status == InitialSetupStatus.Completed && result.Issues.Count == 0;
         if (!CanComplete)
         {
-            await RefreshConfirmationAsync(cancellationToken).ConfigureAwait(false);
+            await RefreshConfirmationAsync(cancellationToken);
             return;
         }
 
-        var period = await payrollPeriods.FindPeriodAsync(localToday, cancellationToken).ConfigureAwait(false);
+        var period = await payrollPeriods.FindPeriodAsync(localToday, cancellationToken);
         sessionState.PayrollPeriod = period.Key;
         sessionState.SelectedRootRoute = NavigationRoutes.Home;
-        await rootNavigator.SetRootAsync(new AppRootNavigationRequest(AppRootKind.Main, null), cancellationToken)
-            .ConfigureAwait(false);
+        await rootNavigator.SetRootAsync(new AppRootNavigationRequest(AppRootKind.Main, null), cancellationToken);
     }
 
     private void ApplyIssues(IReadOnlyList<IssueDto> issues)
@@ -455,7 +502,37 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
         MissingRequirements = issues.Count == 0
             ? null
             : string.Join(Environment.NewLine, issues.Select(issue => $"・{issue.Message}"));
+        Confirmation.SetIssues(issues);
     }
+
+    private Task MoveToStepAsync(InitialSetupStep step)
+    {
+        ClearValidationErrors();
+        return RunBusyAsync(token => MoveToAsync(step, token));
+    }
+
+    protected override void OnErrorPresented(Exception exception)
+    {
+        if (exception is not ApplicationErrorException applicationError) return;
+        FirstErrorField = applicationError.Field ?? SetupFieldIds.ForErrorCode(applicationError.Code);
+        OnPropertyChanged(nameof(FirstErrorField));
+        ClosingDay.SetValidationError(FirstErrorField, applicationError.Message);
+        Services.SetValidationError(FirstErrorField, applicationError.Message);
+        Additions.SetValidationError(FirstErrorField, applicationError.Message);
+        ErrorFocusRequested?.Invoke(this, FirstErrorField);
+    }
+
+    private void ClearValidationErrors()
+    {
+        FirstErrorField = null;
+        OnPropertyChanged(nameof(FirstErrorField));
+        ClosingDay.ClearValidationError();
+        Services.ClearValidationErrors();
+        Additions.ClearValidationErrors();
+    }
+
+    private static ApplicationErrorException ToApplicationError(IssueDto issue, string fallbackField) =>
+        new(issue.Code, issue.Message, issue.Field ?? fallbackField);
 
     internal static PayrollPeriodKey GetCurrentPayrollPeriodKey(DateOnly localToday, int? closingDay)
     {
@@ -478,6 +555,7 @@ public sealed class ClosingDayStepViewModel : ObservableObject
 {
     private ClosingDayOption? selectedOption;
     private string periodPreview = "締め日を選択すると、最初の給与算定期間を表示します。";
+    private string? validationError;
 
     public ClosingDayStepViewModel()
     {
@@ -505,6 +583,20 @@ public sealed class ClosingDayStepViewModel : ObservableObject
         private set => SetProperty(ref periodPreview, value);
     }
 
+    public string FieldId => SetupFieldIds.ClosingDay;
+
+    public string? ValidationError
+    {
+        get => validationError;
+        private set
+        {
+            if (!SetProperty(ref validationError, value)) return;
+            OnPropertyChanged(nameof(HasValidationError));
+        }
+    }
+
+    public bool HasValidationError => !string.IsNullOrWhiteSpace(ValidationError);
+
     public void Select(int? closingDay) => SelectedOption = ClosingDayOptions.Single(option => option.Value == closingDay);
 
     public void SetPreview(PayrollPeriod period, JapaneseDisplayFormatter formatter)
@@ -513,6 +605,11 @@ public sealed class ClosingDayStepViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(formatter);
         PeriodPreview = $"最初の給与期間: {period.Key.Value.Year}年{period.Key.Value.Month}月分\n{formatter.PayrollPeriod(period)}";
     }
+
+    public void SetValidationError(string? field, string message) =>
+        ValidationError = field == FieldId ? message : null;
+
+    public void ClearValidationError() => ValidationError = null;
 }
 
 public sealed record RateTypeOption(string DisplayName, RateType Value)
@@ -531,6 +628,13 @@ public sealed class SetupRateEditorViewModel : ObservableObject
     private RateTypeOption selectedRateType;
     private string amountText;
     private bool isEnabled;
+    private bool canMoveUp;
+    private bool canMoveDown;
+    private string? validationError;
+    private Action? moveUp;
+    private Action? moveDown;
+    private readonly AsyncCommand moveUpCommand;
+    private readonly AsyncCommand moveDownCommand;
 
     public SetupRateEditorViewModel(TimeCategoryId id, string displayName, int standardMinutes,
         RateType rateType, long? amount, bool isEnabled, ServicePresetId? presetId)
@@ -541,12 +645,28 @@ public sealed class SetupRateEditorViewModel : ObservableObject
         selectedRateType = RateTypeOptions.Single(value => value.Value == rateType);
         amountText = amount?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         this.isEnabled = isEnabled;
-        PresetId = presetId;
+        PresetId = presetId ?? new ServicePresetId(Guid.NewGuid());
+        moveUpCommand = new AsyncCommand(() =>
+        {
+            moveUp?.Invoke();
+            return Task.CompletedTask;
+        }, _ => { }, () => canMoveUp);
+        moveDownCommand = new AsyncCommand(() =>
+        {
+            moveDown?.Invoke();
+            return Task.CompletedTask;
+        }, _ => { }, () => canMoveDown);
     }
 
     public TimeCategoryId Id { get; }
 
-    public ServicePresetId? PresetId { get; }
+    public ServicePresetId PresetId { get; private set; }
+
+    public string DisplayNameFieldId => $"Setup.Rate.{Id.Value:N}.DisplayName";
+
+    public string StandardMinutesFieldId => $"Setup.Rate.{Id.Value:N}.StandardMinutes";
+
+    public string AmountFieldId => $"Setup.Rate.{Id.Value:N}.Amount";
 
     public IReadOnlyList<RateTypeOption> RateTypeOptions => RateTypeOption.All;
 
@@ -579,12 +699,56 @@ public sealed class SetupRateEditorViewModel : ObservableObject
         get => isEnabled;
         set => SetProperty(ref isEnabled, value);
     }
+
+    public string? ValidationError
+    {
+        get => validationError;
+        private set
+        {
+            if (!SetProperty(ref validationError, value)) return;
+            OnPropertyChanged(nameof(HasValidationError));
+        }
+    }
+
+    public bool HasValidationError => !string.IsNullOrWhiteSpace(ValidationError);
+
+    public ICommand MoveUpCommand => moveUpCommand;
+
+    public ICommand MoveDownCommand => moveDownCommand;
+
+    public void SetPresetId(ServicePresetId presetId) => PresetId = presetId;
+
+    public void ConfigureMovement(Action onMoveUp, Action onMoveDown, bool moveUpEnabled, bool moveDownEnabled)
+    {
+        moveUp = onMoveUp;
+        moveDown = onMoveDown;
+        canMoveUp = moveUpEnabled;
+        canMoveDown = moveDownEnabled;
+        moveUpCommand.NotifyCanExecuteChanged();
+        moveDownCommand.NotifyCanExecuteChanged();
+    }
+
+    public void SetValidationError(string? field, string message) => ValidationError =
+        field == DisplayNameFieldId || field == StandardMinutesFieldId || field == AmountFieldId ? message : null;
+
+    public void ClearValidationError() => ValidationError = null;
 }
 
 public sealed class SetupServiceEditorViewModel : ObservableObject
 {
     private string displayName;
     private bool isEnabled;
+    private bool isExpanded;
+    private bool canMoveUp;
+    private bool canMoveDown;
+    private string? validationError;
+    private Action? addRate;
+    private Action? moveUp;
+    private Action? moveDown;
+    private readonly AsyncCommand addRateCommand;
+    private readonly AsyncCommand toggleExpandedCommand;
+    private readonly AsyncCommand moveUpCommand;
+    private readonly AsyncCommand moveDownCommand;
 
     public SetupServiceEditorViewModel(ServiceId id, string displayName, bool isEnabled,
         IEnumerable<SetupRateEditorViewModel> rates)
@@ -592,12 +756,37 @@ public sealed class SetupServiceEditorViewModel : ObservableObject
         Id = id;
         this.displayName = displayName;
         this.isEnabled = isEnabled;
+        isExpanded = isEnabled;
         Rates = new ObservableCollection<SetupRateEditorViewModel>(rates);
+        addRateCommand = new AsyncCommand(() =>
+        {
+            addRate?.Invoke();
+            return Task.CompletedTask;
+        }, _ => { });
+        toggleExpandedCommand = new AsyncCommand(() =>
+        {
+            IsExpanded = !IsExpanded;
+            return Task.CompletedTask;
+        }, _ => { });
+        moveUpCommand = new AsyncCommand(() =>
+        {
+            moveUp?.Invoke();
+            return Task.CompletedTask;
+        }, _ => { }, () => canMoveUp);
+        moveDownCommand = new AsyncCommand(() =>
+        {
+            moveDown?.Invoke();
+            return Task.CompletedTask;
+        }, _ => { }, () => canMoveDown);
     }
 
     public ServiceId Id { get; }
 
     public ObservableCollection<SetupRateEditorViewModel> Rates { get; }
+
+    public string DisplayNameFieldId => $"Setup.Service.{Id.Value:N}.DisplayName";
+
+    public string AddRateFieldId => $"Setup.Service.{Id.Value:N}.AddRate";
 
     public string DisplayName
     {
@@ -610,11 +799,61 @@ public sealed class SetupServiceEditorViewModel : ObservableObject
         get => isEnabled;
         set => SetProperty(ref isEnabled, value);
     }
+
+    public bool IsExpanded
+    {
+        get => isExpanded;
+        set
+        {
+            if (!SetProperty(ref isExpanded, value)) return;
+            OnPropertyChanged(nameof(ExpansionActionText));
+        }
+    }
+
+    public string ExpansionActionText => IsExpanded ? "設定を折りたたむ" : "設定を展開する";
+
+    public string? ValidationError
+    {
+        get => validationError;
+        private set
+        {
+            if (!SetProperty(ref validationError, value)) return;
+            OnPropertyChanged(nameof(HasValidationError));
+        }
+    }
+
+    public bool HasValidationError => !string.IsNullOrWhiteSpace(ValidationError);
+
+    public ICommand AddRateCommand => addRateCommand;
+
+    public ICommand ToggleExpandedCommand => toggleExpandedCommand;
+
+    public ICommand MoveUpCommand => moveUpCommand;
+
+    public ICommand MoveDownCommand => moveDownCommand;
+
+    public void ConfigureCommands(Action onAddRate, Action onMoveUp, Action onMoveDown,
+        bool moveUpEnabled, bool moveDownEnabled)
+    {
+        addRate = onAddRate;
+        moveUp = onMoveUp;
+        moveDown = onMoveDown;
+        canMoveUp = moveUpEnabled;
+        canMoveDown = moveDownEnabled;
+        moveUpCommand.NotifyCanExecuteChanged();
+        moveDownCommand.NotifyCanExecuteChanged();
+    }
+
+    public void SetValidationError(string? field, string message) =>
+        ValidationError = field == DisplayNameFieldId || field == AddRateFieldId ? message : null;
+
+    public void ClearValidationError() => ValidationError = null;
 }
 
 public sealed class ServiceRatesStepViewModel : ObservableObject
 {
     private readonly AsyncCommand addServiceCommand;
+    private readonly AsyncCommand disableUnusedCommand;
 
     public ServiceRatesStepViewModel()
     {
@@ -623,11 +862,18 @@ public sealed class ServiceRatesStepViewModel : ObservableObject
             AddService();
             return Task.CompletedTask;
         }, _ => { });
+        disableUnusedCommand = new AsyncCommand(() =>
+        {
+            DisableUnusedCandidates();
+            return Task.CompletedTask;
+        }, _ => { });
     }
 
     public ObservableCollection<SetupServiceEditorViewModel> Services { get; } = [];
 
     public ICommand AddServiceCommand => addServiceCommand;
+
+    public ICommand DisableUnusedCommand => disableUnusedCommand;
 
     public void Load(SettingSnapshot snapshot, IReadOnlyList<ServicePresetDto> presets)
     {
@@ -653,13 +899,15 @@ public sealed class ServiceRatesStepViewModel : ObservableObject
                 });
             Services.Add(new SetupServiceEditorViewModel(service.Id, service.DisplayName, service.IsEnabled, rates));
         }
+        WireCommands();
     }
 
     public SettingSnapshotReplacementDto BuildReplacement(SettingSnapshot current)
     {
         ArgumentNullException.ThrowIfNull(current);
         if (Services.Count == 0)
-            throw new ApplicationErrorException("SETUP_SERVICE_REQUIRED", "少なくとも1つのサービス設定を追加してください。");
+            throw new ApplicationErrorException("SETUP_SERVICE_REQUIRED", "少なくとも1つのサービス設定を追加してください。",
+                SetupFieldIds.Services);
 
         var serviceNames = new HashSet<string>(StringComparer.Ordinal);
         var services = new List<SnapshotService>();
@@ -670,11 +918,13 @@ public sealed class ServiceRatesStepViewModel : ObservableObject
         for (var serviceIndex = 0; serviceIndex < Services.Count; serviceIndex++)
         {
             var editor = Services[serviceIndex];
-            var serviceName = RequiredText(editor.DisplayName, "サービス種類名を入力してください。");
+            var serviceName = RequiredText(editor.DisplayName, "サービス種類名を入力してください。", editor.DisplayNameFieldId);
             if (!serviceNames.Add(serviceName))
-                throw new ApplicationErrorException("SETUP_SERVICE_NAME_DUPLICATE", "サービス種類名が重複しています。");
+                throw new ApplicationErrorException("SETUP_SERVICE_NAME_DUPLICATE", "サービス種類名が重複しています。",
+                    editor.DisplayNameFieldId);
             if (editor.Rates.Count == 0)
-                throw new ApplicationErrorException("SETUP_RATE_ROW_REQUIRED", $"「{serviceName}」にサービス設定を追加してください。");
+                throw new ApplicationErrorException("SETUP_RATE_ROW_REQUIRED", $"「{serviceName}」にサービス設定を追加してください。",
+                    editor.AddRateFieldId);
 
             var serviceEnabled = editor.IsEnabled && editor.Rates.Any(value => value.IsEnabled);
             services.Add(new SnapshotService(editor.Id, serviceName, new DisplayOrder(serviceIndex), serviceEnabled));
@@ -682,11 +932,13 @@ public sealed class ServiceRatesStepViewModel : ObservableObject
             for (var categoryIndex = 0; categoryIndex < editor.Rates.Count; categoryIndex++)
             {
                 var row = editor.Rates[categoryIndex];
-                var categoryName = RequiredText(row.DisplayName, "サービス設定名を入力してください。");
+                var categoryName = RequiredText(row.DisplayName, "サービス設定名を入力してください。", row.DisplayNameFieldId);
                 if (!categoryNames.Add(categoryName))
-                    throw new ApplicationErrorException("SETUP_CATEGORY_NAME_DUPLICATE", $"「{serviceName}」のサービス設定名が重複しています。");
+                    throw new ApplicationErrorException("SETUP_CATEGORY_NAME_DUPLICATE", $"「{serviceName}」のサービス設定名が重複しています。",
+                        row.DisplayNameFieldId);
                 if (!int.TryParse(row.StandardMinutesText, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes) || minutes is < 1 or > 1440)
-                    throw new ApplicationErrorException("SETUP_MINUTES_INVALID", $"「{categoryName}」の標準勤務時間を1～1440分で入力してください。");
+                    throw new ApplicationErrorException("SETUP_MINUTES_INVALID", $"「{categoryName}」の標準勤務時間を1～1440分で入力してください。",
+                        row.StandardMinutesFieldId);
 
                 var categoryEnabled = serviceEnabled && row.IsEnabled;
                 categories.Add(new SnapshotTimeCategory(row.Id, editor.Id, categoryName, new WorkMinutes(minutes),
@@ -694,13 +946,15 @@ public sealed class ServiceRatesStepViewModel : ObservableObject
                 if (TryAmount(row.AmountText, out var amount))
                     rates.Add(new SnapshotRate(editor.Id, row.Id, row.SelectedRateType.Value, new YenAmount(amount)));
                 else if (categoryEnabled)
-                    throw new ApplicationErrorException("SETUP_RATE_REQUIRED", $"「{categoryName}」の基本単価を0円以上の整数で入力してください。");
+                    throw new ApplicationErrorException("SETUP_RATE_REQUIRED", $"「{categoryName}」の基本単価を0円以上の整数で入力してください。",
+                        row.AmountFieldId);
                 if (categoryEnabled) enabledRateCount++;
             }
         }
 
         if (enabledRateCount == 0)
-            throw new ApplicationErrorException("SETUP_ENABLED_SERVICE_REQUIRED", "使用するサービスを少なくとも1つ選び、基本単価を入力してください。");
+            throw new ApplicationErrorException("SETUP_ENABLED_SERVICE_REQUIRED", "使用するサービスを少なくとも1つ選び、基本単価を入力してください。",
+                SetupFieldIds.Services);
         return new SettingSnapshotReplacementDto(services, categories, rates, current.Premiums, current.CountBonuses);
     }
 
@@ -713,10 +967,10 @@ public sealed class ServiceRatesStepViewModel : ObservableObject
         {
             if (!int.TryParse(row.StandardMinutesText, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes))
                 continue;
-            await presetUseCase.SaveAsync(new SaveServicePresetCommand(row.PresetId,
-                RequiredText(row.DisplayName, "サービス設定名を入力してください。"), service.Id, row.Id,
-                new WorkMinutes(minutes), new DisplayOrder(displayOrder++), service.IsEnabled && row.IsEnabled), cancellationToken)
-                .ConfigureAwait(false);
+            var saved = await presetUseCase.SaveAsync(new SaveServicePresetCommand(row.PresetId,
+                RequiredText(row.DisplayName, "サービス設定名を入力してください。", row.DisplayNameFieldId), service.Id, row.Id,
+                new WorkMinutes(minutes), new DisplayOrder(displayOrder++), service.IsEnabled && row.IsEnabled), cancellationToken);
+            row.SetPresetId(saved.Id);
         }
     }
 
@@ -728,12 +982,98 @@ public sealed class ServiceRatesStepViewModel : ObservableObject
             new SetupRateEditorViewModel(new TimeCategoryId(Guid.NewGuid()), $"新しい設定{number}", 60,
                 RateType.Hourly, null, true, null),
         ]));
+        WireCommands();
     }
 
-    private static string RequiredText(string? value, string message)
+    private void AddRate(SetupServiceEditorViewModel service)
+    {
+        var number = service.Rates.Count + 1;
+        service.Rates.Add(new SetupRateEditorViewModel(new TimeCategoryId(Guid.NewGuid()),
+            $"新しい設定{number}", 60, RateType.Hourly, null, true, null));
+        service.IsEnabled = true;
+        service.IsExpanded = true;
+        WireCommands();
+    }
+
+    private void MoveService(SetupServiceEditorViewModel service, int offset)
+    {
+        var current = Services.IndexOf(service);
+        var destination = current + offset;
+        if (current < 0 || destination < 0 || destination >= Services.Count) return;
+        Services.Move(current, destination);
+        WireCommands();
+    }
+
+    private void MoveRate(SetupServiceEditorViewModel service, SetupRateEditorViewModel rate, int offset)
+    {
+        var current = service.Rates.IndexOf(rate);
+        var destination = current + offset;
+        if (current < 0 || destination < 0 || destination >= service.Rates.Count) return;
+        service.Rates.Move(current, destination);
+        WireCommands();
+    }
+
+    private void WireCommands()
+    {
+        for (var serviceIndex = 0; serviceIndex < Services.Count; serviceIndex++)
+        {
+            var service = Services[serviceIndex];
+            service.ConfigureCommands(() => AddRate(service), () => MoveService(service, -1),
+                () => MoveService(service, 1), serviceIndex > 0, serviceIndex < Services.Count - 1);
+            for (var rateIndex = 0; rateIndex < service.Rates.Count; rateIndex++)
+            {
+                var rate = service.Rates[rateIndex];
+                rate.ConfigureMovement(() => MoveRate(service, rate, -1), () => MoveRate(service, rate, 1),
+                    rateIndex > 0, rateIndex < service.Rates.Count - 1);
+            }
+        }
+    }
+
+    private void DisableUnusedCandidates()
+    {
+        var hasCalculableRow = Services.SelectMany(service => service.Rates)
+            .Any(row => row.IsEnabled && TryAmount(row.AmountText, out _));
+        var keptFallback = false;
+        foreach (var service in Services)
+        {
+            foreach (var row in service.Rates.Where(row => row.IsEnabled && !TryAmount(row.AmountText, out _)))
+            {
+                if (!hasCalculableRow && !keptFallback)
+                {
+                    keptFallback = true;
+                    continue;
+                }
+                row.IsEnabled = false;
+            }
+            service.IsEnabled = service.Rates.Any(row => row.IsEnabled);
+            if (!service.IsEnabled) service.IsExpanded = false;
+        }
+    }
+
+    public void SetValidationError(string? field, string message)
+    {
+        foreach (var service in Services)
+        {
+            service.SetValidationError(field, message);
+            foreach (var rate in service.Rates) rate.SetValidationError(field, message);
+            if (service.HasValidationError || service.Rates.Any(rate => rate.HasValidationError))
+                service.IsExpanded = true;
+        }
+    }
+
+    public void ClearValidationErrors()
+    {
+        foreach (var service in Services)
+        {
+            service.ClearValidationError();
+            foreach (var rate in service.Rates) rate.ClearValidationError();
+        }
+    }
+
+    private static string RequiredText(string? value, string message, string field)
     {
         var normalized = value?.Trim();
-        if (string.IsNullOrWhiteSpace(normalized)) throw new ApplicationErrorException("SETUP_TEXT_REQUIRED", message);
+        if (string.IsNullOrWhiteSpace(normalized)) throw new ApplicationErrorException("SETUP_TEXT_REQUIRED", message, field);
         return normalized;
     }
 
@@ -756,8 +1096,9 @@ public sealed class PremiumSetupEditorViewModel : ObservableObject
     private bool isEnabled;
     private AdditionCalculationTypeOption selectedCalculationType = AdditionCalculationTypeOption.All[0];
     private string valueText = string.Empty;
-    private string startTimeText = string.Empty;
-    private string endTimeText = string.Empty;
+    private TimeSpan startTime = new(22, 0, 0);
+    private TimeSpan endTime = new(5, 0, 0);
+    private string? validationError;
 
     public PremiumSetupEditorViewModel(string displayName, bool requiresTimeRange)
     {
@@ -768,6 +1109,12 @@ public sealed class PremiumSetupEditorViewModel : ObservableObject
     public string DisplayName { get; }
 
     public bool RequiresTimeRange { get; }
+
+    public string ValueFieldId => RequiresTimeRange ? SetupFieldIds.NightValue : SetupFieldIds.HolidayValue;
+
+    public string StartTimeFieldId => SetupFieldIds.NightStartTime;
+
+    public string EndTimeFieldId => SetupFieldIds.NightEndTime;
 
     public IReadOnlyList<AdditionCalculationTypeOption> CalculationTypeOptions => AdditionCalculationTypeOption.All;
 
@@ -795,23 +1142,43 @@ public sealed class PremiumSetupEditorViewModel : ObservableObject
         set => SetProperty(ref valueText, value);
     }
 
-    public string StartTimeText
+    public TimeSpan StartTime
     {
-        get => startTimeText;
-        set => SetProperty(ref startTimeText, value);
+        get => startTime;
+        set => SetProperty(ref startTime, value);
     }
 
-    public string EndTimeText
+    public TimeSpan EndTime
     {
-        get => endTimeText;
-        set => SetProperty(ref endTimeText, value);
+        get => endTime;
+        set => SetProperty(ref endTime, value);
     }
+
+    public string? ValidationError
+    {
+        get => validationError;
+        private set
+        {
+            if (!SetProperty(ref validationError, value)) return;
+            OnPropertyChanged(nameof(HasValidationError));
+        }
+    }
+
+    public bool HasValidationError => !string.IsNullOrWhiteSpace(ValidationError);
+
+    public void SetValidationError(string? field, string message) => ValidationError =
+        field == ValueFieldId || RequiresTimeRange && (field == StartTimeFieldId || field == EndTimeFieldId)
+            ? message
+            : null;
+
+    public void ClearValidationError() => ValidationError = null;
 }
 
 public sealed class CountBonusSetupEditorViewModel : ObservableObject
 {
     private bool isEnabled;
     private string amountText = string.Empty;
+    private string? validationError;
 
     public bool IsEnabled
     {
@@ -824,6 +1191,25 @@ public sealed class CountBonusSetupEditorViewModel : ObservableObject
         get => amountText;
         set => SetProperty(ref amountText, value);
     }
+
+    public string AmountFieldId => SetupFieldIds.CountBonusAmount;
+
+    public string? ValidationError
+    {
+        get => validationError;
+        private set
+        {
+            if (!SetProperty(ref validationError, value)) return;
+            OnPropertyChanged(nameof(HasValidationError));
+        }
+    }
+
+    public bool HasValidationError => !string.IsNullOrWhiteSpace(ValidationError);
+
+    public void SetValidationError(string? field, string message) =>
+        ValidationError = field == AmountFieldId ? message : null;
+
+    public void ClearValidationError() => ValidationError = null;
 }
 
 public sealed class AdditionsStepViewModel
@@ -854,8 +1240,8 @@ public sealed class AdditionsStepViewModel
         nightSource = snapshot.Premiums.FirstOrDefault(value => value.DisplayName == "夜間");
         countSource = snapshot.CountBonuses.FirstOrDefault(value => value.DisplayName == "件数加算")
             ?? snapshot.CountBonuses.FirstOrDefault();
-        LoadPremium(Holiday, holidaySource, "", "");
-        LoadPremium(Night, nightSource, "22:00", "05:00");
+        LoadPremium(Holiday, holidaySource, TimeSpan.Zero, TimeSpan.Zero);
+        LoadPremium(Night, nightSource, new TimeSpan(22, 0, 0), new TimeSpan(5, 0, 0));
         CountBonus.IsEnabled = countSource?.IsEnabled ?? false;
         CountBonus.AmountText = countSource is { Amount.Value: > 0 }
             ? countSource.Amount.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
@@ -880,8 +1266,22 @@ public sealed class AdditionsStepViewModel
         return new SettingSnapshotReplacementDto(current.Services, current.TimeCategories, current.Rates, premiums, bonuses);
     }
 
+    public void SetValidationError(string? field, string message)
+    {
+        Holiday.SetValidationError(field, message);
+        Night.SetValidationError(field, message);
+        CountBonus.SetValidationError(field, message);
+    }
+
+    public void ClearValidationErrors()
+    {
+        Holiday.ClearValidationError();
+        Night.ClearValidationError();
+        CountBonus.ClearValidationError();
+    }
+
     private static void LoadPremium(PremiumSetupEditorViewModel target, SnapshotPremium? source,
-        string defaultStart, string defaultEnd)
+        TimeSpan defaultStart, TimeSpan defaultEnd)
     {
         target.IsEnabled = source?.IsEnabled ?? false;
         target.SelectedCalculationType = AdditionCalculationTypeOption.All.Single(option =>
@@ -894,8 +1294,8 @@ public sealed class AdditionsStepViewModel
                 source.Amount.Value.Value.ToString(CultureInfo.InvariantCulture),
             _ => string.Empty,
         };
-        target.StartTimeText = source?.StartTime is { } start ? FormatTime(start) : defaultStart;
-        target.EndTimeText = source?.EndTime is { } end ? FormatTime(end) : defaultEnd;
+        target.StartTime = source?.StartTime is { } start ? ToTimeSpan(start) : defaultStart;
+        target.EndTime = source?.EndTime is { } end ? ToTimeSpan(end) : defaultEnd;
     }
 
     private static SnapshotPremium BuildPremium(PremiumSetupEditorViewModel editor, SnapshotPremium? source, bool isHoliday)
@@ -905,10 +1305,11 @@ public sealed class AdditionsStepViewModel
         MinuteOfDay? end = null;
         if (editor.RequiresTimeRange)
         {
-            start = ParseTime(editor.StartTimeText, "夜間の開始時刻をHH:mm形式で入力してください。", editor.IsEnabled);
-            end = ParseTime(editor.EndTimeText, "夜間の終了時刻をHH:mm形式で入力してください。", editor.IsEnabled);
+            start = editor.IsEnabled ? ToMinuteOfDay(editor.StartTime) : null;
+            end = editor.IsEnabled ? ToMinuteOfDay(editor.EndTime) : null;
             if (start == end && start is not null)
-                throw new ApplicationErrorException("SETUP_PREMIUM_TIME_INVALID", "夜間の開始時刻と終了時刻は異なる時刻にしてください。");
+                throw new ApplicationErrorException("SETUP_PREMIUM_TIME_INVALID", "夜間の開始時刻と終了時刻は異なる時刻にしてください。",
+                    editor.EndTimeFieldId);
         }
 
         return new SnapshotPremium(source?.Id ?? new PremiumId(Guid.NewGuid()), editor.DisplayName,
@@ -923,7 +1324,8 @@ public sealed class AdditionsStepViewModel
         long amount = 0;
         if (CountBonus.IsEnabled && (!long.TryParse(CountBonus.AmountText?.Trim(), NumberStyles.None,
                 CultureInfo.InvariantCulture, out amount) || amount < 0))
-            throw new ApplicationErrorException("SETUP_COUNT_AMOUNT_INVALID", "件数加算額を0円以上の整数で入力してください。");
+            throw new ApplicationErrorException("SETUP_COUNT_AMOUNT_INVALID", "件数加算額を0円以上の整数で入力してください。",
+                CountBonus.AmountFieldId);
         if (!CountBonus.IsEnabled && countSource is not null) amount = countSource.Amount.Value;
         return new SnapshotCountBonus(countSource?.Id ?? new CountBonusId(Guid.NewGuid()),
             countSource?.DisplayName ?? "件数加算", new YenAmount(amount),
@@ -942,30 +1344,22 @@ public sealed class AdditionsStepViewModel
         if (editor.SelectedCalculationType.Value == PremiumCalculationType.Percentage)
         {
             if (!decimal.TryParse(editor.ValueText?.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var percent) || percent < 0)
-                throw new ApplicationErrorException("SETUP_PREMIUM_PERCENTAGE_INVALID", $"{editor.DisplayName}の割合を0%以上で入力してください。");
+                throw new ApplicationErrorException("SETUP_PREMIUM_PERCENTAGE_INVALID", $"{editor.DisplayName}の割合を0%以上で入力してください。",
+                    editor.ValueFieldId);
             var basisPoints = decimal.ToInt32(decimal.Round(percent * 100m, 0, MidpointRounding.AwayFromZero));
             return (new BasisPoints(basisPoints), null);
         }
 
         if (!long.TryParse(editor.ValueText?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var amount) || amount < 0)
-            throw new ApplicationErrorException("SETUP_PREMIUM_AMOUNT_INVALID", $"{editor.DisplayName}の加算額を0円以上の整数で入力してください。");
+            throw new ApplicationErrorException("SETUP_PREMIUM_AMOUNT_INVALID", $"{editor.DisplayName}の加算額を0円以上の整数で入力してください。",
+                editor.ValueFieldId);
         return (null, new YenAmount(amount));
     }
 
-    private static MinuteOfDay? ParseTime(string? value, string message, bool required)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            if (required) throw new ApplicationErrorException("SETUP_PREMIUM_TIME_REQUIRED", message);
-            return null;
-        }
-        if (!TimeOnly.TryParseExact(value.Trim(), "HH:mm", CultureInfo.InvariantCulture,
-                DateTimeStyles.None, out var time))
-            throw new ApplicationErrorException("SETUP_PREMIUM_TIME_INVALID", message);
-        return new MinuteOfDay(time.Hour * 60 + time.Minute);
-    }
+    private static MinuteOfDay ToMinuteOfDay(TimeSpan value) =>
+        new((int)value.TotalMinutes);
 
-    private static string FormatTime(MinuteOfDay value) => $"{value.Value / 60:00}:{value.Value % 60:00}";
+    private static TimeSpan ToTimeSpan(MinuteOfDay value) => TimeSpan.FromMinutes(value.Value);
 }
 
 public sealed class SetupConfirmationStepViewModel : ObservableObject
@@ -974,6 +1368,8 @@ public sealed class SetupConfirmationStepViewModel : ObservableObject
     private string serviceSummary = string.Empty;
     private string additionsSummary = string.Empty;
     private string? missingRequirements;
+    private bool hasClosingDayIssue;
+    private bool hasServicesIssue;
 
     public string ClosingSummary
     {
@@ -1005,11 +1401,38 @@ public sealed class SetupConfirmationStepViewModel : ObservableObject
 
     public bool HasMissingRequirements => !string.IsNullOrWhiteSpace(MissingRequirements);
 
-    public void Update(string closing, string services, string additions, string? issues)
+    public bool HasClosingDayIssue
+    {
+        get => hasClosingDayIssue;
+        private set => SetProperty(ref hasClosingDayIssue, value);
+    }
+
+    public bool HasServicesIssue
+    {
+        get => hasServicesIssue;
+        private set => SetProperty(ref hasServicesIssue, value);
+    }
+
+    public ICommand? FixClosingDayCommand { get; set; }
+
+    public ICommand? FixServicesCommand { get; set; }
+
+    public void Update(string closing, string services, string additions, IReadOnlyList<IssueDto> issues)
     {
         ClosingSummary = closing;
         ServiceSummary = services;
         AdditionsSummary = additions;
-        MissingRequirements = issues;
+        SetIssues(issues);
+    }
+
+    public void SetIssues(IReadOnlyList<IssueDto> issues)
+    {
+        ArgumentNullException.ThrowIfNull(issues);
+        MissingRequirements = issues.Count == 0
+            ? null
+            : string.Join(Environment.NewLine, issues.Select(issue => $"・{issue.Message}"));
+        HasClosingDayIssue = issues.Any(issue => issue.Code == "SETUP_CLOSING_RULE_REQUIRED");
+        HasServicesIssue = issues.Any(issue => issue.Code is "SETUP_SNAPSHOT_REQUIRED" or
+            "SETUP_CALCULATION_SETTINGS_REQUIRED");
     }
 }

@@ -6,7 +6,7 @@
     xmlns:setup="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Setup"
     x:DataType="setup:SetupConfirmationStepViewModel">
     <VerticalStackLayout Spacing="16">
-        <Label Text="内容を確認してください。不備がある項目は「戻る」で修正できます。" />
+        <Label Text="内容を確認してください。不備がある場合は、下の修正ボタンから該当項目へ移動できます。" />
 
         <Border
             Padding="16"
@@ -52,6 +52,16 @@
                 <Label
                     SemanticProperties.Description="初期設定を完了するために不足している項目"
                     Text="{Binding MissingRequirements}" />
+                <Button
+                    Command="{Binding FixClosingDayCommand}"
+                    IsVisible="{Binding HasClosingDayIssue}"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Text="締め日を修正" />
+                <Button
+                    Command="{Binding FixServicesCommand}"
+                    IsVisible="{Binding HasServicesIssue}"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Text="サービスと単価を修正" />
             </VerticalStackLayout>
         </Border>
     </VerticalStackLayout>
