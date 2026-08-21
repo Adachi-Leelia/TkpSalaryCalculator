@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentView
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Setup.ServiceRatesStepView"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:setup="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Setup"
+    x:DataType="setup:ServiceRatesStepViewModel">
+    <VerticalStackLayout Spacing="16">
+        <Label Text="使用するサービスと基本単価を確認してください。サービス種類と設定は上下ボタンで並べ替えられます。" />
+
+        <Button
+            AutomationId="Setup.Services"
+            Command="{Binding DisableUnusedCommand}"
+            Style="{StaticResource SecondaryButtonStyle}"
+            Text="単価未入力の候補を一括無効化" />
+
+        <VerticalStackLayout BindableLayout.ItemsSource="{Binding Services}" Spacing="16">
+            <BindableLayout.ItemTemplate>
+                <DataTemplate x:DataType="setup:SetupServiceEditorViewModel">
+                    <Border
+                        Padding="16"
+                        BackgroundColor="{StaticResource Surface}"
+                        Stroke="{StaticResource Outline}"
+                        StrokeShape="RoundRectangle 16">
+                        <VerticalStackLayout Spacing="12">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <VerticalStackLayout Spacing="4">
+                                    <Label FontAttributes="Bold" Text="サービス種類" />
+                                    <Entry
+                                        AutomationId="{Binding DisplayNameFieldId}"
+                                        Text="{Binding DisplayName, Mode=TwoWay}"
+                                        SemanticProperties.Description="サービス種類名" />
+                                    <Label
+                                        IsVisible="{Binding HasValidationError}"
+                                        Text="{Binding ValidationError}"
+                                        TextColor="{StaticResource Error}" />
+                                </VerticalStackLayout>
+                                <VerticalStackLayout Grid.Column="1" Spacing="4">
+                                    <Label Text="使用する" />
+                                    <Switch IsToggled="{Binding IsEnabled, Mode=TwoWay}" />
+                                </VerticalStackLayout>
+                            </Grid>
+
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <Button
+                                    Command="{Binding ToggleExpandedCommand}"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Text="{Binding ExpansionActionText}" />
+                                <Button
+                                    Grid.Column="1"
+                                    Command="{Binding MoveUpCommand}"
+                                    SemanticProperties.Description="このサービス種類を上へ移動"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Text="↑" />
+                                <Button
+                                    Grid.Column="2"
+                                    Command="{Binding MoveDownCommand}"
+                                    SemanticProperties.Description="このサービス種類を下へ移動"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Text="↓" />
+                            </Grid>
+
+                            <VerticalStackLayout
+                                BindableLayout.ItemsSource="{Binding Rates}"
+                                IsVisible="{Binding IsExpanded}"
+                                Spacing="12">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="setup:SetupRateEditorViewModel">
+                                        <Border
+                                            Padding="12"
+                                            BackgroundColor="{StaticResource PageBackground}"
+                                            Stroke="{StaticResource Outline}"
+                                            StrokeShape="RoundRectangle 12">
+                                            <VerticalStackLayout Spacing="8">
+                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                                    <Label FontAttributes="Bold" Text="サービス設定" />
+                                                    <Switch
+                                                        Grid.Column="1"
+                                                        IsToggled="{Binding IsEnabled, Mode=TwoWay}"
+                                                        SemanticProperties.Description="このサービス設定を使用する" />
+                                                </Grid>
+                                                <Label Text="サービス設定名" />
+                                                <Entry
+                                                    AutomationId="{Binding DisplayNameFieldId}"
+                                                    Text="{Binding DisplayName, Mode=TwoWay}" />
+                                                <Label Text="標準勤務時間（分）" />
+                                                <Entry
+                                                    AutomationId="{Binding StandardMinutesFieldId}"
+                                                    Keyboard="Numeric"
+                                                    Text="{Binding StandardMinutesText, Mode=TwoWay}" />
+                                                <Label Text="単価方式" />
+                                                <Picker
+                                                    ItemsSource="{Binding RateTypeOptions}"
+                                                    ItemDisplayBinding="{Binding DisplayName}"
+                                                    SelectedItem="{Binding SelectedRateType, Mode=TwoWay}" />
+                                                <Label Text="基本単価（円）" />
+                                                <Entry
+                                                    AutomationId="{Binding AmountFieldId}"
+                                                    Keyboard="Numeric"
+                                                    Placeholder="使用する設定は入力必須"
+                                                    Text="{Binding AmountText, Mode=TwoWay}" />
+                                                <Label
+                                                    IsVisible="{Binding HasValidationError}"
+                                                    Text="{Binding ValidationError}"
+                                                    TextColor="{StaticResource Error}" />
+                                                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                                    <Button
+                                                        Command="{Binding MoveUpCommand}"
+                                                        SemanticProperties.Description="このサービス設定を上へ移動"
+                                                        Style="{StaticResource SecondaryButtonStyle}"
+                                                        Text="上へ" />
+                                                    <Button
+                                                        Grid.Column="1"
+                                                        Command="{Binding MoveDownCommand}"
+                                                        SemanticProperties.Description="このサービス設定を下へ移動"
+                                                        Style="{StaticResource SecondaryButtonStyle}"
+                                                        Text="下へ" />
+                                                </Grid>
+                                            </VerticalStackLayout>
+                                        </Border>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </VerticalStackLayout>
+                            <Button
+                                AutomationId="{Binding AddRateFieldId}"
+                                Command="{Binding AddRateCommand}"
+                                IsVisible="{Binding IsExpanded}"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Text="このサービス種類に設定を追加" />
+                        </VerticalStackLayout>
+                    </Border>
+                </DataTemplate>
+            </BindableLayout.ItemTemplate>
+        </VerticalStackLayout>
+
+        <Button
+            Command="{Binding AddServiceCommand}"
+            Style="{StaticResource SecondaryButtonStyle}"
+            Text="新しいサービス種類を追加" />
+        <Label
+            Style="{StaticResource SupportingTextStyle}"
+            Text="完了には、少なくとも1つの使用中サービスと計算可能な基本単価が必要です。" />
+    </VerticalStackLayout>
+</ContentView>

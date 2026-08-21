@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentView
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Setup.AdditionsStepView"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:setup="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Setup"
+    x:DataType="setup:AdditionsStepViewModel">
+    <VerticalStackLayout Spacing="16">
+        <Label Text="使用する加算だけを有効にして入力してください。休日、夜間、件数加算は後から設定できます。" />
+
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource Surface}"
+            Stroke="{StaticResource Outline}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout BindingContext="{Binding Holiday}" Spacing="10" x:DataType="setup:PremiumSetupEditorViewModel">
+                <Grid ColumnDefinitions="*,Auto">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="休日" />
+                    <Switch
+                        Grid.Column="1"
+                        IsToggled="{Binding IsEnabled, Mode=TwoWay}"
+                        SemanticProperties.Description="休日割増を使用する" />
+                </Grid>
+                <VerticalStackLayout IsVisible="{Binding IsEnabled}" Spacing="8">
+                    <Label Text="加算方法" />
+                    <Picker
+                        ItemsSource="{Binding CalculationTypeOptions}"
+                        ItemDisplayBinding="{Binding DisplayName}"
+                        SelectedItem="{Binding SelectedCalculationType, Mode=TwoWay}" />
+                    <Label Text="{Binding ValueLabel}" />
+                    <Entry
+                        AutomationId="{Binding ValueFieldId}"
+                        Keyboard="Numeric"
+                        Text="{Binding ValueText, Mode=TwoWay}" />
+                    <Label
+                        IsVisible="{Binding HasValidationError}"
+                        Text="{Binding ValidationError}"
+                        TextColor="{StaticResource Error}" />
+                    <Label
+                        Style="{StaticResource SupportingTextStyle}"
+                        Text="初期条件は土曜日・日曜日・国民の祝日です。" />
+                </VerticalStackLayout>
+            </VerticalStackLayout>
+        </Border>
+
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource Surface}"
+            Stroke="{StaticResource Outline}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout BindingContext="{Binding Night}" Spacing="10" x:DataType="setup:PremiumSetupEditorViewModel">
+                <Grid ColumnDefinitions="*,Auto">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="夜間" />
+                    <Switch
+                        Grid.Column="1"
+                        IsToggled="{Binding IsEnabled, Mode=TwoWay}"
+                        SemanticProperties.Description="夜間割増を使用する" />
+                </Grid>
+                <VerticalStackLayout IsVisible="{Binding IsEnabled}" Spacing="8">
+                    <Label Text="加算方法" />
+                    <Picker
+                        ItemsSource="{Binding CalculationTypeOptions}"
+                        ItemDisplayBinding="{Binding DisplayName}"
+                        SelectedItem="{Binding SelectedCalculationType, Mode=TwoWay}" />
+                    <Label Text="{Binding ValueLabel}" />
+                    <Entry
+                        AutomationId="{Binding ValueFieldId}"
+                        Keyboard="Numeric"
+                        Text="{Binding ValueText, Mode=TwoWay}" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="開始時刻" />
+                            <TimePicker
+                                AutomationId="{Binding StartTimeFieldId}"
+                                SemanticProperties.Description="夜間割増の開始時刻"
+                                Time="{Binding StartTime, Mode=TwoWay}" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="1" Spacing="4">
+                            <Label Text="終了時刻" />
+                            <TimePicker
+                                AutomationId="{Binding EndTimeFieldId}"
+                                SemanticProperties.Description="夜間割増の終了時刻"
+                                Time="{Binding EndTime, Mode=TwoWay}" />
+                        </VerticalStackLayout>
+                    </Grid>
+                    <Label
+                        IsVisible="{Binding HasValidationError}"
+                        Text="{Binding ValidationError}"
+                        TextColor="{StaticResource Error}" />
+                </VerticalStackLayout>
+            </VerticalStackLayout>
+        </Border>
+
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource Surface}"
+            Stroke="{StaticResource Outline}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout BindingContext="{Binding CountBonus}" Spacing="10" x:DataType="setup:CountBonusSetupEditorViewModel">
+                <Grid ColumnDefinitions="*,Auto">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="件数加算" />
+                    <Switch
+                        Grid.Column="1"
+                        IsToggled="{Binding IsEnabled, Mode=TwoWay}"
+                        SemanticProperties.Description="件数加算を使用する" />
+                </Grid>
+                <VerticalStackLayout IsVisible="{Binding IsEnabled}" Spacing="8">
+                    <Label Text="1件当たりの加算額（円）" />
+                    <Entry
+                        AutomationId="{Binding AmountFieldId}"
+                        Keyboard="Numeric"
+                        Text="{Binding AmountText, Mode=TwoWay}" />
+                    <Label
+                        IsVisible="{Binding HasValidationError}"
+                        Text="{Binding ValidationError}"
+                        TextColor="{StaticResource Error}" />
+                </VerticalStackLayout>
+            </VerticalStackLayout>
+        </Border>
+
+        <Button
+            Command="{Binding SkipCommand}"
+            Style="{StaticResource SecondaryButtonStyle}"
+            Text="今は設定しない" />
+        <Label
+            Style="{StaticResource SupportingTextStyle}"
+            Text="月額手当と基本シフトも初期設定後に設定できます。" />
+    </VerticalStackLayout>
+</ContentView>
