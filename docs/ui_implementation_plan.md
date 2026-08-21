@@ -106,6 +106,8 @@ flowchart LR
 
 **完了条件**: 空のホームを起動でき、初期設定の未完了時には通常画面へ入れず、画面回転や Android による再生成後も選択状態を復元できる。
 
+**完了**
+
 ### 1. 初期設定（`SCR-INIT-01` ～ `SCR-INIT-05`）
 
 **分割**: ウィザードの各ステップを独立 Page にせず、`InitialSetupFlowPage` とステップ別 ContentView／ViewModel に分割する。進捗保存と完了判定の入口は `InitialSetupFlowViewModel` に集約する。
