@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentView
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Setup.SetupConfirmationStepView"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:setup="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Setup"
+    x:DataType="setup:SetupConfirmationStepViewModel">
+    <VerticalStackLayout Spacing="16">
+        <Label Text="内容を確認してください。不備がある項目は「戻る」で修正できます。" />
+
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource Surface}"
+            Stroke="{StaticResource Outline}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout Spacing="6">
+                <Label FontAttributes="Bold" Text="締め日と最初の給与期間" />
+                <Label Text="{Binding ClosingSummary}" />
+            </VerticalStackLayout>
+        </Border>
+
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource Surface}"
+            Stroke="{StaticResource Outline}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout Spacing="6">
+                <Label FontAttributes="Bold" Text="サービスと単価" />
+                <Label Text="{Binding ServiceSummary}" />
+            </VerticalStackLayout>
+        </Border>
+
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource Surface}"
+            Stroke="{StaticResource Outline}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout Spacing="6">
+                <Label FontAttributes="Bold" Text="加算" />
+                <Label Text="{Binding AdditionsSummary}" />
+            </VerticalStackLayout>
+        </Border>
+
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource WarningContainer}"
+            IsVisible="{Binding HasMissingRequirements}"
+            Stroke="{StaticResource Warning}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout Spacing="8">
+                <Label FontAttributes="Bold" Text="完了に必要な設定" />
+                <Label
+                    SemanticProperties.Description="初期設定を完了するために不足している項目"
+                    Text="{Binding MissingRequirements}" />
+            </VerticalStackLayout>
+        </Border>
+    </VerticalStackLayout>
+</ContentView>

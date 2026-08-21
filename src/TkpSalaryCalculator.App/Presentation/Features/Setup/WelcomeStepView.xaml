@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentView
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Setup.WelcomeStepView"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:setup="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Setup"
+    x:DataType="setup:WelcomeStepViewModel">
+    <VerticalStackLayout Spacing="16">
+        <Label Style="{StaticResource SectionTitleStyle}" Text="給与見込み額を、端末内で確認できます" />
+        <Label Text="{Binding Description}" />
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource PrimaryContainer}"
+            Stroke="{StaticResource Primary}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout Spacing="8">
+                <Label FontAttributes="Bold" Text="データの保存について" />
+                <Label Text="{Binding StorageNotice}" />
+            </VerticalStackLayout>
+        </Border>
+        <Label
+            Style="{StaticResource SupportingTextStyle}"
+            Text="このあと、締め日、使用するサービスと単価、必要な加算を設定します。" />
+    </VerticalStackLayout>
+</ContentView>

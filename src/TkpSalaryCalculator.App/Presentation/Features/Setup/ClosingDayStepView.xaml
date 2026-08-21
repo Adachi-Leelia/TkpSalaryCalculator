@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentView
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Setup.ClosingDayStepView"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:setup="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Setup"
+    x:DataType="setup:ClosingDayStepViewModel">
+    <VerticalStackLayout Spacing="16">
+        <Label Text="勤務先の給与締め日を選択してください。" />
+        <VerticalStackLayout Spacing="6">
+            <Label FontAttributes="Bold" Text="締め日（必須）" />
+            <Picker
+                ItemsSource="{Binding ClosingDayOptions}"
+                ItemDisplayBinding="{Binding DisplayName}"
+                SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
+                Title="1～31日または月末を選択"
+                SemanticProperties.Description="給与の締め日" />
+            <Button
+                Command="{Binding PreviewCommand}"
+                Style="{StaticResource SecondaryButtonStyle}"
+                Text="給与期間を確認" />
+        </VerticalStackLayout>
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource PrimaryContainer}"
+            Stroke="{StaticResource Primary}"
+            StrokeShape="RoundRectangle 16">
+            <VerticalStackLayout Spacing="6">
+                <Label FontAttributes="Bold" Text="給与算定期間の確認" />
+                <Label Text="{Binding PeriodPreview}" />
+            </VerticalStackLayout>
+        </Border>
+        <Label
+            Style="{StaticResource SupportingTextStyle}"
+            Text="「保存して次へ」を押すと、選択した締め日から最初の給与期間を確定します。" />
+    </VerticalStackLayout>
+</ContentView>
