@@ -65,6 +65,8 @@ or orchestration coverage that complements the end-to-end specification case.
 | `CalendarDayAndMonthQueries_UseOrchestratedApplicationModels` | APP-SALARY-QUERY, SHIFT-002 |
 | `ClosingRuleReplacement_PreservesHistoryAndAllowanceIsPeriodScoped` | CALC-009, CALC-010 |
 | `FirstClosingRule_IsPersistedAsBaselineAndUsedForPeriodCalculation` | CALC-009 |
+| `FindPayrollPeriod_UsesClosingDayBoundaryForCurrentDate` | UI-007, CALC-009 |
+| `FindPayrollPeriod_RequiresClosingRuleHistory` | UI-002, CALC-009 |
 | `ClosingRuleCommit_RejectsStaleHistoryVersion` | HIST-004, CALC-009 |
 | `ClosingRuleToken_CannotBeReusedForDifferentDayWithSameHistoryVersion` | HIST-004, CALC-009 |
 | `ClosingRuleRepositoryCasFailure_DoesNotChangeState` | HIST-004, CALC-009 |

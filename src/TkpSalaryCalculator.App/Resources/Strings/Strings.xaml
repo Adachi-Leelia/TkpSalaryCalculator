@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    x:Class="TkpSalaryCalculator.App.Resources.Strings.Strings">
+
+    <x:String x:Key="AppTitle">TKP給与計算</x:String>
+    <x:String x:Key="LoadingTitle">読み込み中</x:String>
+    <x:String x:Key="Retry">もう一度試す</x:String>
+    <x:String x:Key="Save">保存</x:String>
+    <x:String x:Key="HomeTab">ホーム</x:String>
+    <x:String x:Key="CalendarTab">カレンダー</x:String>
+    <x:String x:Key="SettingsTab">設定</x:String>
+</ResourceDictionary>

@@ -22,6 +22,22 @@ public sealed class PayrollPeriodSettingsUseCase(IClosingRuleRepository closingR
     private readonly IPayrollPeriodCalculator periodCalculator = periodCalculator ?? throw new ArgumentNullException(nameof(periodCalculator));
 
     /// <inheritdoc />
+    public async Task<PayrollPeriod> FindPeriodAsync(DateOnly localDate, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var history = ClosingRuleHistorySupport.ForCalculation(
+            await closingRules.GetHistoryAsync(cancellationToken).ConfigureAwait(false));
+        if (history.Count == 0)
+        {
+            throw new ApplicationErrorException(
+                "CLOSING_RULE_REQUIRED",
+                "給与算定期間を決定するため、締め日を設定してください。");
+        }
+
+        return periodCalculator.FindPeriod(localDate, history);
+    }
+
+    /// <inheritdoc />
     public async Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
         ReplaceClosingRuleCommand command, CancellationToken cancellationToken)
     {

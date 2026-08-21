@@ -294,6 +294,39 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task FindPayrollPeriod_UsesClosingDayBoundaryForCurrentDate()
+    {
+        var context = new TestContext();
+        context.Closing.Values.Add(new ClosingRule(
+            new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)),
+            20));
+        var useCase = new PayrollPeriodSettingsUseCase(context.Closing, context.Allowances,
+            context.Transactions, context.Metadata, context.Clock, context.Periods);
+
+        var onClosingDay = await useCase.FindPeriodAsync(new DateOnly(2026, 8, 20), default);
+        var afterClosingDay = await useCase.FindPeriodAsync(new DateOnly(2026, 8, 21), default);
+
+        Assert.Equal(new PayrollPeriodKey(new YearMonth(2026, 8)), onClosingDay.Key);
+        Assert.Equal(new PayrollPeriodKey(new YearMonth(2026, 9)), afterClosingDay.Key);
+        Assert.Equal(new DateOnly(2026, 8, 21), afterClosingDay.StartDate);
+        Assert.Equal(new DateOnly(2026, 9, 20), afterClosingDay.EndDate);
+    }
+
+    [Fact]
+    public async Task FindPayrollPeriod_RequiresClosingRuleHistory()
+    {
+        var context = new TestContext();
+        var useCase = new PayrollPeriodSettingsUseCase(context.Closing, context.Allowances,
+            context.Transactions, context.Metadata, context.Clock, context.Periods);
+
+        var exception = await Assert.ThrowsAsync<ApplicationErrorException>(() =>
+            useCase.FindPeriodAsync(new DateOnly(2026, 8, 21), default));
+
+        Assert.Equal("CLOSING_RULE_REQUIRED", exception.Code);
+    }
+
+    [Fact]
     public async Task ClosingRuleCommit_RejectsStaleHistoryVersion()
     {
         var context = new TestContext();

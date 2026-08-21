@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Home.HomePage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    Title="ホーム">
+    <ScrollView>
+        <VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="20">
+            <Label Style="{StaticResource PageTitleStyle}" Text="ホーム" />
+            <controls:EmptyStateView
+                Message="勤務記録を登録すると、現在の給与期間の見込み額と内訳を確認できます。まずは下部の「カレンダー」から勤務日を選びます。"
+                Title="勤務記録がありません" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TkpSalaryCalculator.Application\TkpSalaryCalculator.Application.csproj" />
+    <ProjectReference Include="..\..\src\TkpSalaryCalculator.Domain\TkpSalaryCalculator.Domain.csproj" />
+    <ProjectReference Include="..\..\src\TkpSalaryCalculator.Infrastructure\TkpSalaryCalculator.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <!-- UI を起動しない net10.0 テストで、MAUI 非依存の実ファイルだけを直接検証します。 -->
+  <ItemGroup>
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Navigation\NavigationRoutes.cs" Link="Production\NavigationRoutes.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Navigation\AppRootNavigation.cs" Link="Production\AppRootNavigation.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\ObservableObject.cs" Link="Production\ObservableObject.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\AsyncCommand.cs" Link="Production\AsyncCommand.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\UserErrorPresenter.cs" Link="Production\UserErrorPresenter.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\ViewModelBase.cs" Link="Production\ViewModelBase.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\EditableViewModelBase.cs" Link="Production\EditableViewModelBase.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\IssuePresenter.cs" Link="Production\IssuePresenter.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\JapaneseDisplayFormatter.cs" Link="Production\JapaneseDisplayFormatter.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Services\IConfirmationDialogService.cs" Link="Production\IConfirmationDialogService.cs" />
+  </ItemGroup>
+</Project>
