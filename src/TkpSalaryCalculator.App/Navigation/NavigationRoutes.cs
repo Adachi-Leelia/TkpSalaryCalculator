@@ -9,6 +9,9 @@ public static class NavigationRoutes
     public const string Home = "home";
     public const string Calendar = "calendar";
     public const string Settings = "settings";
+    public const string CalculationDetails = "calculation-details";
+    public const string MonthlyAllowances = "monthly-allowances";
+    public const string UncalculatedDays = "uncalculated-days";
 
     public static bool IsMainTab(string? route) => route is Home or Calendar or Settings;
 

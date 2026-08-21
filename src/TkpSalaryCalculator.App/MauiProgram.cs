@@ -104,11 +104,13 @@ public static class MauiProgram
         services.AddSingleton<IAppRootNavigator>(serviceProvider => serviceProvider.GetRequiredService<AppRootNavigator>());
         services.AddSingleton<AppStartupCoordinator>();
         services.AddSingleton<IConfirmationDialogService, ConfirmationDialogService>();
+        services.AddSingleton<IHomeNavigator, ShellHomeNavigator>();
 
         services.AddSingleton<StartupViewModel>();
         services.AddSingleton<StartupPage>();
         services.AddTransient<InitialSetupFlowViewModel>();
         services.AddTransient<InitialSetupFlowPage>();
+        services.AddTransient<HomeViewModel>();
         services.AddTransient<HomePage>();
         services.AddTransient<CalendarPage>();
         services.AddTransient<SettingsMenuPage>();

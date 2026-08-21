@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Home.HomeDestinationPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:home="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Home"
+    x:DataType="home:HomeDestinationPage"
+    Title="{Binding DestinationTitle}">
+    <VerticalStackLayout Padding="24" SafeAreaEdges="All" Spacing="16">
+        <Label Style="{StaticResource PageTitleStyle}" Text="{Binding DestinationTitle}" />
+        <Border
+            Padding="16"
+            BackgroundColor="{StaticResource Surface}"
+            Stroke="{StaticResource Outline}"
+            StrokeShape="RoundRectangle 12">
+            <VerticalStackLayout Spacing="8">
+                <Label
+                    Style="{StaticResource SupportingTextStyle}"
+                    Text="対象給与期間" />
+                <Label
+                    FontAttributes="Bold"
+                    SemanticProperties.Description="選択中の対象給与期間"
+                    Text="{Binding PayrollPeriodText}" />
+            </VerticalStackLayout>
+        </Border>
+        <Label
+            Style="{StaticResource SupportingTextStyle}"
+            Text="この画面の編集・詳細機能は後続の実装段階で追加されます。ホームで選択した給与期間は引き継がれています。" />
+    </VerticalStackLayout>
+</ContentPage>

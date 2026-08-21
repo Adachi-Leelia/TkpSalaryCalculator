@@ -4,13 +4,157 @@
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    xmlns:home="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Home"
+    x:DataType="home:HomeViewModel"
     Title="ホーム">
-    <ScrollView>
-        <VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="20">
-            <Label Style="{StaticResource PageTitleStyle}" Text="ホーム" />
-            <controls:EmptyStateView
-                Message="勤務記録を登録すると、現在の給与期間の見込み額と内訳を確認できます。まずは下部の「カレンダー」から勤務日を選びます。"
-                Title="勤務記録がありません" />
-        </VerticalStackLayout>
-    </ScrollView>
+    <Grid SafeAreaEdges="All">
+        <ScrollView>
+            <VerticalStackLayout Padding="20" Spacing="16">
+                <Label Style="{StaticResource PageTitleStyle}" Text="ホーム" />
+
+                <Border
+                    AutomationId="Home.PayrollPeriod"
+                    Padding="16"
+                    BackgroundColor="{StaticResource Surface}"
+                    Stroke="{StaticResource Outline}"
+                    StrokeShape="RoundRectangle 16">
+                    <VerticalStackLayout Spacing="12">
+                        <Label Style="{StaticResource SectionTitleStyle}" Text="対象の給与期間" />
+                        <Label
+                            SemanticProperties.Description="給与算定開始日"
+                            Text="{Binding PeriodHeader.StartDateText}" />
+                        <Label
+                            SemanticProperties.Description="給与算定終了日"
+                            Text="{Binding PeriodHeader.EndDateText}" />
+                        <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                            <Button
+                                Command="{Binding PeriodHeader.PreviousCommand}"
+                                IsEnabled="{Binding PeriodHeader.CanMovePrevious}"
+                                SemanticProperties.Description="前の給与期間へ移動"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Text="前の期間" />
+                            <Button
+                                Grid.Column="1"
+                                Command="{Binding PeriodHeader.CurrentCommand}"
+                                SemanticProperties.Description="現在の給与期間へ移動"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Text="現在" />
+                            <Button
+                                Grid.Column="2"
+                                Command="{Binding PeriodHeader.NextCommand}"
+                                IsEnabled="{Binding PeriodHeader.CanMoveNext}"
+                                SemanticProperties.Description="次の給与期間へ移動"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Text="次の期間" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+
+                <controls:ErrorStateView
+                    IsVisible="{Binding HasError}"
+                    Message="{Binding ErrorMessage}"
+                    RetryCommand="{Binding ReloadCommand}" />
+
+                <Border
+                    AutomationId="Home.SalarySummary"
+                    Padding="20"
+                    BackgroundColor="{StaticResource PrimaryContainer}"
+                    IsVisible="{Binding HasSummary}"
+                    Stroke="{StaticResource Primary}"
+                    StrokeShape="RoundRectangle 16">
+                    <VerticalStackLayout Spacing="12">
+                        <Label Style="{StaticResource SupportingTextStyle}" Text="給与見込み合計" />
+                        <Label
+                            FontAttributes="Bold"
+                            FontSize="32"
+                            SemanticProperties.Description="給与見込み合計"
+                            Text="{Binding TotalText}" />
+                        <BoxView HeightRequest="1" Color="{StaticResource Outline}" />
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8">
+                            <Label Text="基本給与" />
+                            <Label Grid.Column="1" Text="{Binding BasePayText}" />
+                            <Label Grid.Row="1" Text="割増" />
+                            <Label Grid.Row="1" Grid.Column="1" Text="{Binding PremiumText}" />
+                            <Label Grid.Row="2" Text="件数加算" />
+                            <Label Grid.Row="2" Grid.Column="1" Text="{Binding CountBonusText}" />
+                            <Label Grid.Row="3" Text="月額手当" />
+                            <Label Grid.Row="3" Grid.Column="1" Text="{Binding AllowanceText}" />
+                        </Grid>
+                        <Button
+                            Command="{Binding CalculationDetailsCommand}"
+                            SemanticProperties.Description="選択中の給与期間の計算内訳を開く"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Text="計算内訳を見る" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border
+                    Padding="16"
+                    BackgroundColor="{StaticResource WarningContainer}"
+                    IsVisible="{Binding HasUncalculatedRecords}"
+                    Stroke="{StaticResource Warning}"
+                    StrokeShape="RoundRectangle 12"
+                    SemanticProperties.Description="未計算の勤務記録があります">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="4">
+                            <Label FontAttributes="Bold" Text="未計算の勤務記録" />
+                            <Label Text="{Binding UncalculatedCountText}" />
+                        </VerticalStackLayout>
+                        <Button
+                            Grid.Column="1"
+                            Command="{Binding UncalculatedDaysCommand}"
+                            SemanticProperties.Description="未計算の勤務がある日を開く"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Text="対象日を見る" />
+                    </Grid>
+                </Border>
+
+                <controls:EmptyStateView
+                    ActionCommand="{Binding CalendarCommand}"
+                    ActionText="カレンダーを開く"
+                    IsVisible="{Binding HasNoWorkRecords}"
+                    Message="勤務記録を登録すると、この給与期間の見込み額と内訳を確認できます。"
+                    Title="勤務記録がありません" />
+
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" IsVisible="{Binding HasSummary}">
+                    <Button
+                        Command="{Binding CalendarCommand}"
+                        SemanticProperties.Description="今日を選択したカレンダーを開く"
+                        Text="今日の勤務" />
+                    <Button
+                        Grid.Column="1"
+                        Command="{Binding MonthlyAllowancesCommand}"
+                        SemanticProperties.Description="選択中の給与期間の月額手当を開く"
+                        Style="{StaticResource SecondaryButtonStyle}"
+                        Text="月額手当" />
+                </Grid>
+
+                <Border
+                    AutomationId="Home.BackupReminder"
+                    Padding="14"
+                    BackgroundColor="{StaticResource Surface}"
+                    IsVisible="{Binding BackupReminder.ShouldShow}"
+                    Stroke="{StaticResource Outline}"
+                    StrokeShape="RoundRectangle 12">
+                    <VerticalStackLayout Spacing="8">
+                        <Label FontAttributes="Bold" Text="バックアップのご案内" />
+                        <Label
+                            Style="{StaticResource SupportingTextStyle}"
+                            Text="{Binding BackupReminder.Message}" />
+                        <Button
+                            Command="{Binding BackupReminder.DeferCommand}"
+                            HorizontalOptions="Start"
+                            SemanticProperties.Description="バックアップ案内を7日間表示しない"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Text="後で" />
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <controls:LoadingStateView
+            IsRunning="{Binding IsBusy}"
+            IsVisible="{Binding IsBusy}"
+            Message="給与期間の集計を読み込んでいます。" />
+    </Grid>
 </ContentPage>
