@@ -166,9 +166,11 @@ public sealed class AppConfigurationTests
             "AddSingleton<IAppSessionState>",
             "AddSingleton<AppStartupCoordinator>()",
             "AddSingleton<IConfirmationDialogService, ConfirmationDialogService>()",
+            "AddSingleton<IHomeNavigator, ShellHomeNavigator>()",
             "AddSingleton<StartupViewModel>()",
             "AddSingleton<StartupPage>()",
             "AddTransient<InitialSetupFlowPage>()",
+            "AddTransient<HomeViewModel>()",
             "AddTransient<HomePage>()",
             "AddTransient<CalendarPage>()",
             "AddTransient<SettingsMenuPage>()",
@@ -182,6 +184,67 @@ public sealed class AppConfigurationTests
         var app = File.ReadAllText(AppPath("App.xaml.cs"));
         Assert.Contains("rootNavigator.Attach(window)", app, StringComparison.Ordinal);
         Assert.Contains("startupViewModel.SetStartupOperation(startupCoordinator.StartAsync)", app, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HomePage_ShowsCompletePeriodSummaryNavigationAndAccessibleBackupReminder()
+    {
+        var home = XDocument.Load(AppPath("Presentation", "Features", "Home", "HomePage.xaml"));
+        var destination = XDocument.Load(AppPath("Presentation", "Features", "Home", "HomeDestinationPage.xaml"));
+        AssertControlUsesCompiledBinding(home);
+        AssertControlUsesCompiledBinding(destination);
+
+        var source = File.ReadAllText(AppPath("Presentation", "Features", "Home", "HomePage.xaml"));
+        foreach (var binding in new[]
+                 {
+                     "PeriodHeader.StartDateText",
+                     "PeriodHeader.EndDateText",
+                     "TotalText",
+                     "TotalAccessibilityText",
+                     "BasePayText",
+                     "PremiumText",
+                     "CountBonusText",
+                     "AllowanceText",
+                     "UncalculatedCountText",
+                     "CalendarCommand",
+                     "CalculationDetailsCommand",
+                     "MonthlyAllowancesCommand",
+                     "UncalculatedDaysCommand",
+                     "BackupReminder.ShouldShow",
+                     "BackupReminder.DeferCommand",
+                 })
+        {
+            Assert.Contains(binding, source, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("SemanticProperties.Description=\"給与算定開始日\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SemanticProperties.Description=\"給与算定終了日\"", source, StringComparison.Ordinal);
+        Assert.Contains("SemanticProperties.Description=\"{Binding TotalAccessibilityText}\"", source, StringComparison.Ordinal);
+        Assert.Contains("SemanticProperties.Description=\"{Binding PayrollPeriodAccessibilityText}\"", File.ReadAllText(AppPath("Presentation", "Features", "Home", "HomeDestinationPage.xaml")), StringComparison.Ordinal);
+
+        var uncalculatedRecords = home.Descendants().Single(element =>
+            AttributeValue(element, "AutomationId") == "Home.UncalculatedRecords");
+        Assert.DoesNotContain(uncalculatedRecords.Attributes(), attribute => attribute.Name.LocalName == "IsVisible");
+        Assert.Contains(uncalculatedRecords.Descendants(), element =>
+            element.Name.LocalName == "Label" &&
+            AttributeValue(element, "Text") == "{Binding UncalculatedCountText}");
+        Assert.Contains(uncalculatedRecords.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            AttributeValue(element, "Text") == "対象日を見る" &&
+            AttributeValue(element, "IsVisible") == "{Binding HasUncalculatedRecords}" &&
+            AttributeValue(element, "IsEnabled") == "{Binding HasUncalculatedRecords}");
+
+        Assert.Contains(home.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            AttributeValue(element, "Text") == "後で" &&
+            AttributeValue(element, "SemanticProperties.Description").Contains("7日間", StringComparison.Ordinal));
+
+        var navigator = File.ReadAllText(
+            AppPath("Presentation", "Features", "Home", "ShellHomeNavigator.cs"));
+        Assert.Contains("ShellNavigationQueryParameters", navigator, StringComparison.Ordinal);
+        Assert.Contains("NavigationRoutes.CalculationDetails", navigator, StringComparison.Ordinal);
+        Assert.Contains("NavigationRoutes.MonthlyAllowances", navigator, StringComparison.Ordinal);
+        Assert.Contains("NavigationRoutes.UncalculatedDays", navigator, StringComparison.Ordinal);
     }
 
     private static string AppPath(params string[] segments) =>

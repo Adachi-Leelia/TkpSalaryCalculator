@@ -32,5 +32,7 @@
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\JapaneseDisplayFormatter.cs" Link="Production\JapaneseDisplayFormatter.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Services\IConfirmationDialogService.cs" Link="Production\IConfirmationDialogService.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Setup\InitialSetupFlowViewModel.cs" Link="Production\InitialSetupFlowViewModel.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Home\HomeNavigation.cs" Link="Production\HomeNavigation.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Home\HomeViewModel.cs" Link="Production\HomeViewModel.cs" />
   </ItemGroup>
 </Project>

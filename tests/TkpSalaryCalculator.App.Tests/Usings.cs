@@ -1,5 +1,6 @@
 global using TkpSalaryCalculator.App.Navigation;
 global using TkpSalaryCalculator.App.Presentation.Common;
+global using TkpSalaryCalculator.App.Presentation.Features.Home;
 global using TkpSalaryCalculator.App.Presentation.Services;
 global using TkpSalaryCalculator.Application.Contracts;
 global using TkpSalaryCalculator.Application.Errors;
