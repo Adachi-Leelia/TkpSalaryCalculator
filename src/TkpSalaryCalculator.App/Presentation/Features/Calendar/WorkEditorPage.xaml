@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Calendar.WorkEditorPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:calendar="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Calendar"
+    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="calendar:WorkEditorViewModel"
+    Title="{Binding PageTitle}">
+    <Grid RowDefinitions="*,Auto" SafeAreaEdges="All">
+        <ScrollView x:Name="EditorScroll">
+            <VerticalStackLayout Padding="20" Spacing="12">
+                <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" />
+                <Label Text="勤務日（必須）" />
+                <DatePicker Date="{Binding WorkDate, Mode=TwoWay}" Format="yyyy年M月d日" />
+                <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding SettingsMonthText}" />
+                <Label Text="よく使うサービス候補" />
+                <Picker ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding PresetCandidates}" SelectedItem="{Binding SelectedPreset, Mode=TwoWay}" Title="候補を選択" />
+                <Label IsVisible="{Binding HasUnavailableCandidates}" Style="{StaticResource SupportingTextStyle}" Text="{Binding UnavailableCandidatesText}" />
+                <Label Text="サービス（必須）" />
+                <Picker x:Name="ServicePicker" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding Services}" SelectedItem="{Binding SelectedService, Mode=TwoWay}" Title="サービスを選択" />
+                <Label Text="{Binding ServiceError}" TextColor="{StaticResource Error}" />
+                <Label IsVisible="{Binding HasTimeCategories}" Text="時間区分" />
+                <Picker x:Name="TimeCategoryPicker" IsVisible="{Binding HasTimeCategories}" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding TimeCategories}" SelectedItem="{Binding SelectedTimeCategory, Mode=TwoWay}" Title="時間区分を選択" />
+                <Label Text="{Binding TimeCategoryError}" TextColor="{StaticResource Error}" />
+                <Label Text="入力方式" />
+                <Picker ItemDisplayBinding="{Binding DisplayName}" ItemsSource="{Binding InputModes}" SelectedItem="{Binding SelectedInputMode, Mode=TwoWay}" />
+                <VerticalStackLayout IsVisible="{Binding ShowDuration}" Spacing="6">
+                    <Label Text="勤務時間（分、1～1,440）" />
+                    <Entry x:Name="WorkMinutesEntry" Keyboard="Numeric" Text="{Binding WorkMinutesText, Mode=TwoWay}" />
+                    <Label Text="{Binding WorkMinutesError}" TextColor="{StaticResource Error}" />
+                </VerticalStackLayout>
+                <VerticalStackLayout IsVisible="{Binding ShowStartTime}" Spacing="6">
+                    <Label Text="開始時刻" />
+                    <TimePicker x:Name="StartTimePicker" Time="{Binding StartTime, Mode=TwoWay}" />
+                    <Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" />
+                </VerticalStackLayout>
+                <VerticalStackLayout IsVisible="{Binding ShowEndTime}" Spacing="6">
+                    <Label Text="終了時刻" />
+                    <TimePicker x:Name="EndTimePicker" Time="{Binding EndTime, Mode=TwoWay}" />
+                    <Label Style="{StaticResource SupportingTextStyle}" Text="終了時刻が開始時刻以前の場合は翌日として扱います。" />
+                    <Label Text="{Binding EndTimeError}" TextColor="{StaticResource Error}" />
+                </VerticalStackLayout>
+                <Button Command="{Binding PreviewCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="給与をプレビュー" />
+                <Border Padding="14" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 12">
+                    <VerticalStackLayout Spacing="6">
+                        <Label FontAttributes="Bold" Text="{Binding PreviewText}" />
+                        <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding NormalizedTimeText}" />
+                    </VerticalStackLayout>
+                </Border>
+                <Label IsVisible="{Binding HasIssues}" Text="{Binding IssueMessage}" TextColor="{StaticResource Warning}" />
+                <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+                <BoxView HeightRequest="12" />
+            </VerticalStackLayout>
+        </ScrollView>
+        <controls:FixedSaveBar Grid.Row="1" IsSaving="{Binding IsBusy}" SaveCommand="{Binding SaveCommand}" SaveText="保存" />
+    </Grid>
+</ContentPage>

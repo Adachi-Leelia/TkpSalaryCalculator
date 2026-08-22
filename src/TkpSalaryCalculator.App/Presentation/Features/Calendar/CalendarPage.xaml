@@ -3,12 +3,96 @@
     x:Class="TkpSalaryCalculator.App.Presentation.Features.Calendar.CalendarPage"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:calendar="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Calendar"
     xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="calendar:CalendarViewModel"
     Title="カレンダー">
-    <VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="20">
-        <Label Style="{StaticResource PageTitleStyle}" Text="カレンダー" />
-        <controls:EmptyStateView
-            Message="月間カレンダーと勤務入力は、実装ロードマップの勤務入力段階で追加されます。"
-            Title="表示する勤務日がありません" />
-    </VerticalStackLayout>
+    <Grid SafeAreaEdges="All">
+        <ScrollView>
+            <VerticalStackLayout Padding="16" Spacing="14">
+                <Label Style="{StaticResource PageTitleStyle}" Text="カレンダー" />
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                    <Button Command="{Binding PreviousMonthCommand}" SemanticProperties.Description="前月へ移動" Style="{StaticResource SecondaryButtonStyle}" Text="前月" />
+                    <Label Grid.Column="1" HorizontalTextAlignment="Center" Style="{StaticResource SectionTitleStyle}" Text="{Binding MonthText}" VerticalTextAlignment="Center" />
+                    <Button Grid.Column="2" Command="{Binding CurrentMonthCommand}" SemanticProperties.Description="当月へ移動" Style="{StaticResource SecondaryButtonStyle}" Text="当月" />
+                    <Button Grid.Column="3" Command="{Binding NextMonthCommand}" SemanticProperties.Description="翌月へ移動" Style="{StaticResource SecondaryButtonStyle}" Text="翌月" />
+                </Grid>
+                <Grid ColumnDefinitions="*,*,*,*,*,*,*">
+                    <Label HorizontalTextAlignment="Center" Text="日" />
+                    <Label Grid.Column="1" HorizontalTextAlignment="Center" Text="月" />
+                    <Label Grid.Column="2" HorizontalTextAlignment="Center" Text="火" />
+                    <Label Grid.Column="3" HorizontalTextAlignment="Center" Text="水" />
+                    <Label Grid.Column="4" HorizontalTextAlignment="Center" Text="木" />
+                    <Label Grid.Column="5" HorizontalTextAlignment="Center" Text="金" />
+                    <Label Grid.Column="6" HorizontalTextAlignment="Center" Text="土" />
+                </Grid>
+                <CollectionView AutomationId="Calendar.MonthGrid" ItemsSource="{Binding Days}" SelectionMode="None">
+                    <CollectionView.ItemsLayout>
+                        <GridItemsLayout Orientation="Vertical" Span="7" VerticalItemSpacing="4" HorizontalItemSpacing="4" />
+                    </CollectionView.ItemsLayout>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="calendar:CalendarDayCellViewModel">
+                            <Button
+                                Command="{Binding SelectCommand}"
+                                FontSize="12"
+                                MinimumHeightRequest="64"
+                                Padding="2"
+                                SemanticProperties.Description="{Binding AccessibilityText}"
+                                Style="{StaticResource CalendarDayButtonStyle}"
+                                Text="{Binding DisplayText}">
+                                <Button.Triggers>
+                                    <DataTrigger Binding="{Binding IsPlaceholder}" TargetType="Button" Value="True">
+                                        <Setter Property="IsEnabled" Value="False" />
+                                        <Setter Property="Opacity" Value="0" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding HasWorkRecords}" TargetType="Button" Value="True">
+                                        <Setter Property="FontAttributes" Value="Bold" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding HasUncalculated}" TargetType="Button" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource Warning}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsToday}" TargetType="Button" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource Accent}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsSelected}" TargetType="Button" Value="True">
+                                        <Setter Property="BackgroundColor" Value="{StaticResource Primary}" />
+                                        <Setter Property="TextColor" Value="White" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+                <Label Style="{StaticResource SupportingTextStyle}" Text="● 勤務あり　! 未計算（状態は色だけでなく記号でも表示）" />
+                <controls:ErrorStateView IsVisible="{Binding HasError}" Message="{Binding ErrorMessage}" RetryCommand="{Binding ReloadCommand}" />
+                <Border Padding="16" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 16">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Style="{StaticResource SectionTitleStyle}" Text="{Binding SelectedDateText}" />
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="日別給与見込み" />
+                            <Label Grid.Column="1" FontAttributes="Bold" SemanticProperties.Description="{Binding SelectedTotalText}" Text="{Binding SelectedTotalText}" />
+                        </Grid>
+                        <Label Text="{Binding SelectedRecordCountText}" />
+                        <Label IsVisible="{Binding HasSelectedUncalculated}" Text="{Binding SelectedUncalculatedText}" TextColor="{StaticResource Warning}" />
+                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding SelectedWorkRows}" IsVisible="{Binding HasSelectedWorkRows}" Spacing="6">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="calendar:CalendarWorkSummaryRow">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <Label Text="{Binding DurationText}" />
+                                        <Label Grid.Column="1" Text="{Binding AmountText}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </VerticalStackLayout>
+                        <Label IsVisible="{Binding HasShiftCandidates}" Text="{Binding ShiftCandidateText}" TextColor="{StaticResource Accent}" />
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                            <Button Command="{Binding AddWorkCommand}" Text="勤務を追加" />
+                            <Button Grid.Column="1" Command="{Binding OpenDayCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="全件を開く" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+        </ScrollView>
+        <controls:LoadingStateView IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" Message="カレンダーを読み込んでいます。" />
+    </Grid>
 </ContentPage>

@@ -45,6 +45,7 @@ public partial class AppShell : Shell
     private void ConfigureMainTabs(IServiceProvider services)
     {
         HomeRouteRegistration.Register();
+        CalendarRouteRegistration.Register();
         var tabBar = new TabBar { Route = "main" };
         var home = CreateTab<HomePage>(services, "ホーム", NavigationRoutes.Home);
         var calendar = CreateTab<CalendarPage>(services, "カレンダー", NavigationRoutes.Calendar);

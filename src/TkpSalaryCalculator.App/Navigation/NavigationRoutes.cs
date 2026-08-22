@@ -8,6 +8,8 @@ public static class NavigationRoutes
     public const string InitialSetupContent = "initial-setup-content";
     public const string Home = "home";
     public const string Calendar = "calendar";
+    public const string Day = "day";
+    public const string WorkEditor = "work-editor";
     public const string Settings = "settings";
     public const string CalculationDetails = "calculation-details";
     public const string MonthlyAllowances = "monthly-allowances";
