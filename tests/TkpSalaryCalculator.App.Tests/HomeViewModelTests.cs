@@ -15,6 +15,7 @@ public sealed class HomeViewModelTests
         Assert.Equal("給与算定開始日: 2026年7月21日", fixture.ViewModel.PeriodHeader.StartDateText);
         Assert.Equal("給与算定終了日: 2026年8月20日", fixture.ViewModel.PeriodHeader.EndDateText);
         Assert.Equal("10,000円", fixture.ViewModel.TotalText);
+        Assert.Equal("給与見込み合計: 10,000円", fixture.ViewModel.TotalAccessibilityText);
         Assert.Equal("2,000円", fixture.ViewModel.BasePayText);
         Assert.Equal("300円", fixture.ViewModel.PremiumText);
         Assert.Equal("400円", fixture.ViewModel.CountBonusText);
@@ -32,6 +33,8 @@ public sealed class HomeViewModelTests
         fixture.Salary.Add(Summary(2026, 8, 1_000, 700, 100, 100, 100, 0));
         fixture.Salary.Add(Summary(2026, 9, 9_000, 5_000, 1_000, 2_000, 1_000, 4));
         await fixture.ViewModel.LoadAsync();
+        Assert.Equal("0件", fixture.ViewModel.UncalculatedCountText);
+        Assert.False(fixture.ViewModel.HasUncalculatedRecords);
 
         await fixture.ViewModel.MoveByAsync(1);
 
@@ -45,6 +48,58 @@ public sealed class HomeViewModelTests
         Assert.Equal("1,000円", fixture.ViewModel.AllowanceText);
         Assert.Equal("4件", fixture.ViewModel.UncalculatedCountText);
         Assert.Equal(Key(2026, 9), fixture.Session.PayrollPeriod);
+    }
+
+    [Fact]
+    public async Task UI004_PeriodMoveUpdatesUncalculatedStateFromRecordsToZero()
+    {
+        var fixture = new HomeFixture();
+        fixture.Salary.Add(Summary(2026, 8, 1_000, 1_000, 0, 0, 0, 3));
+        fixture.Salary.Add(Summary(2026, 9, 1_000, 1_000, 0, 0, 0, 0));
+        await fixture.ViewModel.LoadAsync();
+        Assert.Equal("3件", fixture.ViewModel.UncalculatedCountText);
+        Assert.True(fixture.ViewModel.HasUncalculatedRecords);
+
+        await fixture.ViewModel.MoveByAsync(1);
+
+        Assert.Equal("0件", fixture.ViewModel.UncalculatedCountText);
+        Assert.False(fixture.ViewModel.HasUncalculatedRecords);
+        Assert.False(fixture.ViewModel.UncalculatedDaysCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task LoadAsync_AfterCancellationQueuesTheLatestRequestAndIgnoresTheOldResult()
+    {
+        var fixture = new HomeFixture();
+        var firstRequestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var obsoleteSummary = Summary(2026, 8, 1_000, 1_000, 0, 0, 0, 1);
+        var latestSummary = Summary(2026, 8, 2_000, 2_000, 0, 0, 0, 0);
+        var requests = 0;
+        fixture.Salary.GetPayrollPeriodAsyncOverride = async (_, _) =>
+        {
+            if (Interlocked.Increment(ref requests) == 1)
+            {
+                firstRequestStarted.SetResult();
+                await releaseFirstRequest.Task;
+                return obsoleteSummary;
+            }
+
+            return latestSummary;
+        };
+
+        var initialLoad = fixture.ViewModel.LoadAsync();
+        await firstRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        fixture.ViewModel.CancelPendingOperations();
+        var reappearingLoad = fixture.ViewModel.LoadAsync();
+        releaseFirstRequest.SetResult();
+
+        await Task.WhenAll(initialLoad, reappearingLoad);
+
+        Assert.Equal(2, requests);
+        Assert.Equal("2,000円", fixture.ViewModel.TotalText);
+        Assert.Equal("0件", fixture.ViewModel.UncalculatedCountText);
+        Assert.False(fixture.ViewModel.HasUncalculatedRecords);
     }
 
     [Fact]
@@ -197,6 +252,7 @@ public sealed class HomeViewModelTests
         private readonly Dictionary<PayrollPeriodKey, PayrollPeriodSummaryDto> summaries = [];
         public List<PayrollPeriodKey> RequestedKeys { get; } = [];
         public PayrollPeriodKey? FailingKey { get; set; }
+        public Func<PayrollPeriodKey, CancellationToken, Task<PayrollPeriodSummaryDto>>? GetPayrollPeriodAsyncOverride { get; set; }
 
         public void Add(PayrollPeriodSummaryDto summary) => summaries.Add(summary.Period.Key, summary);
 
@@ -206,6 +262,10 @@ public sealed class HomeViewModelTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             RequestedKeys.Add(payrollPeriodKey);
+            if (GetPayrollPeriodAsyncOverride is not null)
+            {
+                return GetPayrollPeriodAsyncOverride(payrollPeriodKey, cancellationToken);
+            }
             if (FailingKey == payrollPeriodKey) throw new InvalidOperationException("test failure");
             return Task.FromResult(summaries[payrollPeriodKey]);
         }

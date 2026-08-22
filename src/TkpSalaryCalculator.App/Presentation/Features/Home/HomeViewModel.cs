@@ -131,7 +131,10 @@ public sealed class HomeViewModel : ViewModelBase
     private readonly AsyncCommand monthlyAllowancesCommand;
     private readonly AsyncCommand uncalculatedDaysCommand;
     private readonly AsyncCommand reloadCommand;
+    private readonly object loadQueueLock = new();
     private PayrollPeriodSummaryDto? summary;
+    private Task queuedLoad = Task.CompletedTask;
+    private int latestLoadRequestVersion;
     private string totalText = "0円";
     private string basePayText = "0円";
     private string premiumText = "0円";
@@ -191,8 +194,14 @@ public sealed class HomeViewModel : ViewModelBase
     public string TotalText
     {
         get => totalText;
-        private set => SetProperty(ref totalText, value);
+        private set
+        {
+            if (!SetProperty(ref totalText, value)) return;
+            OnPropertyChanged(nameof(TotalAccessibilityText));
+        }
     }
+
+    public string TotalAccessibilityText => $"給与見込み合計: {TotalText}";
 
     public string BasePayText
     {
@@ -257,13 +266,16 @@ public sealed class HomeViewModel : ViewModelBase
     public ICommand UncalculatedDaysCommand => uncalculatedDaysCommand;
 
     /// <summary>画面を表示するたびに、保存後やインポート後の最新状態を読み直します。</summary>
-    public Task LoadAsync() => RunBusyAsync(async cancellationToken =>
+    public Task LoadAsync()
     {
-        var key = sessionState.PayrollPeriod ??
-            (await payrollPeriods.FindPeriodAsync(GetLocalToday(), cancellationToken)).Key;
-        ApplySummary(await salaryQuery.GetPayrollPeriodAsync(key, cancellationToken));
-        await BackupReminder.LoadAsync(cancellationToken);
-    });
+        var requestVersion = Interlocked.Increment(ref latestLoadRequestVersion);
+        lock (loadQueueLock)
+        {
+            var precedingLoad = queuedLoad;
+            queuedLoad = LoadAfterPrecedingRequestAsync(precedingLoad, requestVersion);
+            return queuedLoad;
+        }
+    }
 
     public Task MoveByAsync(int monthDelta)
     {
@@ -300,6 +312,27 @@ public sealed class HomeViewModel : ViewModelBase
         HasWorkRecords = value.Days.Any(day => day.Records.Count > 0);
         HasUncalculatedRecords = value.UncalculatedCount > 0;
     }
+
+    private async Task LoadAfterPrecedingRequestAsync(Task precedingLoad, int requestVersion)
+    {
+        await precedingLoad;
+        if (!IsLatestLoadRequest(requestVersion)) return;
+
+        await RunBusyAsync(async cancellationToken =>
+        {
+            var key = sessionState.PayrollPeriod ??
+                (await payrollPeriods.FindPeriodAsync(GetLocalToday(), cancellationToken)).Key;
+            var value = await salaryQuery.GetPayrollPeriodAsync(key, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsLatestLoadRequest(requestVersion)) return;
+
+            ApplySummary(value);
+            await BackupReminder.LoadAsync(cancellationToken);
+        });
+    }
+
+    private bool IsLatestLoadRequest(int requestVersion) =>
+        requestVersion == Volatile.Read(ref latestLoadRequestVersion);
 
     public Task OpenCalendarAsync()
     {

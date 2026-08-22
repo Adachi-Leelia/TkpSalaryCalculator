@@ -26,8 +26,14 @@ public partial class HomeDestinationPage : ContentPage, IQueryAttributable
     public string PayrollPeriodText
     {
         get => payrollPeriodText;
-        private set => SetProperty(ref payrollPeriodText, value);
+        private set
+        {
+            if (!SetProperty(ref payrollPeriodText, value)) return;
+            OnPropertyChanged(nameof(PayrollPeriodAccessibilityText));
+        }
     }
+
+    public string PayrollPeriodAccessibilityText => $"対象給与期間: {PayrollPeriodText}";
 
     public void ApplyQueryAttributes(IDictionary<string, object> query)
     {

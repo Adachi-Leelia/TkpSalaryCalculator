@@ -15,11 +15,12 @@
             StrokeShape="RoundRectangle 12">
             <VerticalStackLayout Spacing="8">
                 <Label
+                    SemanticProperties.ExcludedFromAccessibility="True"
                     Style="{StaticResource SupportingTextStyle}"
                     Text="対象給与期間" />
                 <Label
                     FontAttributes="Bold"
-                    SemanticProperties.Description="選択中の対象給与期間"
+                    SemanticProperties.Description="{Binding PayrollPeriodAccessibilityText}"
                     Text="{Binding PayrollPeriodText}" />
             </VerticalStackLayout>
         </Border>

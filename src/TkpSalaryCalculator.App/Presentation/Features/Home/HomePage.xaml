@@ -20,12 +20,8 @@
                     StrokeShape="RoundRectangle 16">
                     <VerticalStackLayout Spacing="12">
                         <Label Style="{StaticResource SectionTitleStyle}" Text="対象の給与期間" />
-                        <Label
-                            SemanticProperties.Description="給与算定開始日"
-                            Text="{Binding PeriodHeader.StartDateText}" />
-                        <Label
-                            SemanticProperties.Description="給与算定終了日"
-                            Text="{Binding PeriodHeader.EndDateText}" />
+                        <Label Text="{Binding PeriodHeader.StartDateText}" />
+                        <Label Text="{Binding PeriodHeader.EndDateText}" />
                         <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
                             <Button
                                 Command="{Binding PeriodHeader.PreviousCommand}"
@@ -63,11 +59,14 @@
                     Stroke="{StaticResource Primary}"
                     StrokeShape="RoundRectangle 16">
                     <VerticalStackLayout Spacing="12">
-                        <Label Style="{StaticResource SupportingTextStyle}" Text="給与見込み合計" />
+                        <Label
+                            SemanticProperties.ExcludedFromAccessibility="True"
+                            Style="{StaticResource SupportingTextStyle}"
+                            Text="給与見込み合計" />
                         <Label
                             FontAttributes="Bold"
                             FontSize="32"
-                            SemanticProperties.Description="給与見込み合計"
+                            SemanticProperties.Description="{Binding TotalAccessibilityText}"
                             Text="{Binding TotalText}" />
                         <BoxView HeightRequest="1" Color="{StaticResource Outline}" />
                         <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8">
@@ -89,12 +88,20 @@
                 </Border>
 
                 <Border
+                    AutomationId="Home.UncalculatedRecords"
                     Padding="16"
-                    BackgroundColor="{StaticResource WarningContainer}"
-                    IsVisible="{Binding HasUncalculatedRecords}"
-                    Stroke="{StaticResource Warning}"
-                    StrokeShape="RoundRectangle 12"
-                    SemanticProperties.Description="未計算の勤務記録があります">
+                    BackgroundColor="{StaticResource Surface}"
+                    Stroke="{StaticResource Outline}"
+                    StrokeShape="RoundRectangle 12">
+                    <Border.Triggers>
+                        <DataTrigger
+                            Binding="{Binding HasUncalculatedRecords}"
+                            TargetType="Border"
+                            Value="True">
+                            <Setter Property="BackgroundColor" Value="{StaticResource WarningContainer}" />
+                            <Setter Property="Stroke" Value="{StaticResource Warning}" />
+                        </DataTrigger>
+                    </Border.Triggers>
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                         <VerticalStackLayout Spacing="4">
                             <Label FontAttributes="Bold" Text="未計算の勤務記録" />
@@ -103,6 +110,8 @@
                         <Button
                             Grid.Column="1"
                             Command="{Binding UncalculatedDaysCommand}"
+                            IsEnabled="{Binding HasUncalculatedRecords}"
+                            IsVisible="{Binding HasUncalculatedRecords}"
                             SemanticProperties.Description="未計算の勤務がある日を開く"
                             Style="{StaticResource SecondaryButtonStyle}"
                             Text="対象日を見る" />

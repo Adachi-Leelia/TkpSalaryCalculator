@@ -200,6 +200,7 @@ public sealed class AppConfigurationTests
                      "PeriodHeader.StartDateText",
                      "PeriodHeader.EndDateText",
                      "TotalText",
+                     "TotalAccessibilityText",
                      "BasePayText",
                      "PremiumText",
                      "CountBonusText",
@@ -215,6 +216,23 @@ public sealed class AppConfigurationTests
         {
             Assert.Contains(binding, source, StringComparison.Ordinal);
         }
+
+        Assert.DoesNotContain("SemanticProperties.Description=\"給与算定開始日\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SemanticProperties.Description=\"給与算定終了日\"", source, StringComparison.Ordinal);
+        Assert.Contains("SemanticProperties.Description=\"{Binding TotalAccessibilityText}\"", source, StringComparison.Ordinal);
+        Assert.Contains("SemanticProperties.Description=\"{Binding PayrollPeriodAccessibilityText}\"", File.ReadAllText(AppPath("Presentation", "Features", "Home", "HomeDestinationPage.xaml")), StringComparison.Ordinal);
+
+        var uncalculatedRecords = home.Descendants().Single(element =>
+            AttributeValue(element, "AutomationId") == "Home.UncalculatedRecords");
+        Assert.DoesNotContain(uncalculatedRecords.Attributes(), attribute => attribute.Name.LocalName == "IsVisible");
+        Assert.Contains(uncalculatedRecords.Descendants(), element =>
+            element.Name.LocalName == "Label" &&
+            AttributeValue(element, "Text") == "{Binding UncalculatedCountText}");
+        Assert.Contains(uncalculatedRecords.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            AttributeValue(element, "Text") == "対象日を見る" &&
+            AttributeValue(element, "IsVisible") == "{Binding HasUncalculatedRecords}" &&
+            AttributeValue(element, "IsEnabled") == "{Binding HasUncalculatedRecords}");
 
         Assert.Contains(home.Descendants(), element =>
             element.Name.LocalName == "Button" &&
