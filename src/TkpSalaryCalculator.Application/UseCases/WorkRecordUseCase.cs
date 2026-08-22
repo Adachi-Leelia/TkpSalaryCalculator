@@ -190,11 +190,14 @@ public sealed class WorkRecordUseCase(
         var target = await GetForDateAsync(targetDate, cancellationToken).ConfigureAwait(false);
         var issues = new List<IssueDto>();
         if (sourceDate == targetDate) issues.Add(ApplicationSupport.Issue("COPY_DAY_SAME_DATE", "複製先には別の日付を指定してください。", "TargetDate"));
+        else if (sourceDate > targetDate) issues.Add(ApplicationSupport.Issue("COPY_DAY_SOURCE_MUST_BE_PAST", "複製元には複製先より過去の日付を指定してください。", "SourceDate"));
         if (source.Count == 0) issues.Add(ApplicationSupport.Issue("COPY_DAY_SOURCE_EMPTY", "複製元の日付に勤務記録がありません。", "SourceDate"));
         if (target.Count != 0) issues.Add(ApplicationSupport.Issue("COPY_DAY_TARGET_HAS_RECORDS", "複製先には既存の勤務記録があります。重複しないか確認してください。"));
-        if (source.Count != 0 && sourceDate != targetDate)
+        var targetMonth = ApplicationSupport.ToYearMonth(targetDate);
+        var (snapshot, confirmationToken) = await ResolveCopyTargetSettingsAsync(
+            sourceDate, targetDate, targetMonth, target.Count, cancellationToken).ConfigureAwait(false);
+        if (source.Count != 0 && sourceDate < targetDate)
         {
-            var snapshot = await settings.GetEffectiveForMonthAsync(ApplicationSupport.ToYearMonth(targetDate), cancellationToken).ConfigureAwait(false);
             var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
             foreach (var value in source)
             {
@@ -211,21 +214,32 @@ public sealed class WorkRecordUseCase(
             }
         }
         var sourceMonth = ApplicationSupport.ToYearMonth(sourceDate);
-        var targetMonth = ApplicationSupport.ToYearMonth(targetDate);
-        return new(sourceDate, targetDate, source.Count, target.Count, sourceMonth, targetMonth, sourceMonth != targetMonth, issues);
+        return new(sourceDate, targetDate, source.Count, target.Count, sourceMonth, targetMonth, sourceMonth != targetMonth, issues, confirmationToken);
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<SaveWorkRecordResultDto>> CopyDayAsync(DateOnly sourceDate, DateOnly targetDate, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<SaveWorkRecordResultDto>> CopyDayAsync(DateOnly sourceDate, DateOnly targetDate,
+        CopyDayConfirmationToken confirmationToken, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(confirmationToken);
         cancellationToken.ThrowIfCancellationRequested();
         if (sourceDate == targetDate) throw new ApplicationErrorException("COPY_DAY_SAME_DATE", "複製先には別の日付を指定してください。", "TargetDate");
+        if (sourceDate > targetDate) throw new ApplicationErrorException("COPY_DAY_SOURCE_MUST_BE_PAST", "複製元には複製先より過去の日付を指定してください。", "SourceDate");
+        var targetMonth = ApplicationSupport.ToYearMonth(targetDate);
+        if (confirmationToken.SourceDate != sourceDate || confirmationToken.TargetDate != targetDate)
+            throw CopyDayPreviewChanged();
         return await transactions.ExecuteAsync(async token =>
         {
             var source = new List<WorkRecordDto>();
             await foreach (var item in records.StreamRangeAsync(sourceDate, sourceDate, token).WithCancellation(token).ConfigureAwait(false)) source.Add(item);
             if (source.Count == 0) throw new ApplicationErrorException("COPY_DAY_SOURCE_EMPTY", "複製元の日付に勤務記録がありません。");
-            var snapshot = await settings.EnsureForMonthAsync(ApplicationSupport.ToYearMonth(targetDate), token).ConfigureAwait(false);
+            var targetCount = 0;
+            await foreach (var _ in records.StreamRangeAsync(targetDate, targetDate, token).WithCancellation(token).ConfigureAwait(false)) targetCount++;
+            if (targetCount != confirmationToken.ExpectedTargetExistingWorkRecordCount)
+                throw CopyDayPreviewChanged();
+            var snapshot = await settings.TryEnsureForMonthAsync(targetMonth,
+                confirmationToken.ExpectedEffectiveSnapshotId, confirmationToken.ExpectedHolidayCalendarVersionId, token)
+                .ConfigureAwait(false) ?? throw CopyDayPreviewChanged();
             var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, token).ConfigureAwait(false);
             var results = new List<SaveWorkRecordResultDto>(source.Count);
             foreach (var old in source)
@@ -245,6 +259,27 @@ public sealed class WorkRecordUseCase(
             return (IReadOnlyList<SaveWorkRecordResultDto>)results;
         }, cancellationToken).ConfigureAwait(false);
     }
+
+    private async Task<(SettingSnapshot Snapshot, CopyDayConfirmationToken ConfirmationToken)> ResolveCopyTargetSettingsAsync(
+        DateOnly sourceDate, DateOnly targetDate, YearMonth targetMonth, int targetExistingWorkRecordCount,
+        CancellationToken cancellationToken)
+    {
+        var existing = await settings.FindForMonthAsync(targetMonth, cancellationToken).ConfigureAwait(false);
+        if (existing is not null)
+            return (existing, new(sourceDate, targetDate, targetExistingWorkRecordCount, existing.Id, existing.HolidayCalendarVersionId));
+
+        var effective = await settings.GetEffectiveForMonthAsync(targetMonth, cancellationToken).ConfigureAwait(false);
+        var latestHoliday = await holidays.GetLatestVerifiedVersionIdAsync(cancellationToken).ConfigureAwait(false);
+        var previewSnapshot = effective.HolidayCalendarVersionId == latestHoliday
+            ? effective
+            : new SettingSnapshot(new SettingSnapshotId(Guid.NewGuid()), effective.Id, latestHoliday,
+                effective.SchemaVersion, effective.CreatedAtUtc, effective.Services, effective.TimeCategories,
+                effective.Rates, effective.Premiums, effective.CountBonuses);
+        return (previewSnapshot, new(sourceDate, targetDate, targetExistingWorkRecordCount, effective.Id, latestHoliday));
+    }
+
+    private static ApplicationErrorException CopyDayPreviewChanged() =>
+        new("COPY_DAY_PREVIEW_STALE", "複製前の設定が変更されました。内容を確認してからもう一度複製してください。");
 
     private async Task<WorkRecordPreviewDto> PreviewCoreAsync(
         SaveWorkRecordCommand command,

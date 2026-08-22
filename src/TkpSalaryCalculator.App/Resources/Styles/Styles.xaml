@@ -47,6 +47,19 @@
         <Setter Property="TextColor" Value="{StaticResource Primary}" />
     </Style>
 
+    <Style x:Key="DestructiveButtonStyle" TargetType="Button">
+        <Setter Property="BackgroundColor" Value="{StaticResource ErrorContainer}" />
+        <Setter Property="TextColor" Value="{StaticResource Error}" />
+    </Style>
+
+    <Style x:Key="CalendarDayButtonStyle" TargetType="Button">
+        <Setter Property="BackgroundColor" Value="{StaticResource Surface}" />
+        <Setter Property="TextColor" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderColor" Value="{StaticResource Outline}" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
+
     <Style TargetType="Entry">
         <Setter Property="TextColor" Value="{StaticResource TextPrimary}" />
         <Setter Property="BackgroundColor" Value="{StaticResource Surface}" />

@@ -246,6 +246,9 @@ public sealed class SettingsAndSalaryUseCaseTests
         var month = await useCase.GetCalendarMonthAsync(new(2026, 8), default);
 
         Assert.Single(day.Records);
+        Assert.Equal("訪問", day.Records[0].ServiceDisplayName);
+        Assert.Equal("60分", day.Records[0].TimeCategoryDisplayName);
+        Assert.Equal(new YearMonth(2026, 8), day.Records[0].SettingMonth);
         Assert.Equal(1000, day.CalculatedSubtotal.Value);
         Assert.Equal(31, month.Count);
         Assert.Equal(1, month[0].WorkRecordCount);

@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Home.CalculationDetailPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    xmlns:home="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Home"
+    x:DataType="home:CalculationDetailViewModel"
+    Title="計算内訳">
+    <Grid SafeAreaEdges="All">
+        <ScrollView>
+            <VerticalStackLayout Padding="20" Spacing="16">
+                <Label Style="{StaticResource PageTitleStyle}" Text="計算内訳" />
+                <Border Padding="16" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                    <VerticalStackLayout Spacing="6">
+                        <Label FontAttributes="Bold" Text="給与期間" />
+                        <Label Text="{Binding StartDateText}" />
+                        <Label Text="{Binding EndDateText}" />
+                    </VerticalStackLayout>
+                </Border>
+                <Border IsVisible="{Binding ShowsPayrollPeriodBreakdown}" Padding="16" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 16">
+                    <VerticalStackLayout Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="{Binding TotalLabel}" />
+                            <Label Grid.Column="1" FontAttributes="Bold" FontSize="24" SemanticProperties.Description="{Binding TotalText}" Text="{Binding TotalText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
+                            <Label Text="基本給与" /><Label Grid.Column="1" Text="{Binding BasePayText}" />
+                            <Label Grid.Row="1" Text="割増" /><Label Grid.Row="1" Grid.Column="1" Text="{Binding PremiumText}" />
+                            <Label Grid.Row="2" Text="件数加算" /><Label Grid.Row="2" Grid.Column="1" Text="{Binding CountBonusText}" />
+                            <Label Grid.Row="3" Text="月額手当" /><Label Grid.Row="3" Grid.Column="1" Text="{Binding AllowanceText}" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+                <controls:UncalculatedStateView
+                    IsVisible="{Binding HasPeriodUncalculated}"
+                    NextAction="設定画面で不足しているサービス、時間区分、または単価を補ってください。"
+                    Reason="{Binding UncalculatedText}" />
+                <controls:ErrorStateView IsVisible="{Binding HasError}" Message="{Binding ErrorMessage}" RetryCommand="{Binding ReloadCommand}" />
+
+                <VerticalStackLayout IsVisible="{Binding HasPremiumTotals}" Spacing="8">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="割増種別ごとの合計" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding PremiumTotals}" Spacing="6">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="home:CalculationPremiumTotalRowViewModel">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Label Text="{Binding DisplayName}" />
+                                    <Label Grid.Column="1" Text="{Binding AmountText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout IsVisible="{Binding HasAllowances}" Spacing="8">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="月額手当" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Allowances}" Spacing="6">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="home:CalculationAllowanceRowViewModel">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Label Text="{Binding DisplayName}" />
+                                    <Label Grid.Column="1" Text="{Binding AmountText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+
+                <controls:EmptyStateView IsVisible="{Binding IsEmpty}" Message="この給与期間には勤務記録がありません。" Title="計算内訳がありません" />
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Days}" Spacing="14">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="home:CalculationDayRowViewModel">
+                            <Border Padding="14" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                                <VerticalStackLayout Spacing="10">
+                                    <Label FontAttributes="Bold" FontSize="18" Text="{Binding DateText}" />
+                                    <Grid IsVisible="{Binding HasDaySubtotal}" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="4">
+                                        <Label Text="基本給与小計" /><Label Grid.Column="1" Text="{Binding BasePayText}" />
+                                        <Label Grid.Row="1" Text="割増小計" /><Label Grid.Row="1" Grid.Column="1" Text="{Binding PremiumText}" />
+                                        <Label Grid.Row="2" Text="件数加算小計" /><Label Grid.Row="2" Grid.Column="1" Text="{Binding CountBonusText}" />
+                                        <Label Grid.Row="3" FontAttributes="Bold" Text="日別合計" /><Label Grid.Row="3" Grid.Column="1" FontAttributes="Bold" Text="{Binding TotalText}" />
+                                    </Grid>
+                                    <Label IsVisible="{Binding HasUncalculated}" Text="{Binding UncalculatedText}" TextColor="{StaticResource Warning}" />
+                                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Records}" Spacing="10">
+                                        <BindableLayout.ItemTemplate>
+                                            <DataTemplate x:DataType="home:CalculationWorkRecordRowViewModel">
+                                                <Border Padding="12" BackgroundColor="{StaticResource PageBackground}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
+                                                    <VerticalStackLayout Spacing="7">
+                                                        <Label FontAttributes="Bold" Text="{Binding DisplayName}" />
+                                                        <Label Text="{Binding WorkTimeText}" />
+                                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                                            <Label Text="適用基本単価" /><Label Grid.Column="1" Text="{Binding AppliedRateText}" />
+                                                            <Label Grid.Row="1" Text="基本給与" /><Label Grid.Row="1" Grid.Column="1" Text="{Binding BasePayText}" />
+                                                        </Grid>
+                                                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding Premiums}" IsVisible="{Binding HasPremiums}" Spacing="5">
+                                                            <BindableLayout.ItemTemplate>
+                                                                <DataTemplate x:DataType="home:CalculationPremiumRowViewModel">
+                                                                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                                                        <Label FontAttributes="Bold" Text="{Binding DisplayName}" />
+                                                                        <Label Grid.Column="1" Text="{Binding AmountText}" />
+                                                                        <Label Grid.Row="1" Style="{StaticResource SupportingTextStyle}" Text="{Binding RuleText}" />
+                                                                        <Label Grid.Row="1" Grid.Column="1" Style="{StaticResource SupportingTextStyle}" Text="{Binding ApplicableTimeText}" />
+                                                                    </Grid>
+                                                                </DataTemplate>
+                                                            </BindableLayout.ItemTemplate>
+                                                        </VerticalStackLayout>
+                                                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding CountBonuses}" IsVisible="{Binding HasCountBonuses}" Spacing="5">
+                                                            <BindableLayout.ItemTemplate>
+                                                                <DataTemplate x:DataType="home:CalculationCountBonusRowViewModel">
+                                                                    <Grid ColumnDefinitions="*,Auto">
+                                                                        <Label Text="{Binding DisplayName}" />
+                                                                        <Label Grid.Column="1" Text="{Binding AmountText}" />
+                                                                    </Grid>
+                                                                </DataTemplate>
+                                                            </BindableLayout.ItemTemplate>
+                                                        </VerticalStackLayout>
+                                                        <Label IsVisible="{Binding HasMissingReason}" Text="{Binding MissingReasonText}" TextColor="{StaticResource Warning}" />
+                                                        <Grid ColumnDefinitions="*,Auto">
+                                                            <Label FontAttributes="Bold" Text="勤務記録合計" />
+                                                            <Label Grid.Column="1" FontAttributes="Bold" Text="{Binding TotalText}" />
+                                                        </Grid>
+                                                        <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding SettingMonthText}" />
+                                                    </VerticalStackLayout>
+                                                </Border>
+                                            </DataTemplate>
+                                        </BindableLayout.ItemTemplate>
+                                    </VerticalStackLayout>
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+            </VerticalStackLayout>
+        </ScrollView>
+        <controls:LoadingStateView IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" Message="計算内訳を読み込んでいます。" />
+    </Grid>
+</ContentPage>

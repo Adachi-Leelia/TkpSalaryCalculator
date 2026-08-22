@@ -1,11 +1,13 @@
 global using TkpSalaryCalculator.App.Navigation;
 global using TkpSalaryCalculator.App.Presentation.Common;
 global using TkpSalaryCalculator.App.Presentation.Features.Home;
+global using TkpSalaryCalculator.App.Presentation.Features.Calendar;
 global using TkpSalaryCalculator.App.Presentation.Services;
 global using TkpSalaryCalculator.Application.Contracts;
 global using TkpSalaryCalculator.Application.Errors;
 global using TkpSalaryCalculator.Application.Ports;
 global using TkpSalaryCalculator.Application.UseCases;
 global using TkpSalaryCalculator.Domain.Models;
+global using TkpSalaryCalculator.Domain.Contracts;
 global using TkpSalaryCalculator.Domain.ValueObjects;
 global using Xunit;

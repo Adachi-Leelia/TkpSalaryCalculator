@@ -80,6 +80,55 @@ public sealed class SqliteSettingSnapshotRepository(SqliteDatabase database, IUt
             return selected;
         }, cancellationToken);
 
+    public Task<SettingSnapshot?> TryEnsureForMonthAsync(YearMonth yearMonth,
+        SettingSnapshotId expectedEffectiveSnapshotId, HolidayCalendarVersionId expectedHolidayCalendarVersionId,
+        CancellationToken cancellationToken) =>
+        database.WriteAsync(async (connection, transaction, token) =>
+        {
+            var existingId = await FindSnapshotIdForExactMonthAsync(connection, transaction, yearMonth, token)
+                .ConfigureAwait(false);
+            if (existingId is not null)
+            {
+                if (!StringComparer.Ordinal.Equals(existingId, SqliteValue.Id(expectedEffectiveSnapshotId.Value))) return null;
+                return await LoadSnapshotAsync(connection, transaction, existingId, token).ConfigureAwait(false)
+                    ?? throw new InvalidDataException("The setting month refers to a missing snapshot.");
+            }
+
+            var inheritedId = await FindEffectiveSnapshotIdAsync(connection, transaction, yearMonth, token)
+                .ConfigureAwait(false);
+            if (!StringComparer.Ordinal.Equals(inheritedId, SqliteValue.Id(expectedEffectiveSnapshotId.Value))) return null;
+            var inherited = await LoadSnapshotAsync(connection, transaction, inheritedId!, token).ConfigureAwait(false)
+                ?? throw new InvalidDataException("The inherited setting snapshot is missing.");
+            var latestHolidayId = await FindLatestHolidayIdAsync(connection, transaction, token).ConfigureAwait(false);
+            if (latestHolidayId != expectedHolidayCalendarVersionId) return null;
+
+            SettingSnapshot selected;
+            if (inherited.HolidayCalendarVersionId == latestHolidayId)
+            {
+                selected = inherited;
+            }
+            else
+            {
+                selected = new SettingSnapshot(new SettingSnapshotId(Guid.NewGuid()), inherited.Id, latestHolidayId,
+                    inherited.SchemaVersion, clock.UtcNow.ToUniversalTime(), inherited.Services,
+                    inherited.TimeCategories, inherited.Rates, inherited.Premiums, inherited.CountBonuses);
+                await InsertSnapshotAsync(connection, transaction, selected, token).ConfigureAwait(false);
+            }
+
+            var now = SqliteValue.Utc(clock.UtcNow);
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO setting_month(year_month, snapshot_id, created_at_utc, updated_at_utc)
+                VALUES($month, $snapshot, $now, $now);
+                """;
+            command.Parameters.AddValue("$month", SqliteValue.YearMonth(yearMonth));
+            command.Parameters.AddValue("$snapshot", SqliteValue.Id(selected.Id.Value));
+            command.Parameters.AddValue("$now", now);
+            await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            return selected;
+        }, cancellationToken);
+
     // HIST-001/HIST-004: clone + conditional month switch is one BEGIN IMMEDIATE transaction.
     public Task<SettingSnapshot?> TryCloneAndReplaceMonthSnapshotAsync(YearMonth yearMonth,
         SettingSnapshotId expectedCurrentSnapshotId, SettingSnapshotReplacementDto replacement,

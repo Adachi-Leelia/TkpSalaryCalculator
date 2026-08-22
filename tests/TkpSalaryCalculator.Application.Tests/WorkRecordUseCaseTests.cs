@@ -60,7 +60,7 @@ public sealed class WorkRecordUseCaseTests
 
         Assert.Contains(result.Issues, x => x.Code == "WORK_SERVICE_UNAVAILABLE");
         await Assert.ThrowsAsync<ApplicationErrorException>(() =>
-            context.WorkUseCase().CopyDayAsync(new(2026, 7, 31), new(2026, 8, 1), default));
+            context.WorkUseCase().CopyDayAsync(new(2026, 7, 31), new(2026, 8, 1), result.ConfirmationToken, default));
     }
 
     [Fact]
@@ -168,8 +168,11 @@ public sealed class WorkRecordUseCaseTests
         context.Works.UpsertFailure = new InvalidOperationException("second insert");
         context.Works.UpsertFailureAtCall = 2;
 
+        var targetDate = sourceDate.AddDays(1);
+        var preview = await context.WorkUseCase().PreviewCopyDayAsync(sourceDate, targetDate, default);
+
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            context.WorkUseCase().CopyDayAsync(sourceDate, sourceDate.AddDays(1), default));
+            context.WorkUseCase().CopyDayAsync(sourceDate, targetDate, preview.ConfirmationToken, default));
 
         Assert.Equal(2, context.Works.UpsertCalls);
         Assert.Equal(before, context.Works.Values);
@@ -185,13 +188,98 @@ public sealed class WorkRecordUseCaseTests
         var targetDate = new DateOnly(2026, 8, 1);
         context.Works.Values.AddRange([TestData.Work(sourceDate), TestData.Work(sourceDate)]);
 
-        var result = await context.WorkUseCase().CopyDayAsync(sourceDate, targetDate, default);
+        var preview = await context.WorkUseCase().PreviewCopyDayAsync(sourceDate, targetDate, default);
+        var result = await context.WorkUseCase().CopyDayAsync(sourceDate, targetDate, preview.ConfirmationToken, default);
 
         Assert.Equal(2, result.Count);
         Assert.Equal(2, result.Select(x => x.WorkRecord.Id).Distinct().Count());
         Assert.All(result, x => Assert.Equal(targetDate, x.WorkRecord.WorkDate));
         Assert.All(result, x => Assert.NotNull(x.WorkRecord.SourceWorkRecordId));
-        Assert.Equal(1, context.Settings.EnsureCalls);
+        Assert.Equal(0, context.Settings.EnsureCalls);
+        Assert.Equal(1, context.Settings.TryEnsureCalls);
+    }
+
+    [Fact]
+    public async Task PreviewCopyDay_UsesLatestHolidayForNewMonthWithoutCreatingIt()
+    {
+        var context = new TestContext();
+        var sourceDate = new DateOnly(2026, 7, 31);
+        var targetDate = new DateOnly(2026, 8, 1);
+        var latestHoliday = new HolidayCalendarVersionId(Guid.NewGuid());
+        var premium = new SnapshotPremium(new PremiumId(Guid.NewGuid()), "祝日夜間", PremiumCalculationType.FixedPerHour,
+            null, new YenAmount(100), new MinuteOfDay(1320), new MinuteOfDay(300), true,
+            new HashSet<DayOfWeek>(), new HashSet<DateOnly>(), new HashSet<ServiceId>(), true);
+        context.Settings.Months[new YearMonth(2026, 7)] = TestData.Snapshot(premiums: [premium]);
+        context.Holidays.Latest = latestHoliday;
+        context.Holidays.Calendars[latestHoliday] = new Dictionary<DateOnly, string> { [targetDate] = "テスト祝日" };
+        context.Works.Values.Add(TestData.Work(sourceDate));
+
+        var preview = await context.WorkUseCase().PreviewCopyDayAsync(sourceDate, targetDate, default);
+
+        Assert.Contains(preview.Issues, issue => issue.Code == "COPY_DAY_START_REQUIRED_FOR_PREMIUM");
+        Assert.Equal(latestHoliday, preview.ConfirmationToken.ExpectedHolidayCalendarVersionId);
+        Assert.False(context.Settings.Months.ContainsKey(new YearMonth(2026, 8)));
+        Assert.Equal(0, context.Settings.EnsureCalls);
+
+        var exception = await Assert.ThrowsAsync<ApplicationErrorException>(() =>
+            context.WorkUseCase().CopyDayAsync(sourceDate, targetDate, preview.ConfirmationToken, default));
+
+        Assert.Equal("COPY_DAY_START_REQUIRED_FOR_PREMIUM", exception.Code);
+        Assert.Equal(1, context.Settings.TryEnsureCalls);
+        Assert.DoesNotContain(context.Works.Values, work => work.WorkDate == targetDate);
+    }
+
+    [Fact]
+    public async Task CopyDay_RejectsFutureSourceDateInPreviewAndOnCommit()
+    {
+        var context = new TestContext();
+        var targetDate = new DateOnly(2026, 8, 1);
+        var sourceDate = targetDate.AddDays(1);
+        context.Works.Values.Add(TestData.Work(sourceDate));
+
+        var preview = await context.WorkUseCase().PreviewCopyDayAsync(sourceDate, targetDate, default);
+
+        Assert.Contains(preview.Issues, issue => issue.Code == "COPY_DAY_SOURCE_MUST_BE_PAST");
+        var exception = await Assert.ThrowsAsync<ApplicationErrorException>(() =>
+            context.WorkUseCase().CopyDayAsync(sourceDate, targetDate, preview.ConfirmationToken, default));
+        Assert.Equal("COPY_DAY_SOURCE_MUST_BE_PAST", exception.Code);
+        Assert.DoesNotContain(context.Works.Values, work => work.WorkDate == targetDate);
+    }
+
+    [Fact]
+    public async Task CopyDay_RejectsPreviewWhenTargetSettingsChange()
+    {
+        var context = new TestContext();
+        var sourceDate = new DateOnly(2026, 7, 31);
+        var targetDate = new DateOnly(2026, 8, 1);
+        context.Works.Values.Add(TestData.Work(sourceDate));
+
+        var preview = await context.WorkUseCase().PreviewCopyDayAsync(sourceDate, targetDate, default);
+        context.Settings.Months[new YearMonth(2026, 8)] = TestData.Snapshot();
+
+        var exception = await Assert.ThrowsAsync<ApplicationErrorException>(() =>
+            context.WorkUseCase().CopyDayAsync(sourceDate, targetDate, preview.ConfirmationToken, default));
+
+        Assert.Equal("COPY_DAY_PREVIEW_STALE", exception.Code);
+        Assert.DoesNotContain(context.Works.Values, work => work.WorkDate == targetDate);
+    }
+
+    [Fact]
+    public async Task CopyDay_RejectsPreviewWhenTargetWorkRecordsChange()
+    {
+        var context = new TestContext();
+        var sourceDate = new DateOnly(2026, 7, 31);
+        var targetDate = new DateOnly(2026, 8, 1);
+        context.Works.Values.Add(TestData.Work(sourceDate));
+
+        var preview = await context.WorkUseCase().PreviewCopyDayAsync(sourceDate, targetDate, default);
+        context.Works.Values.Add(TestData.Work(targetDate));
+
+        var exception = await Assert.ThrowsAsync<ApplicationErrorException>(() =>
+            context.WorkUseCase().CopyDayAsync(sourceDate, targetDate, preview.ConfirmationToken, default));
+
+        Assert.Equal("COPY_DAY_PREVIEW_STALE", exception.Code);
+        Assert.Single(context.Works.Values, work => work.WorkDate == targetDate);
     }
 
     [Fact]

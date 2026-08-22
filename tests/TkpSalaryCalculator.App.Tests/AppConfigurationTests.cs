@@ -247,6 +247,44 @@ public sealed class AppConfigurationTests
         Assert.Contains("NavigationRoutes.UncalculatedDays", navigator, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CalculationDetailAndCopyDayExposeSpecifiedBreakdownsAndConfirmationEntry()
+    {
+        var calculation = XDocument.Load(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
+        AssertControlUsesCompiledBinding(calculation);
+        var calculationSource = File.ReadAllText(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
+        foreach (var binding in new[]
+                 {
+                     "StartDateText",
+                     "EndDateText",
+                     "PremiumTotals",
+                     "Allowances",
+                     "Days",
+                     "TotalLabel",
+                     "ShowsPayrollPeriodBreakdown",
+                     "HasPeriodUncalculated",
+                     "HasDaySubtotal",
+                     "AppliedRateText",
+                     "Premiums",
+                     "CountBonuses",
+                     "SettingMonthText",
+                     "MissingReasonText",
+                 })
+        {
+            Assert.Contains(binding, calculationSource, StringComparison.Ordinal);
+        }
+
+        var daySource = File.ReadAllText(AppPath("Presentation", "Features", "Calendar", "DayPage.xaml"));
+        Assert.Contains("ShowDetailsCommand", daySource, StringComparison.Ordinal);
+        Assert.Contains("CopySourceDate", daySource, StringComparison.Ordinal);
+        Assert.Contains("CopySourceMaximumDate", daySource, StringComparison.Ordinal);
+        Assert.Contains("CopyDayCommand", daySource, StringComparison.Ordinal);
+
+        var routes = File.ReadAllText(AppPath("Presentation", "Features", "Home", "ShellHomeNavigator.cs"));
+        Assert.Contains("typeof(CalculationDetailPage)", routes, StringComparison.Ordinal);
+        Assert.DoesNotContain("Routing.RegisterRoute(NavigationRoutes.CalculationDetails, typeof(HomeDestinationPage))", routes, StringComparison.Ordinal);
+    }
+
     private static string AppPath(params string[] segments) =>
         Path.Combine([RepositoryRoot, "src", "TkpSalaryCalculator.App", .. segments]);
 

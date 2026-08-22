@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+    x:Class="TkpSalaryCalculator.App.Presentation.Features.Calendar.DayPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:calendar="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Calendar"
+    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="calendar:DayViewModel"
+    Title="日別一覧">
+    <Grid SafeAreaEdges="All">
+        <ScrollView>
+            <VerticalStackLayout Padding="20" Spacing="14">
+                <Label Style="{StaticResource PageTitleStyle}" Text="日別一覧" />
+                <Label Style="{StaticResource SectionTitleStyle}" Text="{Binding DateText}" />
+                <Border Padding="16" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 16">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Text="日別給与見込み合計" />
+                        <Label Grid.Column="1" FontAttributes="Bold" FontSize="24" SemanticProperties.Description="{Binding TotalText}" Text="{Binding TotalText}" />
+                    </Grid>
+                </Border>
+                <Label IsVisible="{Binding HasUncalculated}" Text="{Binding UncalculatedText}" TextColor="{StaticResource Warning}" />
+                <Border
+                    IsVisible="{Binding HasSuccessMessage}"
+                    Padding="12"
+                    BackgroundColor="{StaticResource PrimaryContainer}"
+                    Stroke="{StaticResource Primary}"
+                    StrokeShape="RoundRectangle 12">
+                    <Label Text="{Binding SuccessMessage}" TextColor="{StaticResource Primary}" />
+                </Border>
+                <controls:ErrorStateView IsVisible="{Binding HasError}" Message="{Binding ErrorMessage}" RetryCommand="{Binding ReloadCommand}" />
+                <controls:EmptyStateView ActionCommand="{Binding AddWorkCommand}" ActionText="勤務を追加" IsVisible="{Binding IsEmpty}" Message="この日には勤務記録がありません。" Title="勤務記録がありません" />
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Records}" IsVisible="{Binding HasRecords}" Spacing="10">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="calendar:DayWorkRecordRowViewModel">
+                            <Border Padding="14" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                                <VerticalStackLayout Spacing="8">
+                                    <Label FontAttributes="Bold" Text="{Binding DisplayName}" />
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <Label Text="{Binding DurationText}" />
+                                        <Label Grid.Column="1" Text="{Binding AmountText}" />
+                                    </Grid>
+                                    <Label IsVisible="{Binding IsUncalculated}" Text="設定不足のため未計算です。編集画面で不足内容を確認してください。" TextColor="{StaticResource Warning}" />
+                                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                                        <Button Command="{Binding ShowDetailsCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="内訳" />
+                                        <Button Grid.Column="1" Command="{Binding EditCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" />
+                                        <Button Grid.Column="2" Command="{Binding DeleteCommand}" Style="{StaticResource DestructiveButtonStyle}" Text="削除" />
+                                    </Grid>
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+                <Border Padding="14" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Style="{StaticResource SectionTitleStyle}" Text="別の日から複製" />
+                        <Label Text="複製元日" />
+                        <DatePicker Date="{Binding CopySourceDate, Mode=TwoWay}" Format="yyyy年M月d日" MaximumDate="{Binding CopySourceMaximumDate}" />
+                        <Button Command="{Binding CopyDayCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="内容を確認して複製" />
+                    </VerticalStackLayout>
+                </Border>
+                <Button Command="{Binding AddWorkCommand}" IsVisible="{Binding HasRecords}" Text="勤務を追加" />
+            </VerticalStackLayout>
+        </ScrollView>
+        <controls:LoadingStateView IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" Message="日別の勤務を読み込んでいます。" />
+    </Grid>
+</ContentPage>
