@@ -131,10 +131,11 @@ public sealed class HomeViewModel : ViewModelBase
     private readonly AsyncCommand monthlyAllowancesCommand;
     private readonly AsyncCommand uncalculatedDaysCommand;
     private readonly AsyncCommand reloadCommand;
-    private readonly object loadQueueLock = new();
+    private readonly object summaryRequestLock = new();
     private PayrollPeriodSummaryDto? summary;
-    private Task queuedLoad = Task.CompletedTask;
-    private int latestLoadRequestVersion;
+    private Task queuedSummaryRequest = Task.CompletedTask;
+    private int latestSummaryRequestVersion;
+    private bool reloadBackupAfterLatestSummaryRequest;
     private string totalText = "0円";
     private string basePayText = "0円";
     private string premiumText = "0円";
@@ -266,36 +267,23 @@ public sealed class HomeViewModel : ViewModelBase
     public ICommand UncalculatedDaysCommand => uncalculatedDaysCommand;
 
     /// <summary>画面を表示するたびに、保存後やインポート後の最新状態を読み直します。</summary>
-    public Task LoadAsync()
-    {
-        var requestVersion = Interlocked.Increment(ref latestLoadRequestVersion);
-        lock (loadQueueLock)
-        {
-            var precedingLoad = queuedLoad;
-            queuedLoad = LoadAfterPrecedingRequestAsync(precedingLoad, requestVersion);
-            return queuedLoad;
-        }
-    }
+    public Task LoadAsync() => QueueSummaryRequestAsync(async cancellationToken =>
+        sessionState.PayrollPeriod ??
+        (await payrollPeriods.FindPeriodAsync(GetLocalToday(), cancellationToken)).Key,
+        reloadBackup: true);
 
     public Task MoveByAsync(int monthDelta)
     {
         if (monthDelta is not (-1 or 1)) throw new ArgumentOutOfRangeException(nameof(monthDelta));
-        return RunBusyAsync(async cancellationToken =>
-        {
-            var current = Summary?.Period.Key ?? sessionState.PayrollPeriod;
-            if (current is null) return;
-            var key = new PayrollPeriodKey(current.Value.Value.AddMonths(monthDelta));
-            var value = await salaryQuery.GetPayrollPeriodAsync(key, cancellationToken);
-            ApplySummary(value);
-        });
+        var current = Summary?.Period.Key ?? sessionState.PayrollPeriod;
+        return current is null
+            ? Task.CompletedTask
+            : QueueSummaryRequestAsync(_ => Task.FromResult(
+                new PayrollPeriodKey(current.Value.Value.AddMonths(monthDelta))));
     }
 
-    public Task MoveToCurrentAsync() => RunBusyAsync(async cancellationToken =>
-    {
-        var current = await payrollPeriods.FindPeriodAsync(GetLocalToday(), cancellationToken);
-        var value = await salaryQuery.GetPayrollPeriodAsync(current.Key, cancellationToken);
-        ApplySummary(value);
-    });
+    public Task MoveToCurrentAsync() => QueueSummaryRequestAsync(async cancellationToken =>
+        (await payrollPeriods.FindPeriodAsync(GetLocalToday(), cancellationToken)).Key);
 
     private void ApplySummary(PayrollPeriodSummaryDto value)
     {
@@ -313,26 +301,56 @@ public sealed class HomeViewModel : ViewModelBase
         HasUncalculatedRecords = value.UncalculatedCount > 0;
     }
 
-    private async Task LoadAfterPrecedingRequestAsync(Task precedingLoad, int requestVersion)
+    private Task QueueSummaryRequestAsync(
+        Func<CancellationToken, Task<PayrollPeriodKey>> getKey,
+        bool reloadBackup = false)
     {
-        await precedingLoad;
-        if (!IsLatestLoadRequest(requestVersion)) return;
+        ArgumentNullException.ThrowIfNull(getKey);
+        var requestVersion = Interlocked.Increment(ref latestSummaryRequestVersion);
+        lock (summaryRequestLock)
+        {
+            reloadBackupAfterLatestSummaryRequest |= reloadBackup;
+            var precedingRequest = queuedSummaryRequest;
+            queuedSummaryRequest = LoadAfterPrecedingRequestAsync(precedingRequest, requestVersion, getKey);
+            return queuedSummaryRequest;
+        }
+    }
+
+    private async Task LoadAfterPrecedingRequestAsync(
+        Task precedingRequest,
+        int requestVersion,
+        Func<CancellationToken, Task<PayrollPeriodKey>> getKey)
+    {
+        await precedingRequest;
+        if (!IsLatestSummaryRequest(requestVersion)) return;
 
         await RunBusyAsync(async cancellationToken =>
         {
-            var key = sessionState.PayrollPeriod ??
-                (await payrollPeriods.FindPeriodAsync(GetLocalToday(), cancellationToken)).Key;
+            var key = await getKey(cancellationToken);
             var value = await salaryQuery.GetPayrollPeriodAsync(key, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!IsLatestLoadRequest(requestVersion)) return;
+            if (!IsLatestSummaryRequest(requestVersion)) return;
 
             ApplySummary(value);
-            await BackupReminder.LoadAsync(cancellationToken);
+            if (ConsumeBackupReloadRequest(requestVersion))
+            {
+                await BackupReminder.LoadAsync(cancellationToken);
+            }
         });
     }
 
-    private bool IsLatestLoadRequest(int requestVersion) =>
-        requestVersion == Volatile.Read(ref latestLoadRequestVersion);
+    private bool IsLatestSummaryRequest(int requestVersion) =>
+        requestVersion == Volatile.Read(ref latestSummaryRequestVersion);
+
+    private bool ConsumeBackupReloadRequest(int requestVersion)
+    {
+        lock (summaryRequestLock)
+        {
+            if (!IsLatestSummaryRequest(requestVersion) || !reloadBackupAfterLatestSummaryRequest) return false;
+            reloadBackupAfterLatestSummaryRequest = false;
+            return true;
+        }
+    }
 
     public Task OpenCalendarAsync()
     {

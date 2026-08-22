@@ -103,6 +103,38 @@ public sealed class HomeViewModelTests
     }
 
     [Fact]
+    public async Task UI004_PeriodMoveDuringLoadQueuesTheSelectedPeriod()
+    {
+        var fixture = new HomeFixture();
+        var firstRequestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Salary.GetPayrollPeriodAsyncOverride = async (key, _) =>
+        {
+            if (key == Key(2026, 8))
+            {
+                firstRequestStarted.TrySetResult();
+                await releaseFirstRequest.Task;
+                return Summary(2026, 8, 1_000, 1_000, 0, 0, 0, 0);
+            }
+
+            return Summary(2026, 9, 9_000, 5_000, 1_000, 2_000, 1_000, 4);
+        };
+
+        var initialLoad = fixture.ViewModel.LoadAsync();
+        await firstRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var periodMove = fixture.ViewModel.MoveByAsync(1);
+        releaseFirstRequest.SetResult();
+
+        await Task.WhenAll(initialLoad, periodMove);
+
+        Assert.Equal([Key(2026, 8), Key(2026, 9)], fixture.Salary.RequestedKeys);
+        Assert.Equal(Key(2026, 9), fixture.Session.PayrollPeriod);
+        Assert.Equal("給与算定終了日: 2026年9月20日", fixture.ViewModel.PeriodHeader.EndDateText);
+        Assert.Equal("9,000円", fixture.ViewModel.TotalText);
+        Assert.Equal("4件", fixture.ViewModel.UncalculatedCountText);
+    }
+
+    [Fact]
     public async Task CurrentPeriod_UsesLocalTodayAndReloadsItsSummary()
     {
         var fixture = new HomeFixture(currentYear: 2026, currentMonth: 9);
