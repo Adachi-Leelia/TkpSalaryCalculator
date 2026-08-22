@@ -45,10 +45,11 @@ public partial class HomeDestinationPage : ContentPage, IQueryAttributable
     private static string? ReadText(IDictionary<string, object> query, string key) =>
         query.TryGetValue(key, out var value) ? Uri.UnescapeDataString(value?.ToString() ?? string.Empty) : null;
 
-    private void SetProperty(ref string field, string value, [CallerMemberName] string? propertyName = null)
+    private bool SetProperty(ref string field, string value, [CallerMemberName] string? propertyName = null)
     {
-        if (field == value) return;
+        if (field == value) return false;
         field = value;
         OnPropertyChanged(propertyName);
+        return true;
     }
 }

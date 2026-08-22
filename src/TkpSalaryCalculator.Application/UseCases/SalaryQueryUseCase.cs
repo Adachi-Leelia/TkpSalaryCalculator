@@ -97,7 +97,15 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
             new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(value),
                 ApplicationSupport.ForCalculationDate(snapshot, value.WorkDate, holiday), holiday))).ToArray();
         var aggregate = calculator.AggregateDay(date, calculated);
-        return new(date, [.. values.Zip(calculated, static (value, result) => new WorkRecordSalaryDto(value, result))],
+        var serviceNames = snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+        var categoryNames = snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+        var settingMonth = ApplicationSupport.ToYearMonth(date);
+        return new(date, [.. values.Zip(calculated, (value, result) => new WorkRecordSalaryDto(
+                value,
+                result,
+                serviceNames.GetValueOrDefault(value.ServiceId),
+                value.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null,
+                settingMonth))],
             aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
             aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
     }

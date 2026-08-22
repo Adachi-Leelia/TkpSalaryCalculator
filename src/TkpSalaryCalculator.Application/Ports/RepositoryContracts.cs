@@ -96,6 +96,14 @@ public interface ISettingSnapshotRepository
     /// <summary>最初に必要となった時点で月参照を作成し、給与設定を引き継いで、仕様に従い検証済みの最新祝日データを選択します。</summary>
     Task<SettingSnapshot> EnsureForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken);
 
+    /// <summary>プレビュー時点の有効設定および祝日データ版が変わっていない場合だけ、対象年月を初めて使用するための月参照を作成します。</summary>
+    /// <returns>プレビューと同じ設定を確定できた場合はそのスナップショット。設定が変わっている場合は <see langword="null"/>。</returns>
+    Task<SettingSnapshot?> TryEnsureForMonthAsync(
+        YearMonth yearMonth,
+        SettingSnapshotId expectedEffectiveSnapshotId,
+        HolidayCalendarVersionId expectedHolidayCalendarVersionId,
+        CancellationToken cancellationToken);
+
     /// <summary>現在の完全なスナップショットを原子的に複製し、給与設定を置換して、対象月だけの参照先を変更します。</summary>
     /// <remarks>この契約では、参照済みスナップショットまたはその子行を直接更新する操作を意図的に公開しません。</remarks>
     Task<SettingSnapshot?> TryCloneAndReplaceMonthSnapshotAsync(

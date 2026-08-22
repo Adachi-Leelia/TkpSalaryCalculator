@@ -299,6 +299,38 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
+    public async Task CopyPreviewCommit_OnlyMaterializesMonthWhenExpectedSettingsStillMatch()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var newerHolidayId = Guid.NewGuid();
+        await using (var connection = await fixture.OpenRawAsync())
+            await ExecuteAsync(connection, $"""
+                INSERT INTO holiday_calendar_version(id, version_name, source_name, source_reference_date, created_at_utc)
+                VALUES('{newerHolidayId:D}', 'test-v2', 'test', '2026-09-01', '2026-09-01T00:00:00.0000000Z');
+                """);
+        var repository = new SqliteSettingSnapshotRepository(fixture.Database,
+            new FixedClock(new DateTimeOffset(2026, 9, 1, 1, 0, 0, TimeSpan.Zero)));
+        var august = (await repository.FindForMonthAsync(new YearMonth(2026, 8), default))!;
+
+        var september = await repository.TryEnsureForMonthAsync(
+            new YearMonth(2026, 9), august.Id, new HolidayCalendarVersionId(newerHolidayId), default);
+        var newestHolidayId = Guid.NewGuid();
+        await using (var connection = await fixture.OpenRawAsync())
+            await ExecuteAsync(connection, $"""
+                INSERT INTO holiday_calendar_version(id, version_name, source_name, source_reference_date, created_at_utc)
+                VALUES('{newestHolidayId:D}', 'test-v3', 'test', '2026-09-02', '2026-09-02T00:00:00.0000000Z');
+                """);
+        var staleOctober = await repository.TryEnsureForMonthAsync(
+            new YearMonth(2026, 10), september!.Id, new HolidayCalendarVersionId(newerHolidayId), default);
+
+        Assert.NotNull(september);
+        Assert.Equal(newerHolidayId, september!.HolidayCalendarVersionId.Value);
+        Assert.Equal(september.Id, (await repository.FindForMonthAsync(new YearMonth(2026, 9), default))!.Id);
+        Assert.Null(staleOctober);
+        Assert.Null(await repository.FindForMonthAsync(new YearMonth(2026, 10), default));
+    }
+
+    [Fact]
     public async Task WORK007_SaveOperationIdIsDurableAndIdempotentAcrossReopen()
     {
         await using var fixture = await DatabaseFixture.CreateSeededAsync();

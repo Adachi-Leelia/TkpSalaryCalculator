@@ -219,6 +219,7 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
     public Dictionary<YearMonth, SettingSnapshot> Months { get; } = [];
     public SettingSnapshot Fallback { get; set; } = TestData.Snapshot();
     public int EnsureCalls { get; private set; }
+    public int TryEnsureCalls { get; private set; }
     public int CloneCalls { get; private set; }
     public Exception? CloneFailure { get; set; }
     public bool ForceCasFailure { get; set; }
@@ -240,6 +241,24 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
 
     public Task<SettingSnapshot> EnsureForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
     { EnsureCalls++; if (!Months.TryGetValue(yearMonth, out var value)) Months[yearMonth] = value = Fallback; return Task.FromResult(value); }
+    public Task<SettingSnapshot?> TryEnsureForMonthAsync(YearMonth yearMonth,
+        SettingSnapshotId expectedEffectiveSnapshotId, HolidayCalendarVersionId expectedHolidayCalendarVersionId,
+        CancellationToken cancellationToken)
+    {
+        TryEnsureCalls++;
+        if (Months.TryGetValue(yearMonth, out var existing))
+            return Task.FromResult<SettingSnapshot?>(existing.Id == expectedEffectiveSnapshotId ? existing : null);
+        var effective = Months.Where(x => x.Key.CompareTo(yearMonth) <= 0).OrderBy(x => x.Key)
+            .Select(x => x.Value).LastOrDefault() ?? Fallback;
+        if (effective.Id != expectedEffectiveSnapshotId) return Task.FromResult<SettingSnapshot?>(null);
+        var selected = effective.HolidayCalendarVersionId == expectedHolidayCalendarVersionId
+            ? effective
+            : new SettingSnapshot(new SettingSnapshotId(Guid.NewGuid()), effective.Id, expectedHolidayCalendarVersionId,
+                effective.SchemaVersion, DateTimeOffset.UnixEpoch, effective.Services, effective.TimeCategories,
+                effective.Rates, effective.Premiums, effective.CountBonuses);
+        Months[yearMonth] = selected;
+        return Task.FromResult<SettingSnapshot?>(selected);
+    }
     public Task<SettingSnapshot?> TryCloneAndReplaceMonthSnapshotAsync(YearMonth yearMonth,
         SettingSnapshotId expectedCurrentSnapshotId, SettingSnapshotReplacementDto replacement,
         HolidayCalendarVersionId holidayCalendarVersionId, DateTimeOffset createdAtUtc, CancellationToken cancellationToken)
@@ -272,9 +291,11 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
 internal sealed class FakeHolidayRepository : IHolidayCalendarRepository
 {
     public HolidayCalendarVersionId Latest { get; set; } = TestData.HolidayId;
+    public Dictionary<HolidayCalendarVersionId, IReadOnlyDictionary<DateOnly, string>> Calendars { get; } = [];
     public Task<HolidayCalendar> GetAsync(HolidayCalendarVersionId versionId, CancellationToken cancellationToken)
     {
-        return Task.FromResult(new HolidayCalendar(versionId, new Dictionary<DateOnly, string>()));
+        return Task.FromResult(new HolidayCalendar(versionId,
+            Calendars.GetValueOrDefault(versionId, new Dictionary<DateOnly, string>())));
     }
 
 

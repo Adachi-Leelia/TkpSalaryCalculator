@@ -51,7 +51,7 @@ public partial class WorkEditorPage : ContentPage, IQueryAttributable
 
     private async Task FocusFirstInvalidFieldAsync()
     {
-        var target = viewModel.FirstInvalidField switch
+        VisualElement? target = viewModel.FirstInvalidField switch
         {
             "ServiceId" => ServicePicker,
             "TimeCategoryId" => TimeCategoryPicker,

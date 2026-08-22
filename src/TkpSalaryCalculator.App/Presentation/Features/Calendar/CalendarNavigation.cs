@@ -9,5 +9,7 @@ public interface ICalendarNavigator
 
     Task OpenWorkEditorAsync(DateOnly date, WorkRecordId? workRecordId, CancellationToken cancellationToken);
 
+    Task OpenCalculationDetailsAsync(DateOnly date, WorkRecordId workRecordId, CancellationToken cancellationToken);
+
     Task GoBackAsync(string? successMessage, CancellationToken cancellationToken);
 }

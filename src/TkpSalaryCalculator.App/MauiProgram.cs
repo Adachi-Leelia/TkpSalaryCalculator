@@ -113,6 +113,8 @@ public static class MauiProgram
         services.AddTransient<InitialSetupFlowPage>();
         services.AddTransient<HomeViewModel>();
         services.AddTransient<HomePage>();
+        services.AddTransient<CalculationDetailViewModel>();
+        services.AddTransient<CalculationDetailPage>();
         services.AddTransient<CalendarViewModel>();
         services.AddTransient<CalendarPage>();
         services.AddTransient<DayViewModel>();

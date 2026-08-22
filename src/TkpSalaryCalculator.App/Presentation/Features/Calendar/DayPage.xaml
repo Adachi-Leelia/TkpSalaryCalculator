@@ -40,15 +40,24 @@
                                         <Label Grid.Column="1" Text="{Binding AmountText}" />
                                     </Grid>
                                     <Label IsVisible="{Binding IsUncalculated}" Text="設定不足のため未計算です。編集画面で不足内容を確認してください。" TextColor="{StaticResource Warning}" />
-                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                                        <Button Command="{Binding EditCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" />
-                                        <Button Grid.Column="1" Command="{Binding DeleteCommand}" Style="{StaticResource DestructiveButtonStyle}" Text="削除" />
+                                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                                        <Button Command="{Binding ShowDetailsCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="内訳" />
+                                        <Button Grid.Column="1" Command="{Binding EditCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" />
+                                        <Button Grid.Column="2" Command="{Binding DeleteCommand}" Style="{StaticResource DestructiveButtonStyle}" Text="削除" />
                                     </Grid>
                                 </VerticalStackLayout>
                             </Border>
                         </DataTemplate>
                     </BindableLayout.ItemTemplate>
                 </VerticalStackLayout>
+                <Border Padding="14" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Style="{StaticResource SectionTitleStyle}" Text="別の日から複製" />
+                        <Label Text="複製元日" />
+                        <DatePicker Date="{Binding CopySourceDate, Mode=TwoWay}" Format="yyyy年M月d日" MaximumDate="{Binding CopySourceMaximumDate}" />
+                        <Button Command="{Binding CopyDayCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="内容を確認して複製" />
+                    </VerticalStackLayout>
+                </Border>
                 <Button Command="{Binding AddWorkCommand}" IsVisible="{Binding HasRecords}" Text="勤務を追加" />
             </VerticalStackLayout>
         </ScrollView>

@@ -121,6 +121,138 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
+    public async Task DLGCOPY01_PreviewsBeforeConfirmationAndCopiesOnlyAfterAcceptance()
+    {
+        var sourceDate = TargetDate.AddDays(-2);
+        var events = new List<string>();
+        var query = new SalaryQueryStub { Days = { [TargetDate] = EmptyDay(TargetDate) } };
+        var work = new WorkUseCaseStub
+        {
+            SharedEvents = events,
+            CopyPreview = new CopyDayPreviewDto(
+                sourceDate, TargetDate, 2, 1, new YearMonth(2026, 7), new YearMonth(2026, 8), true,
+                [new IssueDto("COPY_DAY_TARGET_HAS_RECORDS", null, "重複しないか確認してください。")],
+                CopyToken(sourceDate, TargetDate, 1)),
+        };
+        var dialogs = new DialogStub { Result = false, SharedEvents = events };
+        var viewModel = new DayViewModel(
+            query, work, new CalendarNavigatorStub(), dialogs,
+            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+        viewModel.SetDate(TargetDate);
+        viewModel.CopySourceDate = sourceDate.ToDateTime(TimeOnly.MinValue);
+
+        await viewModel.CopyDayAsync();
+
+        Assert.Equal(1, work.CopyPreviewCalls);
+        Assert.Equal(0, work.CopyCalls);
+        Assert.Contains("複製される勤務記録: 2件", dialogs.LastMessage);
+        Assert.Contains("複製先の既存勤務記録: 1件", dialogs.LastMessage);
+        Assert.Contains("再計算", dialogs.LastMessage);
+
+        dialogs.Result = true;
+        await viewModel.CopyDayAsync();
+
+        Assert.Equal(1, work.CopyCalls);
+        Assert.Equal(["preview", "dialog", "preview", "dialog", "copy"], events);
+        Assert.Equal(sourceDate, work.LastCopySourceDate);
+        Assert.Equal(TargetDate, work.LastCopyTargetDate);
+        Assert.Equal("勤務記録を2件複製しました。", viewModel.SuccessMessage);
+    }
+
+    [Fact]
+    public async Task DLGCOPY01_BlockingPreviewNeverCopies()
+    {
+        var sourceDate = TargetDate.AddDays(-1);
+        var work = new WorkUseCaseStub
+        {
+            CopyPreview = new CopyDayPreviewDto(
+                sourceDate, TargetDate, 0, 0, new YearMonth(2026, 8), new YearMonth(2026, 8), false,
+                [new IssueDto("COPY_DAY_SOURCE_EMPTY", "SourceDate", "複製元に勤務記録がありません。")],
+                CopyToken(sourceDate, TargetDate)),
+        };
+        var dialogs = new DialogStub { Result = true };
+        var viewModel = new DayViewModel(
+            new SalaryQueryStub(), work, new CalendarNavigatorStub(), dialogs,
+            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+        viewModel.SetDate(TargetDate);
+        viewModel.CopySourceDate = sourceDate.ToDateTime(TimeOnly.MinValue);
+
+        await viewModel.CopyDayAsync();
+
+        Assert.Equal("複製できません", dialogs.LastTitle);
+        Assert.Equal(0, work.CopyCalls);
+    }
+
+    [Fact]
+    public async Task DLGCOPY01_FutureSourceIsBlockedAndPickerUsesPriorDayAsMaximum()
+    {
+        var sourceDate = TargetDate.AddDays(1);
+        var work = new WorkUseCaseStub
+        {
+            CopyPreview = new CopyDayPreviewDto(
+                sourceDate, TargetDate, 1, 0, new YearMonth(2026, 8), new YearMonth(2026, 8), false,
+                [new IssueDto("COPY_DAY_SOURCE_MUST_BE_PAST", "SourceDate", "複製元には複製先より過去の日付を指定してください。")],
+                CopyToken(sourceDate, TargetDate)),
+        };
+        var dialogs = new DialogStub { Result = true };
+        var viewModel = new DayViewModel(
+            new SalaryQueryStub(), work, new CalendarNavigatorStub(), dialogs,
+            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+        viewModel.SetDate(TargetDate);
+        viewModel.CopySourceDate = sourceDate.ToDateTime(TimeOnly.MinValue);
+
+        await viewModel.CopyDayAsync();
+
+        Assert.Equal(TargetDate.AddDays(-1).ToDateTime(TimeOnly.MinValue), viewModel.CopySourceMaximumDate);
+        Assert.Equal("複製できません", dialogs.LastTitle);
+        Assert.Equal(0, work.CopyCalls);
+    }
+
+    [Fact]
+    public async Task DLGCOPY01_ReportsCopySuccessWhenReloadFails()
+    {
+        var sourceDate = TargetDate.AddDays(-1);
+        var query = new SalaryQueryStub { Days = { [TargetDate] = EmptyDay(TargetDate) } };
+        var work = new WorkUseCaseStub
+        {
+            CopyPreview = new CopyDayPreviewDto(
+                sourceDate, TargetDate, 1, 0, new YearMonth(2026, 8), new YearMonth(2026, 8), false,
+                [], CopyToken(sourceDate, TargetDate)),
+        };
+        var viewModel = new DayViewModel(
+            query, work, new CalendarNavigatorStub(), new DialogStub { Result = true },
+            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+        viewModel.SetDate(TargetDate);
+        await viewModel.LoadAsync();
+        query.DayExceptions[TargetDate] = new IOException("reload failed");
+
+        await viewModel.CopyDayAsync();
+
+        Assert.Equal(1, work.CopyCalls);
+        Assert.Contains("勤務記録を1件複製しました。", viewModel.SuccessMessage);
+        Assert.Contains("再読み込みに失敗", viewModel.SuccessMessage);
+        Assert.True(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task SCRDAY01_RecordBreakdownPassesDateAndRecordIdToNavigator()
+    {
+        var query = new SalaryQueryStub { Days = { [TargetDate] = Day(TargetDate, calculated: true) } };
+        var work = new WorkUseCaseStub();
+        work.Stored.Add(Record());
+        var navigator = new CalendarNavigatorStub();
+        var viewModel = new DayViewModel(
+            query, work, navigator, new DialogStub(), new JapaneseDisplayFormatter(), new UserErrorPresenter());
+        viewModel.SetDate(TargetDate);
+        await viewModel.LoadAsync();
+
+        await viewModel.OpenCalculationDetailsAsync(Assert.Single(viewModel.Records).Id);
+
+        Assert.Equal(TargetDate, navigator.CalculationDate);
+        Assert.Equal(RecordId, navigator.CalculationRecordId);
+    }
+
+    [Fact]
     public async Task WorkEditor_InvalidDurationBlocksPreviewAndShowsFieldError()
     {
         var fixture = new EditorFixture();
@@ -362,6 +494,11 @@ public sealed class CalendarWorkFlowViewModelTests
     private static DailySalaryDto EmptyDay(DateOnly date) => new(
         date, [], new YenAmount(0), new YenAmount(0), new YenAmount(0), new YenAmount(0), 0);
 
+    private static CopyDayConfirmationToken CopyToken(DateOnly sourceDate, DateOnly targetDate, int targetExistingWorkRecordCount = 0) => new(
+        sourceDate, targetDate, targetExistingWorkRecordCount,
+        new SettingSnapshotId(Guid.Parse("50000000-0000-0000-0000-000000000001")),
+        new HolidayCalendarVersionId(Guid.Parse("60000000-0000-0000-0000-000000000001")));
+
     private static WorkRecordDto Record() => new(
         RecordId, TargetDate, Service, Category, WorkInputMode.Duration,
         new WorkMinutes(60), null, null, Preset, null, null);
@@ -436,6 +573,13 @@ public sealed class CalendarWorkFlowViewModelTests
         public int PreviewCalls { get; private set; }
         public SaveWorkRecordCommand? LastPreviewCommand { get; private set; }
         public Exception? SaveException { get; set; }
+        public CopyDayPreviewDto? CopyPreview { get; set; }
+        public int CopyCalls { get; private set; }
+        public int CopyPreviewCalls { get; private set; }
+        public DateOnly? LastCopySourceDate { get; private set; }
+        public DateOnly? LastCopyTargetDate { get; private set; }
+        public CopyDayConfirmationToken? LastCopyConfirmationToken { get; private set; }
+        public List<string>? SharedEvents { get; init; }
         public WorkInputOptionsDto InputOptions { get; set; } = Options();
         public Func<SaveWorkRecordCommand, WorkRecordPreviewDto> PreviewFactory { get; set; } = command => new(
             command.WorkMinutes ?? new WorkMinutes(60), command.StartTime, command.EndTime,
@@ -471,17 +615,50 @@ public sealed class CalendarWorkFlowViewModelTests
             Stored.RemoveAll(x => x.Id == id);
             return Task.CompletedTask;
         }
-        public Task<CopyDayPreviewDto> PreviewCopyDayAsync(DateOnly sourceDate, DateOnly targetDate, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<IReadOnlyList<SaveWorkRecordResultDto>> CopyDayAsync(DateOnly sourceDate, DateOnly targetDate, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<CopyDayPreviewDto> PreviewCopyDayAsync(DateOnly sourceDate, DateOnly targetDate, CancellationToken cancellationToken)
+        {
+            CopyPreviewCalls++;
+            SharedEvents?.Add("preview");
+            return Task.FromResult(CopyPreview ?? new CopyDayPreviewDto(
+                sourceDate, targetDate, Stored.Count(x => x.WorkDate == sourceDate), Stored.Count(x => x.WorkDate == targetDate),
+                new YearMonth(sourceDate.Year, sourceDate.Month), new YearMonth(targetDate.Year, targetDate.Month),
+                sourceDate.Year != targetDate.Year || sourceDate.Month != targetDate.Month, [],
+                CopyToken(sourceDate, targetDate, Stored.Count(x => x.WorkDate == targetDate))));
+        }
+        public Task<IReadOnlyList<SaveWorkRecordResultDto>> CopyDayAsync(DateOnly sourceDate, DateOnly targetDate,
+            CopyDayConfirmationToken confirmationToken, CancellationToken cancellationToken)
+        {
+            CopyCalls++;
+            SharedEvents?.Add("copy");
+            LastCopySourceDate = sourceDate;
+            LastCopyTargetDate = targetDate;
+            LastCopyConfirmationToken = confirmationToken;
+            var count = CopyPreview?.SourceWorkRecordCount ?? Stored.Count(x => x.WorkDate == sourceDate);
+            IReadOnlyList<SaveWorkRecordResultDto> results = Enumerable.Range(0, count).Select(_ =>
+            {
+                var record = Record() with { Id = new WorkRecordId(Guid.NewGuid()), WorkDate = targetDate, SourceWorkRecordId = RecordId };
+                Stored.Add(record);
+                return new SaveWorkRecordResultDto(record, Calculated(record.Id, 1_200), []);
+            }).ToArray();
+            return Task.FromResult(results);
+        }
     }
 
     private sealed class CalendarNavigatorStub : ICalendarNavigator
     {
         public DateOnly? OpenedDay { get; private set; }
+        public DateOnly? CalculationDate { get; private set; }
+        public WorkRecordId? CalculationRecordId { get; private set; }
         public int GoBackCalls { get; private set; }
         public string? GoBackSuccessMessage { get; private set; }
         public Task OpenDayAsync(DateOnly date, CancellationToken cancellationToken) { OpenedDay = date; return Task.CompletedTask; }
         public Task OpenWorkEditorAsync(DateOnly date, WorkRecordId? workRecordId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenCalculationDetailsAsync(DateOnly date, WorkRecordId workRecordId, CancellationToken cancellationToken)
+        {
+            CalculationDate = date;
+            CalculationRecordId = workRecordId;
+            return Task.CompletedTask;
+        }
         public Task GoBackAsync(string? successMessage, CancellationToken cancellationToken)
         {
             GoBackCalls++;
@@ -505,10 +682,14 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         public bool Result { get; set; }
         public string? LastTitle { get; private set; }
+        public string? LastMessage { get; private set; }
+        public List<string>? SharedEvents { get; init; }
         public Task<bool> ConfirmDiscardChangesAsync(CancellationToken cancellationToken = default) => Task.FromResult(Result);
         public Task<bool> ConfirmAsync(string title, string message, string acceptText, string cancelText, CancellationToken cancellationToken = default)
         {
             LastTitle = title;
+            LastMessage = message;
+            SharedEvents?.Add("dialog");
             return Task.FromResult(Result);
         }
     }

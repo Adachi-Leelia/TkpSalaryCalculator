@@ -62,6 +62,7 @@ public interface IWorkRecordUseCase
     Task<IReadOnlyList<SaveWorkRecordResultDto>> CopyDayAsync(
         DateOnly sourceDate,
         DateOnly targetDate,
+        CopyDayConfirmationToken confirmationToken,
         CancellationToken cancellationToken);
 }
 

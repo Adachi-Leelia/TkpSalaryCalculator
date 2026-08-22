@@ -113,9 +113,15 @@ public sealed record SaveWorkRecordResultDto(
 /// <summary>保存済み勤務記録と、その計算根拠および結果を組み合わせます。</summary>
 /// <param name="WorkRecord">保存済みの正規化された勤務内容。</param>
 /// <param name="Calculation">計算内訳または明示的な設定不足結果。</param>
+/// <param name="ServiceDisplayName">計算時の設定スナップショットに保存されたサービス表示名。</param>
+/// <param name="TimeCategoryDisplayName">計算時の設定スナップショットに保存された時間区分表示名。</param>
+/// <param name="SettingMonth">計算に使用した設定対象年月。</param>
 public sealed record WorkRecordSalaryDto(
     WorkRecordDto WorkRecord,
-    WorkSalaryCalculation Calculation);
+    WorkSalaryCalculation Calculation,
+    string? ServiceDisplayName = null,
+    string? TimeCategoryDisplayName = null,
+    YearMonth? SettingMonth = null);
 
 /// <summary>1 日分の計算詳細を保持します。</summary>
 /// <param name="Date">現地日付。</param>
@@ -134,6 +140,19 @@ public sealed record DailySalaryDto(
     YenAmount CalculatedSubtotal,
     int UncalculatedCount);
 
+/// <summary>複製プレビューで評価した重複候補と設定が、確定時にも不変であることを確認します。</summary>
+/// <param name="SourceDate">プレビュー対象の複製元日。</param>
+/// <param name="TargetDate">プレビュー対象の複製先日。</param>
+/// <param name="ExpectedTargetExistingWorkRecordCount">プレビュー時点の複製先にある勤務記録数。</param>
+/// <param name="ExpectedEffectiveSnapshotId">プレビュー時点で複製先年月に有効だった設定スナップショット。</param>
+/// <param name="ExpectedHolidayCalendarVersionId">複製先年月を初めて使用する際に適用する祝日データ版。</param>
+public sealed record CopyDayConfirmationToken(
+    DateOnly SourceDate,
+    DateOnly TargetDate,
+    int ExpectedTargetExistingWorkRecordCount,
+    SettingSnapshotId ExpectedEffectiveSnapshotId,
+    HolidayCalendarVersionId ExpectedHolidayCalendarVersionId);
+
 /// <summary>1 日分の勤務記録を複製するための未保存の確認データを保持します。</summary>
 /// <param name="SourceDate">複製元の現地日付。</param>
 /// <param name="TargetDate">複製先の現地日付。</param>
@@ -143,6 +162,7 @@ public sealed record DailySalaryDto(
 /// <param name="TargetSettingMonth">複製された記録が使用する暦上の設定月。</param>
 /// <param name="UsesDifferentSettingMonth">複製によって別の月のスナップショットで再計算されるかどうか。</param>
 /// <param name="Issues">プレゼンテーション層向けの、処理を妨げる問題または重複警告。</param>
+/// <param name="ConfirmationToken">確認時に評価した複製先設定を確定時に検証するトークン。</param>
 public sealed record CopyDayPreviewDto(
     DateOnly SourceDate,
     DateOnly TargetDate,
@@ -151,7 +171,8 @@ public sealed record CopyDayPreviewDto(
     YearMonth SourceSettingMonth,
     YearMonth TargetSettingMonth,
     bool UsesDifferentSettingMonth,
-    IReadOnlyList<IssueDto> Issues);
+    IReadOnlyList<IssueDto> Issues,
+    CopyDayConfirmationToken ConfirmationToken);
 
 /// <summary>給与期間の概要に含まれる 1 件の手当行を保持します。</summary>
 /// <param name="Id">手当識別子。</param>

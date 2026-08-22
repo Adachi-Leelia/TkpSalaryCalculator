@@ -34,6 +34,7 @@
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Setup\InitialSetupFlowViewModel.cs" Link="Production\InitialSetupFlowViewModel.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Home\HomeNavigation.cs" Link="Production\HomeNavigation.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Home\HomeViewModel.cs" Link="Production\HomeViewModel.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Home\CalculationDetailViewModel.cs" Link="Production\CalculationDetailViewModel.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Calendar\CalendarNavigation.cs" Link="Production\CalendarNavigation.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Calendar\CalendarViewModel.cs" Link="Production\CalendarViewModel.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Calendar\DayViewModel.cs" Link="Production\DayViewModel.cs" />

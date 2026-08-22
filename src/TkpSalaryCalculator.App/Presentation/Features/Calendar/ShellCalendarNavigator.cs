@@ -1,4 +1,5 @@
 using TkpSalaryCalculator.App.Navigation;
+using TkpSalaryCalculator.App.Presentation.Features.Home;
 using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.App.Presentation.Features.Calendar;
@@ -20,6 +21,16 @@ public sealed class ShellCalendarNavigator : ICalendarNavigator
         if (workRecordId is { } id) parameters[WorkEditorPage.WorkRecordIdParameter] = id.Value.ToString("D");
         return NavigateAsync(NavigationRoutes.WorkEditor, parameters, cancellationToken);
     }
+
+    public Task OpenCalculationDetailsAsync(DateOnly date, WorkRecordId workRecordId, CancellationToken cancellationToken) =>
+        NavigateAsync(
+            NavigationRoutes.CalculationDetails,
+            new ShellNavigationQueryParameters
+            {
+                [CalculationDetailPage.DateParameter] = date.ToString("yyyy-MM-dd"),
+                [CalculationDetailPage.WorkRecordIdParameter] = workRecordId.Value.ToString("D"),
+            },
+            cancellationToken);
 
     public async Task GoBackAsync(string? successMessage, CancellationToken cancellationToken)
     {

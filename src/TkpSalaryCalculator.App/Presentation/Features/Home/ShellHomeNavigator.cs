@@ -66,7 +66,7 @@ internal static class HomeRouteRegistration
     public static void Register()
     {
         if (Interlocked.Exchange(ref registered, 1) != 0) return;
-        Routing.RegisterRoute(NavigationRoutes.CalculationDetails, typeof(HomeDestinationPage));
+        Routing.RegisterRoute(NavigationRoutes.CalculationDetails, typeof(CalculationDetailPage));
         Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances, typeof(HomeDestinationPage));
         Routing.RegisterRoute(NavigationRoutes.UncalculatedDays, typeof(HomeDestinationPage));
     }
