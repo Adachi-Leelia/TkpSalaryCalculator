@@ -15,5 +15,10 @@
         <Label Text="同じ曜日内の表示順" /><Entry Keyboard="Numeric" Text="{Binding DisplayOrderText}" />
         <HorizontalStackLayout Spacing="10"><Switch IsToggled="{Binding IsEnabled}" /><Label VerticalOptions="Center" Text="反映候補として使用する" /></HorizontalStackLayout>
         <Label Style="{StaticResource SupportingTextStyle}" Text="保存後にシフトを変更しても、すでに反映した勤務記録は変わりません。" /><Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
-    </VerticalStackLayout></ScrollView><controls:FixedSaveBar Grid.Row="1" Command="{Binding SaveCommand}" IsBusy="{Binding IsBusy}" /></Grid>
+    </VerticalStackLayout></ScrollView>
+    <controls:FixedSaveBar
+        Grid.Row="1"
+        SaveCommand="{Binding SaveCommand}"
+        IsSaving="{Binding IsBusy}" />
+    </Grid>
 </ContentPage>
