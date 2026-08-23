@@ -119,7 +119,8 @@ public sealed class CalculationDetailViewModelTests
         salary,
         periods ?? new PayrollPeriodStub(),
         new JapaneseDisplayFormatter(),
-        new UserErrorPresenter());
+        new UserErrorPresenter(),
+        new AppSessionState(new DateOnly(2026, 8, 21)));
 
     private static PayrollPeriodSummaryDto Summary(IReadOnlyList<WorkRecordSalaryDto> records)
     {
@@ -168,6 +169,12 @@ public sealed class CalculationDetailViewModelTests
         public required PayrollPeriodSummaryDto Summary { get; init; }
         public PayrollPeriodKey? RequestedKey { get; private set; }
 
+        public Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
+            YearMonth yearMonth, DateOnly selectedDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<DayScreenDto> GetDayScreenAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -191,6 +198,8 @@ public sealed class CalculationDetailViewModelTests
             RequestedDate = localDate;
             return Task.FromResult(new PayrollPeriod(PeriodKey, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)));
         }
+
+        public Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(ReplaceClosingRuleCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<EffectiveClosingRuleDto?> GetClosingRuleAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();

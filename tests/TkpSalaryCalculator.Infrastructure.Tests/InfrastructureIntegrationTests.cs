@@ -17,15 +17,17 @@ namespace TkpSalaryCalculator.Infrastructure.Tests;
 public sealed class InfrastructureIntegrationTests
 {
     [Fact]
-    public async Task DB001_NewFileCreatesEveryVersionOneTableIndexAndMajorForeignKey()
+    public async Task DB001_NewFileCreatesEveryCurrentTableIndexAndMajorForeignKey()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.OpenRawAsync();
 
-        Assert.Equal(1L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(SqliteDatabase.CurrentSchemaVersion, await ScalarLongAsync(connection, "PRAGMA user_version;"));
         Assert.Equal("wal", Assert.IsType<string>(await ScalarAsync(connection, "PRAGMA journal_mode;")),
             StringComparer.OrdinalIgnoreCase);
         Assert.Equal(1L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM app_metadata WHERE id = 1;"));
+        Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(connection,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
 
         var requiredTables = new[]
         {
@@ -46,6 +48,7 @@ public sealed class InfrastructureIntegrationTests
             "ux_snapshot_rate_service", "ux_snapshot_rate_time_category", "ix_snapshot_premium_snapshot",
             "ix_snapshot_count_bonus_snapshot", "ix_service_preset_order", "ix_basic_shift_weekday",
             "ix_work_record_date", "ix_work_record_service_date", "ux_work_record_shift_date",
+            "ix_work_record_source_preset",
             "ux_work_record_save_operation", "ux_closing_rule_effective_month", "ix_monthly_allowance_period",
             "ix_holiday_date_lookup",
         };
@@ -112,6 +115,9 @@ public sealed class InfrastructureIntegrationTests
         Assert.Equal("休日", calendar.Holidays[new DateOnly(2026, 5, 6)]);
         Assert.Equal("休日", calendar.Holidays[new DateOnly(2026, 9, 22)]);
         Assert.Equal("休日", calendar.Holidays[new DateOnly(2027, 3, 22)]);
+        var calendars = await new SqliteHolidayCalendarRepository(fixture.Database)
+            .GetManyAsync([snapshot.HolidayCalendarVersionId], default);
+        Assert.Equal(calendar.Holidays, calendars[snapshot.HolidayCalendarVersionId].Holidays);
         Assert.Empty(await new SqliteClosingRuleRepository(fixture.Database, clock).GetHistoryAsync(default));
     }
 
@@ -124,6 +130,15 @@ public sealed class InfrastructureIntegrationTests
         try
         {
             await new SqliteDatabase(path, bootstrapDefaults: false).InitializeAsync();
+            await using (var versionOne = new SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                await versionOne.OpenAsync();
+                await ExecuteAsync(versionOne, """
+                    DROP INDEX ix_work_record_source_preset;
+                    ALTER TABLE app_metadata DROP COLUMN bundled_bootstrap_version;
+                    PRAGMA user_version = 1;
+                    """);
+            }
             await new SqliteDatabase(path).InitializeAsync();
             await new SqliteDatabase(path).InitializeAsync();
             await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
@@ -233,6 +248,10 @@ public sealed class InfrastructureIntegrationTests
         Assert.NotEqual(beforeAugust.Id, changed!.Id);
         Assert.Equal(1000, (await repository.FindForMonthAsync(new YearMonth(2026, 7), default))!.Rates.Single().Amount.Value);
         Assert.Equal(2500, (await repository.FindForMonthAsync(new YearMonth(2026, 8), default))!.Rates.Single().Amount.Value);
+        var effective = await repository.GetEffectiveForMonthsAsync(
+            [new YearMonth(2026, 7), new YearMonth(2026, 8)], default);
+        Assert.Equal(1000, effective[new YearMonth(2026, 7)].Rates.Single().Amount.Value);
+        Assert.Equal(2500, effective[new YearMonth(2026, 8)].Rates.Single().Amount.Value);
     }
 
     [Fact]
@@ -368,7 +387,55 @@ public sealed class InfrastructureIntegrationTests
             new FixedClock(new DateTimeOffset(2026, 8, 16, 2, 0, 0, TimeSpan.Zero)));
         await repository.UpsertAsync(earlierWorkDateButLaterUpdate, default);
 
-        Assert.Equal(earlierWorkDateButLaterUpdate.Id, (await repository.FindMostRecentAsync(default))!.Id);
+        Assert.Equal(earlierWorkDateButLaterUpdate.Id, (await repository.GetInputHistoryAsync(default)).MostRecent!.Id);
+    }
+
+    [Fact]
+    public async Task DB007_VersionOneToCurrentAddsMeasuredUsageIndexAndPreservesInputHistory()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 0, 0, TimeSpan.Zero));
+        var preset = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "Migration preset",
+            new ServiceId(fixture.ServiceId), null, new WorkMinutes(60), new DisplayOrder(0), true);
+        await new SqliteServicePresetRepository(fixture.Database, clock).UpsertAsync(preset, default);
+        var record = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
+            preset.ServiceId, null, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            preset.Id, null, null);
+        await new SqliteWorkRecordRepository(fixture.Database, clock).UpsertAsync(record, default);
+        await using (var versionOne = await fixture.OpenRawAsync())
+            await ExecuteAsync(versionOne, """
+                DROP INDEX ix_work_record_source_preset;
+                PRAGMA user_version = 1;
+                """);
+
+        var migrated = new SqliteDatabase(fixture.DatabasePath);
+        await migrated.InitializeAsync();
+
+        await using var connection = await fixture.OpenRawAsync();
+        Assert.Equal(SqliteDatabase.CurrentSchemaVersion, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(connection,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
+        Assert.Equal(1L, await ScalarLongAsync(connection, """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'index' AND name = 'ix_work_record_source_preset';
+            """));
+        var history = await new SqliteWorkRecordRepository(migrated, clock).GetInputHistoryAsync(default);
+        Assert.Equal(record.Id, history.MostRecent!.Id);
+        Assert.Equal(1, history.ServicePresetUsageCounts[preset.Id]);
+
+        await using var plan = connection.CreateCommand();
+        plan.CommandText = """
+            EXPLAIN QUERY PLAN
+            SELECT source_service_preset_id, COUNT(*) AS usage_count
+            FROM work_record
+            WHERE source_service_preset_id IS NOT NULL
+            GROUP BY source_service_preset_id;
+            """;
+        await using var reader = await plan.ExecuteReaderAsync();
+        var details = new List<string>();
+        while (await reader.ReadAsync()) details.Add(reader.GetString(3));
+        Assert.Contains(details, detail => detail.Contains(
+            "ix_work_record_source_preset", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -388,6 +455,10 @@ public sealed class InfrastructureIntegrationTests
             new MinuteOfDay(600), new DisplayOrder(0), true);
         await shifts.UpsertAsync(shift, default);
         Assert.Equal(shift, Assert.Single(await shifts.GetForWeekdayAsync(DayOfWeek.Monday, default)));
+        var shiftsByWeekday = await shifts.GetForWeekdaysAsync(
+            [DayOfWeek.Monday, DayOfWeek.Tuesday], default);
+        Assert.Equal(shift, Assert.Single(shiftsByWeekday[DayOfWeek.Monday]));
+        Assert.Empty(shiftsByWeekday[DayOfWeek.Tuesday]);
 
         var closing = new SqliteClosingRuleRepository(fixture.Database, clock);
         var snapshot = await closing.GetSnapshotAsync(default);
@@ -681,7 +752,7 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
-    public async Task DATA007_PreparedImportHasSingleConsumerAndRollbackRestoresRetryState()
+    public async Task DATA007_PreparedImportRejectsAmbientTransactionAndRetainsSingleConsumerState()
     {
         await using var source = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 6, 30, 0, TimeSpan.Zero));
@@ -697,11 +768,10 @@ public sealed class InfrastructureIntegrationTests
             new SqliteTransactionRunner(destination.Database), clock);
         var preview = await useCase.PrepareImportAsync(new MemoryStream(bytes), default);
 
-        await Assert.ThrowsAsync<IOException>(() => new SqliteTransactionRunner(destination.Database)
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new SqliteTransactionRunner(destination.Database)
             .ExecuteAsync(async token =>
             {
                 Assert.True(await staging.TryConsumeAndReplaceLiveDataAsync(preview.Id, clock.UtcNow, token));
-                throw new IOException("rollback after replacement");
             }, default));
 
         var attempts = await Task.WhenAll(

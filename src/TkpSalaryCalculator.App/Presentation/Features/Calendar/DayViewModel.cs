@@ -1,3 +1,4 @@
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
@@ -16,6 +17,7 @@ public sealed class DayViewModel : ViewModelBase
     private readonly IConfirmationDialogService dialogs;
     private readonly JapaneseDisplayFormatter formatter;
     private readonly IBasicShiftUseCase? basicShifts;
+    private readonly IAppSessionState sessionState;
     private DateOnly date;
     private string dateText = string.Empty;
     private string totalText = "0円";
@@ -34,6 +36,7 @@ public sealed class DayViewModel : ViewModelBase
         IConfirmationDialogService dialogs,
         JapaneseDisplayFormatter formatter,
         IUserErrorPresenter errorPresenter,
+        IAppSessionState sessionState,
         IBasicShiftUseCase? basicShifts = null) : base(errorPresenter)
     {
         this.salaryQuery = salaryQuery ?? throw new ArgumentNullException(nameof(salaryQuery));
@@ -42,6 +45,9 @@ public sealed class DayViewModel : ViewModelBase
         this.dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         this.basicShifts = basicShifts;
+        this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        TrackDataChanges(this.sessionState,
+            AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.BasicShifts);
         ReloadCommand = new AsyncCommand(LoadAsync, PresentError);
         AddWorkCommand = new AsyncCommand(AddWorkAsync, PresentError);
         CopyDayCommand = new AsyncCommand(CopyDayAsync, PresentError);
@@ -107,13 +113,16 @@ public sealed class DayViewModel : ViewModelBase
 
     public void SetDate(DateOnly value)
     {
+        if (date != value) InvalidateTrackedLoad();
         date = value;
         CopySourceMaximumDate = value.AddDays(-1).ToDateTime(TimeOnly.MinValue);
         CopySourceDate = CopySourceMaximumDate;
         OnPropertyChanged(nameof(Date));
     }
 
-    public Task LoadAsync() => RunBusyAsync(LoadCoreAsync);
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
     public Task AddWorkAsync() => navigator.OpenWorkEditorAsync(Date, null, CancellationToken.None);
 
@@ -122,21 +131,13 @@ public sealed class DayViewModel : ViewModelBase
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
-        var salaryTask = salaryQuery.GetDayAsync(Date, cancellationToken);
-        var recordsTask = workRecords.GetForDateAsync(Date, cancellationToken);
-        var optionsTask = workRecords.GetInputOptionsAsync(Date, cancellationToken);
-        var shiftTask = basicShifts?.PreviewForDateAsync(Date, cancellationToken);
-        await Task.WhenAll(new Task[] { salaryTask, recordsTask, optionsTask }.Concat(shiftTask is null ? [] : [shiftTask]));
-
-        var daily = await salaryTask;
-        var stored = await recordsTask;
-        var options = await optionsTask;
-        var calculations = daily.Records.ToDictionary(x => x.WorkRecord.Id);
-        var serviceNames = options.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
-        var categoryNames = options.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
-        if (shiftTask is not null)
+        var screen = await salaryQuery.GetDayScreenAsync(Date, cancellationToken);
+        var daily = screen.DailySalary;
+        var serviceNames = screen.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+        var categoryNames = screen.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+        if (basicShifts is not null)
         {
-            var shiftPreview = await shiftTask;
+            var shiftPreview = screen.BasicShiftPreview;
             existingWorkRecordCount = shiftPreview.ExistingWorkRecordCount;
             ShiftCandidates = shiftPreview.Candidates.Select(candidate =>
             {
@@ -154,20 +155,20 @@ public sealed class DayViewModel : ViewModelBase
         }
         else
         {
-            existingWorkRecordCount = stored.Count;
+            existingWorkRecordCount = daily.Records.Count;
             ShiftCandidates = [];
         }
 
         DateText = formatter.Date(Date);
         TotalText = formatter.Money(daily.CalculatedSubtotal);
         UncalculatedText = daily.UncalculatedCount == 0 ? string.Empty : $"未計算 {daily.UncalculatedCount}件。金額は推測せず、勤務を開いて不足設定を確認してください。";
-        Records = stored.Select(record =>
+        Records = daily.Records.Select(salary =>
         {
-            calculations.TryGetValue(record.Id, out var salary);
+            var record = salary.WorkRecord;
             var service = serviceNames.GetValueOrDefault(record.ServiceId, "サービス");
             var category = record.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
             var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
-            var amount = salary?.Calculation.Status == SalaryCalculationStatus.Calculated && salary.Calculation.Total is { } total
+            var amount = salary.Calculation.Status == SalaryCalculationStatus.Calculated && salary.Calculation.Total is { } total
                 ? formatter.Money(total)
                 : "未計算";
             return new DayWorkRecordRowViewModel(
@@ -175,7 +176,7 @@ public sealed class DayViewModel : ViewModelBase
                 name,
                 formatter.Duration(record.WorkMinutes),
                 amount,
-                salary?.Calculation.Status == SalaryCalculationStatus.Uncalculated,
+                salary.Calculation.Status == SalaryCalculationStatus.Uncalculated,
                 () => navigator.OpenWorkEditorAsync(Date, record.Id, CancellationToken.None),
                 () => OpenCalculationDetailsAsync(record.Id),
                 () => DeleteRecordAsync(record.Id, name),
@@ -210,10 +211,13 @@ public sealed class DayViewModel : ViewModelBase
         if (!confirmed) return;
 
         var copied = await workRecords.CopyDayAsync(sourceDate, Date, preview.ConfirmationToken, cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         SuccessMessage = $"勤務記録を{copied.Count}件複製しました。";
         try
         {
             await LoadCoreAsync(cancellationToken);
+            AcceptDataGeneration(generation);
         }
         catch
         {
@@ -237,8 +241,11 @@ public sealed class DayViewModel : ViewModelBase
         var confirmed = await dialogs.ConfirmAsync("基本シフトを反映", message, "確定して追加", "キャンセル", cancellationToken);
         if (!confirmed) return;
         var results = await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(Date, selected.Select(x => x.Id).ToArray()), cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         SuccessMessage = $"基本シフトから勤務記録を{results.Count}件追加しました。";
         await LoadCoreAsync(cancellationToken);
+        AcceptDataGeneration(generation);
     });
 
     private string BuildCopyPreviewMessage(CopyDayPreviewDto preview)
@@ -267,7 +274,10 @@ public sealed class DayViewModel : ViewModelBase
             cancellationToken);
         if (!confirmed) return;
         await workRecords.DeleteAsync(id, cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         await LoadCoreAsync(cancellationToken);
+        AcceptDataGeneration(generation);
         SuccessMessage = "勤務記録を削除しました。";
     });
 }

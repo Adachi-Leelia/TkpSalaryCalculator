@@ -11,6 +11,6 @@ public partial class DataManagementPage : ContentPage
         BindingContext = viewModel;
     }
 
-    protected override async void OnAppearing() { base.OnAppearing(); await viewModel.LoadAsync(); }
+    protected override async void OnAppearing() { base.OnAppearing(); await viewModel.LoadIfNeededAsync(); }
     protected override void OnDisappearing() { viewModel.CancelPendingOperations(); base.OnDisappearing(); }
 }

@@ -53,6 +53,8 @@ public sealed class CalendarViewModel : ViewModelBase
         this.workRecords = workRecords;
         this.dialogs = dialogs;
         displayedMonth = sessionState.CalendarMonth;
+        TrackDataChanges(sessionState,
+            AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.BasicShifts);
 
         PreviousMonthCommand = new AsyncCommand(() => MoveMonthAsync(-1), PresentError);
         CurrentMonthCommand = new AsyncCommand(MoveToCurrentMonthAsync, PresentError);
@@ -160,15 +162,19 @@ public sealed class CalendarViewModel : ViewModelBase
     public AsyncCommand AddWorkCommand { get; }
     public AsyncCommand ConfirmShiftCandidatesCommand { get; }
 
-    public Task LoadAsync() => RunBusyAsync(token => LoadMonthCoreAsync(sessionState.CalendarMonth, token));
+    public Task LoadAsync() => LoadTrackedAsync(token => LoadMonthCoreAsync(sessionState.CalendarMonth, token), force: true);
+
+    public Task LoadIfNeededAsync() =>
+        LoadTrackedAsync(token => LoadMonthCoreAsync(sessionState.CalendarMonth, token), force: false);
 
     public Task MoveMonthAsync(int months) =>
-        RunBusyAsync(token => LoadMonthCoreAsync(DisplayedMonth.AddMonths(months), token));
+        LoadTrackedAsync(token => LoadMonthCoreAsync(DisplayedMonth.AddMonths(months), token), force: true);
 
     public Task MoveToCurrentMonthAsync()
     {
         var today = localDates.ToLocalDate(clock.UtcNow);
-        return RunBusyAsync(token => LoadMonthCoreAsync(new YearMonth(today.Year, today.Month), token, today));
+        return LoadTrackedAsync(
+            token => LoadMonthCoreAsync(new YearMonth(today.Year, today.Month), token, today), force: true);
     }
 
     public Task SelectDateAsync(DateOnly date) => RunBusyAsync(token => SelectDateCoreAsync(date, token));
@@ -194,9 +200,9 @@ public sealed class CalendarViewModel : ViewModelBase
         var categoryNames = new Dictionary<TimeCategoryId, string>();
         if (workRecords is not null)
         {
-            var options = await workRecords.GetInputOptionsAsync(date, cancellationToken);
-            serviceNames = options.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
-            categoryNames = options.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+            var monthSettings = await workRecords.GetSettingsForDateAsync(date, cancellationToken);
+            serviceNames = monthSettings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+            categoryNames = monthSettings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
         }
 
         var message = BuildShiftPreviewMessage(preview, selected, serviceNames, categoryNames);
@@ -210,7 +216,10 @@ public sealed class CalendarViewModel : ViewModelBase
         if (!confirmed) return;
 
         await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(date, selected.Select(x => x.Shift.Id).ToArray()), cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         await LoadMonthCoreAsync(DisplayedMonth, cancellationToken, date);
+        AcceptDataGeneration(generation);
     });
 
     private async Task LoadMonthCoreAsync(
@@ -218,17 +227,16 @@ public sealed class CalendarViewModel : ViewModelBase
         CancellationToken cancellationToken,
         DateOnly? preferredDate = null)
     {
-        var values = await salaryQuery.GetCalendarMonthAsync(month, cancellationToken);
         var target = preferredDate
             ?? (sessionState.SelectedCalendarDate is { } remembered &&
                 remembered.Year == month.Year && remembered.Month == month.Month
                     ? remembered
                     : new DateOnly(month.Year, month.Month, 1));
 
-        var daily = await salaryQuery.GetDayAsync(target, cancellationToken);
+        var screen = await salaryQuery.GetCalendarMonthScreenAsync(month, target, cancellationToken);
         DisplayedMonth = month;
         sessionState.CalendarMonth = month;
-        ApplySelectedDate(target, daily, values);
+        ApplySelectedDate(target, screen.SelectedDay, screen.Days);
     }
 
     private async Task SelectDateCoreAsync(

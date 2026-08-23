@@ -40,6 +40,29 @@ public sealed class BasicShiftUseCaseTests
     }
 
     [Fact]
+    public async Task Preview_ReusesOneCalculationSnapshotForAllShiftsOnDate()
+    {
+        var context = new TestContext();
+        var premium = new SnapshotPremium(new PremiumId(Guid.NewGuid()), "月曜夜間",
+            PremiumCalculationType.FixedPerHour, null, new YenAmount(100),
+            new MinuteOfDay(1320), new MinuteOfDay(300), false,
+            new HashSet<DayOfWeek> { DayOfWeek.Monday }, new HashSet<DateOnly>(),
+            new HashSet<ServiceId>(), true);
+        context.Settings.Fallback = TestData.Snapshot(premiums: [premium]);
+        for (var index = 0; index < 20; index++) context.Shifts.Values.Add(Shift(order: index));
+        var calculator = new RecordingSalaryCalculator();
+        var useCase = new BasicShiftUseCase(context.Shifts, context.Works, context.Settings,
+            context.Holidays, calculator, context.Transactions, context.Metadata, context.Clock);
+
+        var result = await useCase.PreviewForDateAsync(new DateOnly(2026, 8, 1), default);
+
+        Assert.Equal(20, result.Candidates.Count);
+        Assert.Equal(20, calculator.Requests.Count);
+        Assert.All(calculator.Requests,
+            request => Assert.Same(calculator.Requests[0].SettingSnapshot, request.SettingSnapshot));
+    }
+
+    [Fact]
     public async Task Apply_PersistsEachSelectedShiftAsIndependentWork()
     {
         var context = new TestContext();

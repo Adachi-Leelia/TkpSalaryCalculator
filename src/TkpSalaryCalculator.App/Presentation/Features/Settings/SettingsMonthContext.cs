@@ -17,8 +17,11 @@ public sealed class SettingsMonthContext(
     private readonly IAppSessionState sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
     private readonly JapaneseDisplayFormatter formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
     private MonthSettingsDto? value;
+    private long? loadedGeneration;
 
     public YearMonth SelectedMonth => sessionState.SettingsMonth;
+
+    internal IAppSessionState SessionState => sessionState;
 
     public string HeaderText => formatter.SettingsMonth(SelectedMonth);
 
@@ -30,30 +33,38 @@ public sealed class SettingsMonthContext(
 
     public async Task<MonthSettingsDto> RefreshAsync(CancellationToken cancellationToken)
     {
+        var generation = sessionState.GetDataGeneration(AppDataChangeKind.Settings);
+        if (Value is { } cached && cached.YearMonth == SelectedMonth && loadedGeneration == generation)
+            return cached;
+
         var loaded = await settings.GetAsync(SelectedMonth, cancellationToken);
-        Accept(loaded);
+        Accept(loaded, generation);
         return loaded;
     }
 
-    public async Task<MonthSettingsDto> MoveAsync(int monthOffset, CancellationToken cancellationToken)
+    public void MoveWithoutLoading(int monthOffset)
     {
-        var target = SelectedMonth.AddMonths(monthOffset);
-        var loaded = await settings.GetAsync(target, cancellationToken);
-
-        sessionState.SettingsMonth = target;
-        Accept(loaded);
+        sessionState.SettingsMonth = SelectedMonth.AddMonths(monthOffset);
         OnPropertyChanged(nameof(SelectedMonth));
         OnPropertyChanged(nameof(HeaderText));
-
-        return loaded;
     }
 
     public void Accept(MonthSettingsDto loaded)
+        => Accept(loaded, sessionState.GetDataGeneration(AppDataChangeKind.Settings));
+
+    public void NotifySettingsChanged(MonthSettingsDto loaded)
+    {
+        sessionState.NotifyDataChanged(AppDataChangeKind.Settings);
+        Accept(loaded);
+    }
+
+    private void Accept(MonthSettingsDto loaded, long generation)
     {
         ArgumentNullException.ThrowIfNull(loaded);
         if (loaded.YearMonth != SelectedMonth)
             throw new InvalidOperationException("設定対象年月と読込結果が一致しません。");
         Value = loaded;
+        loadedGeneration = generation;
     }
 
     public static SettingSnapshotReplacementDto ToReplacement(SettingSnapshot snapshot)

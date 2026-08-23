@@ -10,10 +10,12 @@ internal static class TestData
 
     public static SettingSnapshot Snapshot(YearMonth? month = null, bool serviceEnabled = true,
         bool categoryEnabled = true, IReadOnlyList<SnapshotPremium>? premiums = null,
-        IReadOnlyList<SnapshotCountBonus>? bonuses = null)
+        IReadOnlyList<SnapshotCountBonus>? bonuses = null,
+        HolidayCalendarVersionId? holidayCalendarVersionId = null)
     {
         return new(
-        new SettingSnapshotId(Guid.NewGuid()), null, HolidayId, new SchemaVersion(1), DateTimeOffset.UnixEpoch,
+        new SettingSnapshotId(Guid.NewGuid()), null, holidayCalendarVersionId ?? HolidayId,
+        new SchemaVersion(1), DateTimeOffset.UnixEpoch,
         [new SnapshotService(ServiceId, "訪問", new DisplayOrder(0), serviceEnabled)],
         [new SnapshotTimeCategory(CategoryId, ServiceId, "60分", new WorkMinutes(60), new DisplayOrder(0), categoryEnabled)],
         [new SnapshotRate(ServiceId, CategoryId, RateType.FixedPerRecord, new YenAmount(1000)),
@@ -51,6 +53,27 @@ internal sealed class FakeLocalDateConverter(TimeSpan offset) : ILocalDateConver
         return DateOnly.FromDateTime(utcDateTime.ToOffset(offset).DateTime);
     }
 
+}
+
+internal sealed class RecordingSalaryCalculator : ISalaryCalculator
+{
+    private readonly SalaryCalculator inner = new();
+    public List<WorkSalaryCalculationRequest> Requests { get; } = [];
+
+    public WorkSalaryCalculation Calculate(WorkSalaryCalculationRequest request)
+    {
+        Requests.Add(request);
+        return inner.Calculate(request);
+    }
+
+    public DailySalaryCalculation AggregateDay(
+        DateOnly workDate,
+        IReadOnlyList<WorkSalaryCalculation> records) => inner.AggregateDay(workDate, records);
+
+    public PayrollPeriodSalaryCalculation AggregatePeriod(
+        PayrollPeriod period,
+        IReadOnlyList<DailySalaryCalculation> days,
+        IReadOnlyList<MonthlyAllowance> allowances) => inner.AggregatePeriod(period, days, allowances);
 }
 
 internal interface ITransactionalFakeState
@@ -148,24 +171,27 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
     public int? UpsertFailureAtCall { get; set; }
     public TaskCompletionSource? UpsertGate { get; set; }
     public int UpsertCalls { get; private set; }
+    public int InputHistoryCalls { get; private set; }
+    public int FindCalls { get; private set; }
+    public int StreamRangeCalls { get; private set; }
     public Task<bool> AnyAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult(Values.Count != 0);
     }
 
-    public Task<WorkRecordDto?> FindMostRecentAsync(CancellationToken cancellationToken)
+    public Task<WorkInputHistory> GetInputHistoryAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult(Values.LastOrDefault());
-    }
-
-    public Task<IReadOnlyDictionary<ServicePresetId, long>> GetServicePresetUsageCountsAsync(CancellationToken cancellationToken)
-    {
-        return Task.FromResult<IReadOnlyDictionary<ServicePresetId, long>>(Values.Where(x => x.SourceServicePresetId is not null)
-                .GroupBy(x => x.SourceServicePresetId!.Value).ToDictionary(x => x.Key, x => (long)x.Count()));
+        InputHistoryCalls++;
+        IReadOnlyDictionary<ServicePresetId, long> usageCounts = Values
+            .Where(x => x.SourceServicePresetId is not null)
+            .GroupBy(x => x.SourceServicePresetId!.Value)
+            .ToDictionary(x => x.Key, x => (long)x.Count());
+        return Task.FromResult(new WorkInputHistory(usageCounts, Values.LastOrDefault()));
     }
 
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken)
     {
+        FindCalls++;
         return Task.FromResult(Values.FirstOrDefault(x => x.Id == id));
     }
 
@@ -177,7 +203,15 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
 
     public async IAsyncEnumerable<WorkRecordDto> StreamRangeAsync(DateOnly startDate, DateOnly endDate,
         [EnumeratorCancellation] CancellationToken cancellationToken)
-    { foreach (var value in Values.Where(x => x.WorkDate >= startDate && x.WorkDate <= endDate).OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value)) { cancellationToken.ThrowIfCancellationRequested(); yield return value; await Task.Yield(); } }
+    {
+        StreamRangeCalls++;
+        foreach (var value in Values.Where(x => x.WorkDate >= startDate && x.WorkDate <= endDate).OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return value;
+            await Task.Yield();
+        }
+    }
     public async Task UpsertAsync(WorkRecordDto workRecord, CancellationToken cancellationToken)
     {
         UpsertCalls++;
@@ -221,6 +255,9 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
     public int EnsureCalls { get; private set; }
     public int TryEnsureCalls { get; private set; }
     public int CloneCalls { get; private set; }
+    public int EffectiveMonthCalls { get; private set; }
+    public int EffectiveMonthsBatchCalls { get; private set; }
+    public List<YearMonth> EffectiveMonthRequests { get; } = [];
     public Exception? CloneFailure { get; set; }
     public bool ForceCasFailure { get; set; }
     public Task<SettingSnapshot?> FindAsync(SettingSnapshotId id, CancellationToken cancellationToken)
@@ -235,9 +272,26 @@ internal sealed class FakeSettingRepository : ISettingSnapshotRepository, ITrans
 
     public Task<SettingSnapshot> GetEffectiveForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
     {
-        return Task.FromResult(Months.Where(x => x.Key.CompareTo(yearMonth) <= 0).OrderBy(x => x.Key).Select(x => x.Value).LastOrDefault() ?? Fallback);
+        EffectiveMonthCalls++;
+        EffectiveMonthRequests.Add(yearMonth);
+        return Task.FromResult(GetEffective(yearMonth));
     }
 
+    public Task<IReadOnlyDictionary<YearMonth, SettingSnapshot>> GetEffectiveForMonthsAsync(
+        IReadOnlyCollection<YearMonth> yearMonths, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(yearMonths);
+        cancellationToken.ThrowIfCancellationRequested();
+        EffectiveMonthsBatchCalls++;
+        var requested = yearMonths.Distinct().ToArray();
+        EffectiveMonthRequests.AddRange(requested);
+        return Task.FromResult<IReadOnlyDictionary<YearMonth, SettingSnapshot>>(
+            requested.ToDictionary(x => x, GetEffective));
+    }
+
+    private SettingSnapshot GetEffective(YearMonth yearMonth) =>
+        Months.Where(x => x.Key.CompareTo(yearMonth) <= 0).OrderBy(x => x.Key)
+            .Select(x => x.Value).LastOrDefault() ?? Fallback;
 
     public Task<SettingSnapshot> EnsureForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
     { EnsureCalls++; if (!Months.TryGetValue(yearMonth, out var value)) Months[yearMonth] = value = Fallback; return Task.FromResult(value); }
@@ -292,12 +346,29 @@ internal sealed class FakeHolidayRepository : IHolidayCalendarRepository
 {
     public HolidayCalendarVersionId Latest { get; set; } = TestData.HolidayId;
     public Dictionary<HolidayCalendarVersionId, IReadOnlyDictionary<DateOnly, string>> Calendars { get; } = [];
+    public int GetCalls { get; private set; }
+    public int GetManyCalls { get; private set; }
+    public List<HolidayCalendarVersionId> RequestedVersions { get; } = [];
     public Task<HolidayCalendar> GetAsync(HolidayCalendarVersionId versionId, CancellationToken cancellationToken)
     {
+        GetCalls++;
+        RequestedVersions.Add(versionId);
         return Task.FromResult(new HolidayCalendar(versionId,
             Calendars.GetValueOrDefault(versionId, new Dictionary<DateOnly, string>())));
     }
 
+    public Task<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>> GetManyAsync(
+        IReadOnlyCollection<HolidayCalendarVersionId> versionIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(versionIds);
+        cancellationToken.ThrowIfCancellationRequested();
+        GetManyCalls++;
+        var requested = versionIds.Distinct().ToArray();
+        RequestedVersions.AddRange(requested);
+        return Task.FromResult<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>>(
+            requested.ToDictionary(x => x,
+                x => new HolidayCalendar(x, Calendars.GetValueOrDefault(x, new Dictionary<DateOnly, string>()))));
+    }
 
     public Task<HolidayCalendarVersionId> GetLatestVerifiedVersionIdAsync(CancellationToken cancellationToken)
     {
@@ -309,8 +380,10 @@ internal sealed class FakeHolidayRepository : IHolidayCalendarRepository
 internal sealed class FakePresetRepository : IServicePresetRepository, ITransactionalFakeState
 {
     public List<ServicePresetDto> Values { get; } = [];
+    public int GetAllCalls { get; private set; }
     public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken)
     {
+        GetAllCalls++;
         return Task.FromResult<IReadOnlyList<ServicePresetDto>>([.. Values]);
     }
 
@@ -329,9 +402,27 @@ internal sealed class FakePresetRepository : IServicePresetRepository, ITransact
 internal sealed class FakeShiftRepository : IBasicShiftRepository, ITransactionalFakeState
 {
     public List<BasicShiftDto> Values { get; } = [];
+    public int GetForWeekdayCalls { get; private set; }
+    public int GetForWeekdaysCalls { get; private set; }
+    public List<DayOfWeek> RequestedWeekdays { get; } = [];
     public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday, CancellationToken cancellationToken)
     {
+        GetForWeekdayCalls++;
+        RequestedWeekdays.Add(weekday);
         return Task.FromResult<IReadOnlyList<BasicShiftDto>>([.. Values.Where(x => x.Weekday == weekday)]);
+    }
+
+    public Task<IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>> GetForWeekdaysAsync(
+        IReadOnlyCollection<DayOfWeek> weekdays, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(weekdays);
+        cancellationToken.ThrowIfCancellationRequested();
+        GetForWeekdaysCalls++;
+        var requested = weekdays.Distinct().ToArray();
+        RequestedWeekdays.AddRange(requested);
+        return Task.FromResult<IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>>(
+            requested.ToDictionary(x => x,
+                x => (IReadOnlyList<BasicShiftDto>)[.. Values.Where(value => value.Weekday == x)]));
     }
 
     public Task<BasicShiftDto?> FindAsync(BasicShiftId id, CancellationToken cancellationToken)
@@ -354,6 +445,7 @@ internal sealed class FakeShiftRepository : IBasicShiftRepository, ITransactiona
 internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransactionalFakeState
 {
     public List<ClosingRule> Values { get; } = [];
+    public int GetHistoryCalls { get; private set; }
     private int version;
     public bool ForceCasFailure { get; set; }
     public int ReplaceCalls { get; private set; }
@@ -364,6 +456,7 @@ internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransacti
 
     public Task<IReadOnlyList<ClosingRule>> GetHistoryAsync(CancellationToken cancellationToken)
     {
+        GetHistoryCalls++;
         return Task.FromResult<IReadOnlyList<ClosingRule>>([.. Values]);
     }
 
@@ -392,8 +485,10 @@ internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransacti
 internal sealed class FakeAllowanceRepository : IMonthlyAllowanceRepository, ITransactionalFakeState
 {
     public List<MonthlyAllowance> Values { get; } = [];
+    public int GetForPeriodCalls { get; private set; }
     public Task<IReadOnlyList<MonthlyAllowance>> GetForPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
     {
+        GetForPeriodCalls++;
         return Task.FromResult<IReadOnlyList<MonthlyAllowance>>([.. Values.Where(x => x.PayrollPeriodKey == payrollPeriodKey)]);
     }
 
@@ -553,9 +648,16 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
         ReplaceCalls++;
         if (!ConsumeResult || !entries.TryGetValue(preparedImportId, out var entry) || entry.State != FakeStagingState.Validated)
             return Task.FromResult(false);
+        var previousLiveData = LiveData.ToArray();
         LiveData.Clear(); LiveData.AddRange(entry.Records);
         entries[preparedImportId] = (FakeStagingState.Consumed, entry.Records);
-        if (ConsumeFailureAfterReplacement is not null) throw ConsumeFailureAfterReplacement;
+        if (ConsumeFailureAfterReplacement is not null)
+        {
+            LiveData.Clear();
+            LiveData.AddRange(previousLiveData);
+            entries[preparedImportId] = (FakeStagingState.Validated, entry.Records);
+            throw ConsumeFailureAfterReplacement;
+        }
         return Task.FromResult(true);
     }
     public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken)

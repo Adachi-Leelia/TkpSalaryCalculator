@@ -164,22 +164,51 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
     private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
     private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
 
-    public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday,
-        CancellationToken cancellationToken) => database.ReadAsync(async (connection, transaction, token) =>
+    public async Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday,
+        CancellationToken cancellationToken)
     {
-        var values = new List<BasicShiftDto>();
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT id, weekday, service_preset_id, service_id, time_category_id, input_mode, work_minutes,
-                   start_time_minutes, end_time_minutes, display_order, is_enabled
-            FROM basic_shift WHERE weekday = $weekday ORDER BY is_enabled DESC, display_order, id;
-            """;
-        command.Parameters.AddValue("$weekday", WeekdayToDatabase(weekday));
-        await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-        while (await reader.ReadAsync(token).ConfigureAwait(false)) values.Add(Read(reader));
-        return (IReadOnlyList<BasicShiftDto>)values;
-    }, cancellationToken);
+        var result = await GetForWeekdaysAsync([weekday], cancellationToken).ConfigureAwait(false);
+        return result[weekday];
+    }
+
+    public Task<IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>> GetForWeekdaysAsync(
+        IReadOnlyCollection<DayOfWeek> weekdays,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(weekdays);
+        cancellationToken.ThrowIfCancellationRequested();
+        var requested = weekdays.Distinct().OrderBy(WeekdayToDatabase).ToArray();
+        if (requested.Length == 0)
+            return Task.FromResult<IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>>(
+                new Dictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>());
+
+        return database.ReadAsync(async (connection, transaction, token) =>
+        {
+            var values = requested.ToDictionary(x => x, _ => new List<BasicShiftDto>());
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            var parameterNames = new string[requested.Length];
+            for (var index = 0; index < requested.Length; index++)
+            {
+                parameterNames[index] = $"$weekday{index}";
+                command.Parameters.AddValue(parameterNames[index], WeekdayToDatabase(requested[index]));
+            }
+            command.CommandText = $"""
+                SELECT id, weekday, service_preset_id, service_id, time_category_id, input_mode, work_minutes,
+                       start_time_minutes, end_time_minutes, display_order, is_enabled
+                FROM basic_shift WHERE weekday IN ({string.Join(", ", parameterNames)})
+                ORDER BY weekday, is_enabled DESC, display_order, id;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                var value = Read(reader);
+                values[value.Weekday].Add(value);
+            }
+            return (IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>)
+                values.ToDictionary(x => x.Key, x => (IReadOnlyList<BasicShiftDto>)x.Value);
+        }, cancellationToken);
+    }
 
     public Task<BasicShiftDto?> FindAsync(BasicShiftId id, CancellationToken cancellationToken) =>
         database.ReadAsync(async (connection, transaction, token) =>
@@ -283,27 +312,37 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         return Convert.ToInt64(await command.ExecuteScalarAsync(token).ConfigureAwait(false)) != 0;
     }, cancellationToken);
 
-    public Task<WorkRecordDto?> FindMostRecentAsync(CancellationToken cancellationToken) => FindBySqlAsync("""
-        SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
-               end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
-        FROM work_record ORDER BY updated_at_utc DESC, work_date DESC, id DESC LIMIT 1;
-        """, null, cancellationToken);
-
-    public Task<IReadOnlyDictionary<ServicePresetId, long>> GetServicePresetUsageCountsAsync(
+    public Task<WorkInputHistory> GetInputHistoryAsync(
         CancellationToken cancellationToken) => database.ReadAsync(async (connection, transaction, token) =>
     {
-        var result = new Dictionary<ServicePresetId, long>();
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT source_service_preset_id, COUNT(*) AS usage_count
-            FROM work_record WHERE source_service_preset_id IS NOT NULL GROUP BY source_service_preset_id;
-            """;
-        await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-        while (await reader.ReadAsync(token).ConfigureAwait(false))
-            result[new ServicePresetId(SqliteValue.Guid(reader.GetString("source_service_preset_id")))] =
-                reader.GetInt64("usage_count");
-        return (IReadOnlyDictionary<ServicePresetId, long>)result;
+        var usageCounts = new Dictionary<ServicePresetId, long>();
+        await using (var usageCommand = connection.CreateCommand())
+        {
+            usageCommand.Transaction = transaction;
+            usageCommand.CommandText = """
+                SELECT source_service_preset_id, COUNT(*) AS usage_count
+                FROM work_record WHERE source_service_preset_id IS NOT NULL GROUP BY source_service_preset_id;
+                """;
+            await using var reader = await usageCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+                usageCounts[new ServicePresetId(SqliteValue.Guid(reader.GetString("source_service_preset_id")))] =
+                    reader.GetInt64("usage_count");
+        }
+
+        WorkRecordDto? mostRecent = null;
+        await using (var recentCommand = connection.CreateCommand())
+        {
+            recentCommand.Transaction = transaction;
+            recentCommand.CommandText = """
+                SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
+                       end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
+                FROM work_record ORDER BY updated_at_utc DESC, work_date DESC, id DESC LIMIT 1;
+                """;
+            await using var reader = await recentCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
+            if (await reader.ReadAsync(token).ConfigureAwait(false)) mostRecent = Read(reader);
+        }
+
+        return new WorkInputHistory(usageCounts, mostRecent);
     }, cancellationToken);
 
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken) => FindBySqlAsync("""
@@ -609,31 +648,66 @@ public sealed class SqliteHolidayCalendarRepository(SqliteDatabase database) : I
 {
     private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
 
-    public Task<HolidayCalendar> GetAsync(HolidayCalendarVersionId versionId,
-        CancellationToken cancellationToken) => database.ReadAsync(async (connection, transaction, token) =>
+    public async Task<HolidayCalendar> GetAsync(HolidayCalendarVersionId versionId,
+        CancellationToken cancellationToken)
     {
-        await using (var exists = connection.CreateCommand())
-        {
-            exists.Transaction = transaction;
-            exists.CommandText = "SELECT EXISTS(SELECT 1 FROM holiday_calendar_version WHERE id = $id);";
-            exists.Parameters.AddValue("$id", SqliteValue.Id(versionId.Value));
-            if (Convert.ToInt64(await exists.ExecuteScalarAsync(token).ConfigureAwait(false)) == 0)
-                throw new KeyNotFoundException("Holiday calendar version was not found.");
-        }
+        var result = await GetManyAsync([versionId], cancellationToken).ConfigureAwait(false);
+        return result[versionId];
+    }
 
-        var holidays = new Dictionary<DateOnly, string>();
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT holiday_date, display_name FROM holiday_date
-            WHERE holiday_calendar_version_id = $id ORDER BY holiday_date;
-            """;
-        command.Parameters.AddValue("$id", SqliteValue.Id(versionId.Value));
-        await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-        while (await reader.ReadAsync(token).ConfigureAwait(false))
-            holidays.Add(SqliteValue.Date(reader.GetString("holiday_date")), reader.GetString("display_name"));
-        return new HolidayCalendar(versionId, holidays);
-    }, cancellationToken);
+    public Task<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>> GetManyAsync(
+        IReadOnlyCollection<HolidayCalendarVersionId> versionIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(versionIds);
+        cancellationToken.ThrowIfCancellationRequested();
+        var requested = versionIds.Distinct().OrderBy(x => x.Value).ToArray();
+        if (requested.Length == 0)
+            return Task.FromResult<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>>(
+                new Dictionary<HolidayCalendarVersionId, HolidayCalendar>());
+
+        return database.ReadAsync(async (connection, transaction, token) =>
+        {
+            var parameterNames = new string[requested.Length];
+            var byDatabaseId = new Dictionary<string, HolidayCalendarVersionId>(StringComparer.Ordinal);
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            for (var index = 0; index < requested.Length; index++)
+            {
+                parameterNames[index] = $"$version{index}";
+                var id = SqliteValue.Id(requested[index].Value);
+                command.Parameters.AddValue(parameterNames[index], id);
+                byDatabaseId.Add(id, requested[index]);
+            }
+
+            command.CommandText = $"SELECT id FROM holiday_calendar_version WHERE id IN ({string.Join(", ", parameterNames)});";
+            var found = new HashSet<string>(StringComparer.Ordinal);
+            await using (var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(token).ConfigureAwait(false)) found.Add(reader.GetString("id"));
+            }
+            if (found.Count != requested.Length)
+                throw new KeyNotFoundException("Holiday calendar version was not found.");
+
+            var holidays = requested.ToDictionary(x => x, _ => new Dictionary<DateOnly, string>());
+            command.CommandText = $"""
+                SELECT holiday_calendar_version_id, holiday_date, display_name FROM holiday_date
+                WHERE holiday_calendar_version_id IN ({string.Join(", ", parameterNames)})
+                ORDER BY holiday_calendar_version_id, holiday_date;
+                """;
+            await using (var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(token).ConfigureAwait(false))
+                {
+                    var versionId = byDatabaseId[reader.GetString("holiday_calendar_version_id")];
+                    holidays[versionId].Add(
+                        SqliteValue.Date(reader.GetString("holiday_date")), reader.GetString("display_name"));
+                }
+            }
+            return (IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>)
+                holidays.ToDictionary(x => x.Key, x => new HolidayCalendar(x.Key, x.Value));
+        }, cancellationToken);
+    }
 
     public Task<HolidayCalendarVersionId> GetLatestVerifiedVersionIdAsync(CancellationToken cancellationToken) =>
         database.ReadAsync(async (connection, transaction, token) =>

@@ -1,3 +1,5 @@
+using TkpSalaryCalculator.App.Navigation;
+
 namespace TkpSalaryCalculator.App.Presentation.Common;
 
 public abstract class ViewModelBase(IUserErrorPresenter errorPresenter) : ObservableObject
@@ -6,6 +8,9 @@ public abstract class ViewModelBase(IUserErrorPresenter errorPresenter) : Observ
     private CancellationTokenSource? currentOperation;
     private bool isBusy;
     private string? errorMessage;
+    private IAppSessionState? trackedSessionState;
+    private AppDataChangeKind trackedDependencies;
+    private long? lastLoadedGeneration;
 
     public bool IsBusy
     {
@@ -33,8 +38,13 @@ public abstract class ViewModelBase(IUserErrorPresenter errorPresenter) : Observ
 
     protected async Task RunBusyAsync(Func<CancellationToken, Task> operation)
     {
+        await TryRunBusyAsync(operation);
+    }
+
+    protected async Task<bool> TryRunBusyAsync(Func<CancellationToken, Task> operation)
+    {
         ArgumentNullException.ThrowIfNull(operation);
-        if (IsBusy) return;
+        if (IsBusy) return false;
 
         using var source = new CancellationTokenSource();
         currentOperation = source;
@@ -43,14 +53,17 @@ public abstract class ViewModelBase(IUserErrorPresenter errorPresenter) : Observ
         try
         {
             await operation(source.Token);
+            return true;
         }
         catch (OperationCanceledException) when (source.IsCancellationRequested)
         {
             // A disappearing page cancels obsolete work without showing an error.
+            return false;
         }
         catch (Exception exception)
         {
             PresentError(exception);
+            return false;
         }
         finally
         {
@@ -58,6 +71,44 @@ public abstract class ViewModelBase(IUserErrorPresenter errorPresenter) : Observ
             IsBusy = false;
         }
     }
+
+    protected void TrackDataChanges(IAppSessionState sessionState, AppDataChangeKind dependencies)
+    {
+        trackedSessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        if (dependencies == AppDataChangeKind.None || (dependencies & ~AppDataChangeKind.All) != 0)
+            throw new ArgumentOutOfRangeException(nameof(dependencies));
+        trackedDependencies = dependencies;
+    }
+
+    protected async Task LoadTrackedAsync(Func<CancellationToken, Task> operation, bool force)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        var sessionState = trackedSessionState ??
+            throw new InvalidOperationException("変更世代を追跡するセッションが設定されていません。");
+        var generation = sessionState.GetDataGeneration(trackedDependencies);
+        if (!force && lastLoadedGeneration == generation) return;
+
+        if (await TryRunBusyAsync(operation))
+            lastLoadedGeneration = generation;
+    }
+
+    protected bool IsTrackedDataCurrent()
+    {
+        var sessionState = trackedSessionState ??
+            throw new InvalidOperationException("変更世代を追跡するセッションが設定されていません。");
+        return lastLoadedGeneration == sessionState.GetDataGeneration(trackedDependencies);
+    }
+
+    protected long CaptureTrackedDataGeneration()
+    {
+        var sessionState = trackedSessionState ??
+            throw new InvalidOperationException("変更世代を追跡するセッションが設定されていません。");
+        return sessionState.GetDataGeneration(trackedDependencies);
+    }
+
+    protected void AcceptDataGeneration(long generation) => lastLoadedGeneration = generation;
+
+    protected void InvalidateTrackedLoad() => lastLoadedGeneration = null;
 
     public void ClearError() => ErrorMessage = null;
 

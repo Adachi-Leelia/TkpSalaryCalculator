@@ -15,7 +15,7 @@ public partial class CalendarPage : ContentPage
     protected override async void OnAppearing()
     {
         base.OnAppearing();
-        await viewModel.LoadAsync();
+        await viewModel.LoadIfNeededAsync();
     }
 
     protected override void OnDisappearing()

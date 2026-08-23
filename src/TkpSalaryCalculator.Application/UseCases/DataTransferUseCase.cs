@@ -96,8 +96,10 @@ public sealed class DataTransferUseCase(IJsonExportStream exportStream, IJsonImp
     {
         ApplicationSupport.ValidateId(preparedImportId.Value, nameof(preparedImportId));
         cancellationToken.ThrowIfCancellationRequested();
-        var committed = await transactions.ExecuteAsync(token => staging.TryConsumeAndReplaceLiveDataAsync(
-            preparedImportId, clock.UtcNow.ToUniversalTime(), token), cancellationToken).ConfigureAwait(false);
+        // The staging repository owns the replacement commit, post-commit installation bootstrap,
+        // and restoration of the pre-import data if that bootstrap fails.
+        var committed = await staging.TryConsumeAndReplaceLiveDataAsync(
+            preparedImportId, clock.UtcNow.ToUniversalTime(), cancellationToken).ConfigureAwait(false);
         if (!committed)
             throw new ApplicationErrorException("IMPORT_NOT_PREPARED", "確認済みのインポートが見つからないか、既に取り込まれています。もう一度ファイルを選択してください。");
         await DiscardBestEffortAsync(preparedImportId).ConfigureAwait(false);
