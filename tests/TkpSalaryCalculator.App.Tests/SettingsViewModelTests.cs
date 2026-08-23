@@ -116,7 +116,9 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal("2026年8月の給与設定", viewModel.MonthlySectionTitle);
         Assert.Equal("いつもの身体1", Assert.Single(viewModel.InputCandidateRows).DisplayName);
-        Assert.Equal("時給 1,200円", Assert.Single(viewModel.MonthlyRows.Where(value => value.EditorId == Category.Value)).RateText);
+        Assert.Equal(
+            "時給 1,200円",
+            Assert.Single(viewModel.MonthlyRows, value => value.EditorId == Category.Value).RateText);
         Assert.Contains(viewModel.MonthlyRows, value => value.EditorId == Service.Value && value.TimeCategoryName == "任意時間");
     }
 
