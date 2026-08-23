@@ -39,7 +39,7 @@ public sealed class InitialSetupFlowViewModelTests
     }
 
     [Fact]
-    public async Task UI003_InitializesAtSavedStepAndEveryMovePersistsDestination()
+    public async Task UI003_MissingClosingDayRedirectsToClosingDayAndPersistsDestination()
     {
         var fixture = new FlowFixture(new InitialSetupStateDto(
             InitialSetupStatus.InProgress,
@@ -48,13 +48,9 @@ public sealed class InitialSetupFlowViewModelTests
 
         await fixture.ViewModel.InitializeAsync();
 
-        Assert.Equal(InitialSetupStep.Services, fixture.ViewModel.CurrentStep);
-        Assert.Contains("サービスと単価", fixture.ViewModel.ResumeMessage);
-        Assert.Contains("締め日", fixture.ViewModel.MissingRequirements);
-
-        await fixture.ViewModel.MoveBackAsync();
-
         Assert.Equal(InitialSetupStep.ClosingDay, fixture.ViewModel.CurrentStep);
+        Assert.Contains("締め日", fixture.ViewModel.ResumeMessage);
+        Assert.Contains("締め日", fixture.ViewModel.MissingRequirements);
         Assert.Equal([InitialSetupStepIds.ClosingDay], fixture.InitialSetup.SavedSteps);
         Assert.Equal(InitialSetupStepIds.ClosingDay, fixture.Session.InitialSetupState!.Step);
     }

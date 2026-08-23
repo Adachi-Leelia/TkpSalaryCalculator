@@ -313,10 +313,20 @@ public sealed class InitialSetupFlowViewModel : ViewModelBase
     {
         var state = await initialSetup.GetStateAsync(cancellationToken);
         sessionState.InitialSetupState = state;
-        CurrentStep = InitialSetupStepIds.ToStep(state.Step);
-        ResumeMessage = state.Status == InitialSetupStatus.InProgress && !string.IsNullOrWhiteSpace(state.Step)
-            ? $"保存済みの「{StepTitle}」から再開しました。"
-            : null;
+        var savedStep = InitialSetupStepIds.ToStep(state.Step);
+        var requiresClosingDay = state.Issues.Any(issue => issue.Code == "SETUP_CLOSING_RULE_REQUIRED");
+        if (requiresClosingDay && savedStep > InitialSetupStep.ClosingDay)
+        {
+            await MoveToAsync(InitialSetupStep.ClosingDay, cancellationToken);
+            ResumeMessage = "締め日が未設定のため、「締め日」から再開します。";
+        }
+        else
+        {
+            CurrentStep = savedStep;
+            ResumeMessage = state.Status == InitialSetupStatus.InProgress && !string.IsNullOrWhiteSpace(state.Step)
+                ? $"保存済みの「{StepTitle}」から再開しました。"
+                : null;
+        }
 
         var settings = await monthSettings.GetAsync(setupMonth, cancellationToken);
         var presetValues = await presets.GetAllAsync(cancellationToken);
