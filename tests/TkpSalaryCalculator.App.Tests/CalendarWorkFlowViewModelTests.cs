@@ -454,6 +454,36 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
+    public async Task WorkEditor_CancelledWaitStillPublishesCompletedNewSave()
+    {
+        var fixture = new EditorFixture();
+        fixture.Work.SaveGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await fixture.ViewModel.LoadAsync();
+        var workGeneration = fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords);
+        var backupGeneration = fixture.Session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+
+        var save = fixture.ViewModel.SaveAsync();
+        await fixture.Work.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        fixture.ViewModel.CancelPendingOperations();
+        await save;
+
+        Assert.Equal(workGeneration, fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords));
+        Assert.Equal(backupGeneration, fixture.Session.GetDataGeneration(AppDataChangeKind.BackupStatus));
+        Assert.Equal(0, fixture.Navigator.GoBackCalls);
+        Assert.False(fixture.Work.SaveTokenCanBeCanceled);
+
+        fixture.Work.SaveGate.SetResult();
+        for (var attempt = 0; attempt < 100 &&
+             fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords) == workGeneration; attempt++)
+            await Task.Delay(10);
+
+        Assert.True(fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords) > workGeneration);
+        Assert.True(fixture.Session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupGeneration);
+        Assert.Single(fixture.Work.Saved);
+        Assert.Equal(0, fixture.Navigator.GoBackCalls);
+    }
+
+    [Fact]
     public async Task WorkEditor_TimeRangeDisplaysApplicationNormalizedOvernightResult()
     {
         var fixture = new EditorFixture();
@@ -613,14 +643,16 @@ public sealed class CalendarWorkFlowViewModelTests
         public EditorFixture()
         {
             Work.HolidayDates = Holidays.Holidays;
+            Session = new AppSessionState(TargetDate);
             ViewModel = new WorkEditorViewModel(
                 Work, Navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
-                new UserErrorPresenter(), new DialogStub { Result = true }, new AppSessionState(TargetDate));
+                new UserErrorPresenter(), new DialogStub { Result = true }, Session);
             ViewModel.Initialize(TargetDate, null);
         }
         public WorkUseCaseStub Work { get; } = new();
         public HolidayCalendarStub Holidays { get; } = new();
         public CalendarNavigatorStub Navigator { get; } = new();
+        public AppSessionState Session { get; }
         public WorkEditorViewModel ViewModel { get; }
     }
 
@@ -668,6 +700,9 @@ public sealed class CalendarWorkFlowViewModelTests
         public int PreviewCalls { get; private set; }
         public SaveWorkRecordCommand? LastPreviewCommand { get; private set; }
         public Exception? SaveException { get; set; }
+        public TaskCompletionSource? SaveGate { get; set; }
+        public TaskCompletionSource SaveStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool SaveTokenCanBeCanceled { get; private set; }
         public CopyDayPreviewDto? CopyPreview { get; set; }
         public int CopyCalls { get; private set; }
         public int CopyPreviewCalls { get; private set; }
@@ -717,15 +752,18 @@ public sealed class CalendarWorkFlowViewModelTests
         public Task<WorkRecordPreviewDto> PreviewForEditorAsync(
             SaveWorkRecordCommand command, WorkEditorScreenDto screen, CancellationToken cancellationToken) =>
             PreviewAsync(command, cancellationToken);
-        public Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken)
+        public async Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken)
         {
             if (SaveException is not null) throw SaveException;
+            SaveTokenCanBeCanceled = cancellationToken.CanBeCanceled;
+            SaveStarted.TrySetResult();
+            if (SaveGate is not null) await SaveGate.Task.WaitAsync(cancellationToken);
             Saved.Add(command);
             var record = new WorkRecordDto(
                 command.Id ?? RecordId, command.WorkDate, command.ServiceId, command.TimeCategoryId,
                 command.InputMode, command.WorkMinutes ?? new WorkMinutes(60), command.StartTime,
                 command.EndTime, command.SourceServicePresetId, null, null);
-            return Task.FromResult(new SaveWorkRecordResultDto(record, PreviewFactory(command).Calculation!, []));
+            return new SaveWorkRecordResultDto(record, PreviewFactory(command).Calculation!, []);
         }
         public Task DeleteAsync(WorkRecordId id, CancellationToken cancellationToken)
         {

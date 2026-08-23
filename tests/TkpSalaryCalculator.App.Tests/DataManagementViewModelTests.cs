@@ -25,6 +25,7 @@ public sealed class DataManagementViewModelTests
 
         Assert.True(transfers.Committed);
         Assert.Equal(1, root.SetRootCalls);
+        Assert.True(root.UsedLifetimeIndependentToken);
         Assert.Equal("インポート完了", notifications.Title);
         Assert.True(notifications.UsedLifetimeIndependentToken);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.All) > generationBefore);
@@ -119,10 +120,13 @@ public sealed class DataManagementViewModelTests
     {
         public Action? OnSetRoot { get; set; }
         public int SetRootCalls { get; private set; }
+        public bool UsedLifetimeIndependentToken { get; private set; }
         public Task SetRootAsync(AppRootNavigationRequest request, CancellationToken cancellationToken)
         {
             SetRootCalls++;
+            UsedLifetimeIndependentToken = !cancellationToken.CanBeCanceled;
             OnSetRoot?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
             return Task.CompletedTask;
         }
     }

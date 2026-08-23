@@ -23,6 +23,22 @@ public sealed class HomeViewModelTests
     }
 
     [Fact]
+    public async Task BackupReminder_IsReevaluatedAfterLocalDateChangesWithoutReloadingSummary()
+    {
+        var fixture = new HomeFixture();
+        fixture.Salary.Add(Summary(2026, 8, 10_000, 10_000, 0, 0, 0, 0));
+
+        await fixture.ViewModel.LoadIfNeededAsync();
+        await fixture.ViewModel.LoadIfNeededAsync();
+        fixture.LocalDates.Today = fixture.LocalDates.Today.AddDays(1);
+        await fixture.ViewModel.LoadIfNeededAsync();
+
+        Assert.Single(fixture.Salary.RequestedKeys);
+        Assert.Equal(2, fixture.Backup.GetStateCalls);
+        Assert.Equal(fixture.LocalDates.Today, fixture.Backup.LastRequestedDate);
+    }
+
+    [Fact]
     public async Task PERF05_FailedConditionalLoadIsRetriedOnNextAppearance()
     {
         var fixture = new HomeFixture();
@@ -328,7 +344,7 @@ public sealed class HomeViewModelTests
                 Navigator,
                 Session,
                 new ClockStub(),
-                new LocalDateConverterStub(),
+                LocalDates,
                 new JapaneseDisplayFormatter(),
                 new UserErrorPresenter());
         }
@@ -336,6 +352,7 @@ public sealed class HomeViewModelTests
         public SalaryStub Salary { get; } = new();
         public PayrollPeriodStub PayrollPeriods { get; }
         public BackupStub Backup { get; } = new();
+        public LocalDateConverterStub LocalDates { get; } = new();
         public HomeNavigatorStub Navigator { get; } = new();
         public AppSessionState Session { get; }
         public HomeViewModel ViewModel { get; }
@@ -420,10 +437,14 @@ public sealed class HomeViewModelTests
     {
         public BackupReminderStateDto State { get; set; } = BackupState(shouldShow: false);
         public DateOnly? DeferredFromDate { get; private set; }
+        public DateOnly? LastRequestedDate { get; private set; }
+        public int GetStateCalls { get; private set; }
 
         public Task<BackupReminderStateDto> GetStateAsync(DateOnly localToday, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            GetStateCalls++;
+            LastRequestedDate = localToday;
             return Task.FromResult(State);
         }
 
@@ -477,6 +498,7 @@ public sealed class HomeViewModelTests
 
     private sealed class LocalDateConverterStub : ILocalDateConverter
     {
-        public DateOnly ToLocalDate(DateTimeOffset utcDateTime) => new(2026, 8, 21);
+        public DateOnly Today { get; set; } = new(2026, 8, 21);
+        public DateOnly ToLocalDate(DateTimeOffset utcDateTime) => Today;
     }
 }

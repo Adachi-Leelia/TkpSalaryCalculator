@@ -114,7 +114,8 @@ public sealed class DataManagementViewModel : ViewModelBase
             await transfers.CommitImportAsync(preview.Id, cancellationToken);
             committed = true;
             ResetSession();
-            await rootNavigator.SetRootAsync(new AppRootNavigationRequest(AppRootKind.Main, null), cancellationToken);
+            await rootNavigator.SetRootAsync(
+                new AppRootNavigationRequest(AppRootKind.Main, null), CancellationToken.None);
             await notifications.ShowAsync(
                 "インポート完了",
                 "データを置き換え、すべての画面を最新の内容で読み直しました。",

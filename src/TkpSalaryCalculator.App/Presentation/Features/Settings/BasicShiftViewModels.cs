@@ -142,7 +142,7 @@ public sealed class BasicShiftViewModel : ViewModelBase
             "削除", "キャンセル", cancellationToken);
         if (!confirmed) return;
         await shifts.DeleteAsync(shift.Id, cancellationToken);
-        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts);
+        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts | AppDataChangeKind.BackupStatus);
         var generation = CaptureTrackedDataGeneration();
         SuccessMessage = "基本シフトを削除しました。反映済みの勤務記録は維持されています。";
         await LoadCoreAsync(cancellationToken);
@@ -306,7 +306,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         await shifts.SaveAsync(new SaveBasicShiftCommand(
             id, SelectedWeekday.Value, null, SelectedService.Id, SelectedTimeCategory?.Id,
             SelectedInputMode.Value, minutes, start, end, new DisplayOrder(order), IsEnabled), cancellationToken);
-        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts);
+        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts | AppDataChangeKind.BackupStatus);
         MarkSaved();
         await navigator.GoBackAsync("基本シフトを保存しました。反映済みの勤務記録は変更されません。", cancellationToken);
     });

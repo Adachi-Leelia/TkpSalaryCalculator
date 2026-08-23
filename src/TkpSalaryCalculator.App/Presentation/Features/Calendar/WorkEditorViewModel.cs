@@ -295,14 +295,24 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
                 if (preview is null || !preview.CanSave) return;
             }
 
-            var result = await workRecords.SaveAsync(command, cancellationToken);
-            sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+            var saveTask = workRecords.SaveAsync(
+                command,
+                command.Id is null ? CancellationToken.None : cancellationToken);
+            var result = await NotifyWhenSaveCompletesAsync(saveTask).WaitAsync(cancellationToken);
             ApplyNormalized(result.WorkRecord.WorkMinutes, result.WorkRecord.StartTime, result.WorkRecord.EndTime);
             hasSaved = true;
             MarkSaved();
             await navigator.GoBackAsync("勤務記録を保存しました。", cancellationToken);
         });
         NotifyCommands();
+    }
+
+    private async Task<SaveWorkRecordResultDto> NotifyWhenSaveCompletesAsync(
+        Task<SaveWorkRecordResultDto> saveTask)
+    {
+        var result = await saveTask.ConfigureAwait(false);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        return result;
     }
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)

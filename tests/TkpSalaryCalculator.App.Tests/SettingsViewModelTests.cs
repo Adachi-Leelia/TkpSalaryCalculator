@@ -319,6 +319,53 @@ public sealed class SettingsViewModelTests
         Assert.Equal(0, work.InputOptionsCalls);
     }
 
+    [Fact]
+    public async Task BasicShiftDelete_NotifiesShiftAndBackupGenerations()
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var viewModel = new BasicShiftViewModel(
+            shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new DialogStub { Result = true }, new FixedClock(),
+            new FixedLocalDate(), new JapaneseDisplayFormatter(), new UserErrorPresenter(), session);
+        await viewModel.LoadAsync();
+        var shiftGeneration = session.GetDataGeneration(AppDataChangeKind.BasicShifts);
+        var backupGeneration = session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+
+        await Assert.Single(Assert.Single(viewModel.Groups, group => group.HasRows).Rows).Delete();
+
+        Assert.Equal(shift.Id, shifts.DeletedId);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BasicShifts) > shiftGeneration);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupGeneration);
+    }
+
+    [Fact]
+    public async Task BasicShiftSave_NotifiesShiftAndBackupGenerations()
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var viewModel = new BasicShiftEditorViewModel(
+            shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new FixedClock(), new FixedLocalDate(), new UserErrorPresenter(),
+            new DialogStub { Result = true }, session);
+        viewModel.Initialize(null);
+        await viewModel.LoadAsync();
+        var shiftGeneration = session.GetDataGeneration(AppDataChangeKind.BasicShifts);
+        var backupGeneration = session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+
+        await viewModel.SaveAsync();
+
+        Assert.NotNull(shifts.SavedCommand);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BasicShifts) > shiftGeneration);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupGeneration);
+    }
+
     private static SettingsMonthContext Context(MonthSettingsStub settings, IAppSessionState session) =>
         new(settings, session, new JapaneseDisplayFormatter());
 
@@ -399,13 +446,26 @@ public sealed class SettingsViewModelTests
 
     private sealed class BasicShiftStub(BasicShiftDto shift) : IBasicShiftUseCase
     {
+        public SaveBasicShiftCommand? SavedCommand { get; private set; }
+        public BasicShiftId? DeletedId { get; private set; }
+
         public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(
             DayOfWeek weekday, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<BasicShiftDto>>(weekday == shift.Weekday ? [shift] : []);
-        public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
-        public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken)
+        {
+            SavedCommand = command;
+            return Task.FromResult(new BasicShiftDto(
+                command.Id ?? new BasicShiftId(Guid.NewGuid()), command.Weekday, command.ServicePresetId,
+                command.ServiceId, command.TimeCategoryId, command.InputMode,
+                command.WorkMinutes ?? shift.WorkMinutes, command.StartTime, command.EndTime,
+                command.DisplayOrder, command.IsEnabled));
+        }
+        public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken)
+        {
+            DeletedId = id;
+            return Task.CompletedTask;
+        }
         public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(

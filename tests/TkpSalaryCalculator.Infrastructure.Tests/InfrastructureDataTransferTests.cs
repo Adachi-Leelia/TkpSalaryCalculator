@@ -79,6 +79,28 @@ public sealed partial class InfrastructureResilienceTests
     }
 
     [Fact]
+    public async Task DATA002_ConsecutiveImportsInSameProcessSucceedAndRemoveTemporaryBackups()
+    {
+        await using var source = await TestDatabase.CreateCompleteAsync(1);
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 30, 0, TimeSpan.Zero));
+        var exported = JsonSerializer.SerializeToUtf8Bytes(await ExportJsonAsync(source, clock));
+        await using var destination = await TestDatabase.CreateSeededAsync();
+        // The next pooled connection is the one used as the live import connection.
+        await destination.ClearPooledConnectionPoolAsync();
+        var useCase = CreateTransferUseCase(destination, clock);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var preview = await useCase.PrepareImportAsync(new MemoryStream(exported), default);
+            await useCase.CommitImportAsync(preview.Id, default);
+
+            await using var connection = await destination.OpenPooledAsync();
+            Assert.Equal(0L, await CountRowsAsync(connection,
+                "SELECT name FROM sqlite_temp_master WHERE type = 'table' AND name LIKE 'import_backup_%';"));
+        }
+    }
+
+    [Fact]
     public Task DATA010_DefaultCiStreamingRoundTripPreserves4096RecordsWithoutPartialReplacement() =>
         VerifyLargeStreamingRoundTripAsync(4_096);
 

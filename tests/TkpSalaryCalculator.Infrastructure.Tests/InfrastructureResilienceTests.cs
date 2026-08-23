@@ -290,13 +290,15 @@ public sealed partial class InfrastructureResilienceTests
     }
 
     [Fact]
-    public async Task DATA012_CommitFailureRetainsPreparedFilesForRetryUntilExplicitDiscardAndKeepsLiveDatabase()
+    public async Task DATA012_BootstrapFailureCanBeRetriedInSameProcessAndRemovesTemporaryBackups()
     {
         await using var source = await TestDatabase.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 2, 30, 0, TimeSpan.Zero));
         var exported = await ExportAsync(source, clock);
         await using var destination = await TestDatabase.CreateSeededAsync();
         var existing = await AddLiveMarkerAsync(destination, clock);
+        // The next pooled connection is the one used as the live import connection.
+        await destination.ClearPooledConnectionPoolAsync();
         var useCase = CreateTransferUseCase(destination, clock);
         var preview = await useCase.PrepareImportAsync(new MemoryStream(exported), default);
         var candidatePath = CandidatePath(destination, preview.Id);
@@ -317,7 +319,23 @@ public sealed partial class InfrastructureResilienceTests
         Assert.True(File.Exists(candidatePath));
         Assert.Equal(existing, await new SqliteWorkRecordRepository(destination.Database, clock)
             .FindAsync(existing.Id, default));
-        await useCase.DiscardImportAsync(preview.Id, default);
+
+        await using (var candidate = new SqliteConnection($"Data Source={candidatePath};Pooling=False"))
+        {
+            await candidate.OpenAsync();
+            await ExecuteAsync(candidate, """
+                DELETE FROM holiday_calendar_version
+                WHERE id = '10000000-0000-4000-8000-000000000001';
+                """);
+        }
+
+        await useCase.CommitImportAsync(preview.Id, default);
+
+        Assert.Null(await new SqliteWorkRecordRepository(destination.Database, clock)
+            .FindAsync(existing.Id, default));
+        await using (var live = await destination.OpenPooledAsync())
+            Assert.Equal(0L, await CountRowsAsync(live,
+                "SELECT name FROM sqlite_temp_master WHERE type = 'table' AND name LIKE 'import_backup_%';"));
         AssertStagingEmpty(destination);
     }
 
@@ -524,6 +542,26 @@ public sealed partial class InfrastructureResilienceTests
                 DataSource = DatabasePath,
                 Mode = mode,
                 Pooling = false,
+            }.ToString());
+            await connection.OpenAsync();
+            return connection;
+        }
+
+        public async Task ClearPooledConnectionPoolAsync()
+        {
+            await using var connection = await OpenPooledAsync();
+            SqliteConnection.ClearPool(connection);
+        }
+
+        public async Task<SqliteConnection> OpenPooledAsync()
+        {
+            var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = DatabasePath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Cache = SqliteCacheMode.Shared,
+                Pooling = true,
+                DefaultTimeout = 5,
             }.ToString());
             await connection.OpenAsync();
             return connection;
