@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Features.Startup;
 
@@ -10,26 +11,24 @@ public partial class App : Microsoft.Maui.Controls.Application
     private readonly AppStartupCoordinator startupCoordinator;
     private readonly AppRootNavigator rootNavigator;
 
-    public App(
-        StartupPage startupPage,
-        StartupViewModel startupViewModel,
-        AppStartupCoordinator startupCoordinator,
-        AppRootNavigator rootNavigator)
+    public App(IServiceProvider serviceProvider)
     {
         InitializeComponent();
-        this.startupPage = startupPage ?? throw new ArgumentNullException(nameof(startupPage));
-        this.startupViewModel = startupViewModel ?? throw new ArgumentNullException(nameof(startupViewModel));
-        this.startupCoordinator = startupCoordinator ?? throw new ArgumentNullException(nameof(startupCoordinator));
-        this.rootNavigator = rootNavigator ?? throw new ArgumentNullException(nameof(rootNavigator));
+
+        startupPage = serviceProvider.GetRequiredService<StartupPage>();
+        startupViewModel = serviceProvider.GetRequiredService<StartupViewModel>();
+        startupCoordinator = serviceProvider.GetRequiredService<AppStartupCoordinator>();
+        rootNavigator = serviceProvider.GetRequiredService<AppRootNavigator>();
     }
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
         var window = new Window(startupPage);
+
         rootNavigator.Attach(window);
         startupViewModel.SetStartupOperation(startupCoordinator.StartAsync);
         _ = startupViewModel.StartAsync();
+
         return window;
     }
-
 }
