@@ -1,4 +1,5 @@
 using TkpSalaryCalculator.App.Navigation;
+using TkpSalaryCalculator.App.Presentation.Features.Settings;
 using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.App.Presentation.Features.Home;
@@ -67,7 +68,7 @@ internal static class HomeRouteRegistration
     {
         if (Interlocked.Exchange(ref registered, 1) != 0) return;
         Routing.RegisterRoute(NavigationRoutes.CalculationDetails, typeof(CalculationDetailPage));
-        Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances, typeof(HomeDestinationPage));
+        Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances, typeof(MonthlyAllowancePage));
         Routing.RegisterRoute(NavigationRoutes.UncalculatedDays, typeof(HomeDestinationPage));
     }
 }

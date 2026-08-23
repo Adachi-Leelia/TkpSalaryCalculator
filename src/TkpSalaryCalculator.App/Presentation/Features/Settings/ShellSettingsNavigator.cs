@@ -1,4 +1,7 @@
 using TkpSalaryCalculator.App.Navigation;
+using TkpSalaryCalculator.App.Presentation.Features.DataManagement;
+using TkpSalaryCalculator.App.Presentation.Features.Home;
+using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.App.Presentation.Features.Settings;
 
@@ -25,6 +28,31 @@ public sealed class ShellSettingsNavigator : ISettingsNavigator
 
     public Task OpenPayrollPeriodAsync(CancellationToken cancellationToken) =>
         NavigateAsync(NavigationRoutes.PayrollPeriodSettings, null, cancellationToken);
+
+    public Task OpenMonthlyAllowancesAsync(CancellationToken cancellationToken) =>
+        NavigateAsync(NavigationRoutes.MonthlyAllowances, null, cancellationToken);
+
+    public Task OpenMonthlyAllowanceEditorAsync(PayrollPeriodKey payrollPeriodKey, Guid? allowanceId, CancellationToken cancellationToken)
+    {
+        var parameters = new ShellNavigationQueryParameters
+        {
+            [MonthlyAllowancePage.PayrollPeriodParameter] = $"{payrollPeriodKey.Value.Year:D4}-{payrollPeriodKey.Value.Month:D2}",
+        };
+        if (allowanceId is { } id) parameters[MonthlyAllowanceEditorPage.IdParameter] = id.ToString("D");
+        return NavigateAsync(NavigationRoutes.MonthlyAllowanceEditor, parameters, cancellationToken);
+    }
+
+    public Task OpenBasicShiftsAsync(CancellationToken cancellationToken) =>
+        NavigateAsync(NavigationRoutes.BasicShifts, null, cancellationToken);
+
+    public Task OpenBasicShiftEditorAsync(Guid? basicShiftId, CancellationToken cancellationToken) =>
+        NavigateEditorAsync(NavigationRoutes.BasicShiftEditor, BasicShiftEditorPage.IdParameter, basicShiftId, cancellationToken);
+
+    public Task OpenDataManagementAsync(CancellationToken cancellationToken) =>
+        NavigateAsync(NavigationRoutes.DataManagement, null, cancellationToken);
+
+    public Task OpenAppInformationAsync(CancellationToken cancellationToken) =>
+        NavigateAsync(NavigationRoutes.AppInformation, null, cancellationToken);
 
     public Task GoBackAsync(string? successMessage, CancellationToken cancellationToken)
     {
@@ -67,6 +95,11 @@ internal static class SettingsRouteRegistration
         Routing.RegisterRoute(NavigationRoutes.CountBonusSettings, typeof(CountBonusSettingsPage));
         Routing.RegisterRoute(NavigationRoutes.CountBonusSettingsEditor, typeof(CountBonusSettingsEditorPage));
         Routing.RegisterRoute(NavigationRoutes.PayrollPeriodSettings, typeof(PayrollPeriodSettingsPage));
+        Routing.RegisterRoute(NavigationRoutes.MonthlyAllowanceEditor, typeof(MonthlyAllowanceEditorPage));
+        Routing.RegisterRoute(NavigationRoutes.BasicShifts, typeof(BasicShiftPage));
+        Routing.RegisterRoute(NavigationRoutes.BasicShiftEditor, typeof(BasicShiftEditorPage));
+        Routing.RegisterRoute(NavigationRoutes.DataManagement, typeof(DataManagementPage));
+        Routing.RegisterRoute(NavigationRoutes.AppInformation, typeof(AppInformationPage));
     }
 }
 

@@ -34,6 +34,10 @@ public sealed class SettingsMenuViewModel : ViewModelBase
         OpenPremiumsCommand = new AsyncCommand(() => navigator.OpenPremiumsAsync(default), PresentError);
         OpenCountBonusesCommand = new AsyncCommand(() => navigator.OpenCountBonusesAsync(default), PresentError);
         OpenPayrollPeriodCommand = new AsyncCommand(() => navigator.OpenPayrollPeriodAsync(default), PresentError);
+        OpenMonthlyAllowancesCommand = new AsyncCommand(() => navigator.OpenMonthlyAllowancesAsync(default), PresentError);
+        OpenBasicShiftsCommand = new AsyncCommand(() => navigator.OpenBasicShiftsAsync(default), PresentError);
+        OpenDataManagementCommand = new AsyncCommand(() => navigator.OpenDataManagementAsync(default), PresentError);
+        OpenAppInformationCommand = new AsyncCommand(() => navigator.OpenAppInformationAsync(default), PresentError);
     }
 
     public string MonthHeaderText => context.HeaderText;
@@ -44,6 +48,10 @@ public sealed class SettingsMenuViewModel : ViewModelBase
     public AsyncCommand OpenPremiumsCommand { get; }
     public AsyncCommand OpenCountBonusesCommand { get; }
     public AsyncCommand OpenPayrollPeriodCommand { get; }
+    public AsyncCommand OpenMonthlyAllowancesCommand { get; }
+    public AsyncCommand OpenBasicShiftsCommand { get; }
+    public AsyncCommand OpenDataManagementCommand { get; }
+    public AsyncCommand OpenAppInformationCommand { get; }
 
     public string? SuccessMessage
     {

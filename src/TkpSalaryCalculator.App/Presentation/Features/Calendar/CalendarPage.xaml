@@ -85,6 +85,7 @@
                             </BindableLayout.ItemTemplate>
                         </VerticalStackLayout>
                         <Label IsVisible="{Binding HasShiftCandidates}" Text="{Binding ShiftCandidateText}" TextColor="{StaticResource Accent}" />
+                        <Button IsVisible="{Binding HasShiftCandidates}" Command="{Binding ConfirmShiftCandidatesCommand}" Text="基本シフトを確認して追加" />
                         <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
                             <Button Command="{Binding AddWorkCommand}" Text="勤務を追加" />
                             <Button Grid.Column="1" Command="{Binding OpenDayCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="全件を開く" />

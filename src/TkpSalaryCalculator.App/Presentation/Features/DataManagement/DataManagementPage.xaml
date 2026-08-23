@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage x:Class="TkpSalaryCalculator.App.Presentation.Features.DataManagement.DataManagementPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:data="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.DataManagement"
+    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="data:DataManagementViewModel" Title="データ管理">
+    <Grid>
+        <ScrollView><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="14">
+            <Label Style="{StaticResource PageTitleStyle}" Text="データ管理" />
+            <Border Padding="14" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                <VerticalStackLayout Spacing="8">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="エクスポート" />
+                    <Label Text="端末変更や故障に備え、設定・基本シフト・勤務記録・月額手当を1つのファイルへ保存します。" />
+                    <Label Style="{StaticResource SupportingTextStyle}" Text="ファイルは暗号化されません。保存先と取り扱いに注意してください。" />
+                    <Label FontAttributes="Bold" Text="{Binding LastExportText}" />
+                    <Button Command="{Binding ExportCommand}" Text="保存先を選んでエクスポート" />
+                </VerticalStackLayout>
+            </Border>
+            <Border Padding="14" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                <VerticalStackLayout Spacing="8">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="インポート" />
+                    <Label Text="ファイルを事前検証し、件数と期間を確認した後で、端末内データをすべて置き換えます。" />
+                    <Label Style="{StaticResource SupportingTextStyle}" Text="検証失敗やキャンセルでは、現在のデータは変更されません。" />
+                    <Button Command="{Binding ImportCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="ファイルを選んでインポート" />
+                </VerticalStackLayout>
+            </Border>
+            <Label IsVisible="{Binding HasSuccessMessage}" Text="{Binding SuccessMessage}" TextColor="{StaticResource Success}" />
+            <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+        </VerticalStackLayout></ScrollView>
+        <controls:LoadingStateView IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" Message="データを処理しています。" />
+    </Grid>
+</ContentPage>

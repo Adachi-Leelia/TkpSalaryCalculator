@@ -18,7 +18,15 @@
                         <Label Grid.Column="1" FontAttributes="Bold" FontSize="24" SemanticProperties.Description="{Binding TotalText}" Text="{Binding TotalText}" />
                     </Grid>
                 </Border>
-                <Label IsVisible="{Binding HasUncalculated}" Text="{Binding UncalculatedText}" TextColor="{StaticResource Warning}" />
+            <Label IsVisible="{Binding HasUncalculated}" Text="{Binding UncalculatedText}" TextColor="{StaticResource Warning}" />
+            <Border IsVisible="{Binding HasShiftCandidates}" Padding="14" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 12">
+                <VerticalStackLayout Spacing="8">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="基本シフト候補" />
+                    <Label Style="{StaticResource SupportingTextStyle}" Text="反映する候補を選び、内容と既存勤務を確認してから追加します。候補だけでは保存されません。" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding ShiftCandidates}" Spacing="6"><BindableLayout.ItemTemplate><DataTemplate x:DataType="calendar:ShiftCandidateRowViewModel"><Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8"><CheckBox IsChecked="{Binding IsSelected}" IsEnabled="{Binding CanChoose}" /><Label Grid.Column="1" FontAttributes="Bold" Text="{Binding DisplayName}" /><Label Grid.Row="1" Grid.Column="1" Text="{Binding DurationText}" /><Label Grid.Row="2" Grid.Column="1" IsVisible="{Binding HasWarning}" Text="{Binding WarningText}" TextColor="{StaticResource Warning}" /></Grid></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
+                    <Button Command="{Binding ApplyShiftsCommand}" Text="選択した候補を確認して追加" />
+                </VerticalStackLayout>
+            </Border>
                 <Border
                     IsVisible="{Binding HasSuccessMessage}"
                     Padding="12"

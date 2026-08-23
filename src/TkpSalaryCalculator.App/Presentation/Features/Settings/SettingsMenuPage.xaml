@@ -26,11 +26,14 @@
             <Button Command="{Binding OpenServicesCommand}" Text="サービス・単価" />
             <Button Command="{Binding OpenPremiumsCommand}" Text="割増" />
             <Button Command="{Binding OpenCountBonusesCommand}" Text="件数加算" />
+            <Button Command="{Binding OpenMonthlyAllowancesCommand}" Text="月額手当" />
             <Button Command="{Binding OpenPayrollPeriodCommand}" Text="給与期間" />
             <Label Style="{StaticResource SectionTitleStyle}" Text="入力補助" />
             <Label Style="{StaticResource SupportingTextStyle}" Text="よく使うサービス設定（全期間共通）は、サービス・単価画面で給与設定と区別して管理できます。" />
+            <Button Command="{Binding OpenBasicShiftsCommand}" Text="基本シフト" />
             <Label Style="{StaticResource SectionTitleStyle}" Text="データ・アプリ" />
-            <Label Style="{StaticResource SupportingTextStyle}" Text="データ管理、基本シフト、月額手当、アプリ情報は後続の実装段階で追加します。" />
+            <Button Command="{Binding OpenDataManagementCommand}" Text="データ管理" />
+            <Button Command="{Binding OpenAppInformationCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="アプリ情報" />
         </VerticalStackLayout>
     </ScrollView>
 </ContentPage>

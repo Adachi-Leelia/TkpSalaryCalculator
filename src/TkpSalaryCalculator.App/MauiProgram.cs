@@ -4,6 +4,7 @@ using Microsoft.Maui.Hosting;
 using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Features.Calendar;
+using TkpSalaryCalculator.App.Presentation.Features.DataManagement;
 using TkpSalaryCalculator.App.Presentation.Features.Home;
 using TkpSalaryCalculator.App.Presentation.Features.Settings;
 using TkpSalaryCalculator.App.Presentation.Features.Setup;
@@ -104,6 +105,9 @@ public static class MauiProgram
         services.AddSingleton<IAppRootNavigator>(serviceProvider => serviceProvider.GetRequiredService<AppRootNavigator>());
         services.AddSingleton<AppStartupCoordinator>();
         services.AddSingleton<IConfirmationDialogService, ConfirmationDialogService>();
+        services.AddSingleton<IPlatformDocumentService, AndroidDocumentService>();
+        services.AddSingleton<IAppInformationService, MauiAppInformationService>();
+        services.AddSingleton<IUserNotificationService, UserNotificationService>();
         services.AddSingleton<IHomeNavigator, ShellHomeNavigator>();
         services.AddSingleton<ICalendarNavigator, ShellCalendarNavigator>();
         services.AddSingleton<ISettingsNavigator, ShellSettingsNavigator>();
@@ -139,5 +143,17 @@ public static class MauiProgram
         services.AddTransient<CountBonusSettingsEditorPage>();
         services.AddTransient<PayrollPeriodSettingsViewModel>();
         services.AddTransient<PayrollPeriodSettingsPage>();
+        services.AddTransient<MonthlyAllowanceViewModel>();
+        services.AddTransient<MonthlyAllowancePage>();
+        services.AddTransient<MonthlyAllowanceEditorViewModel>();
+        services.AddTransient<MonthlyAllowanceEditorPage>();
+        services.AddTransient<BasicShiftViewModel>();
+        services.AddTransient<BasicShiftPage>();
+        services.AddTransient<BasicShiftEditorViewModel>();
+        services.AddTransient<BasicShiftEditorPage>();
+        services.AddTransient<DataManagementViewModel>();
+        services.AddTransient<DataManagementPage>();
+        services.AddTransient<AppInformationViewModel>();
+        services.AddTransient<AppInformationPage>();
     }
 }
