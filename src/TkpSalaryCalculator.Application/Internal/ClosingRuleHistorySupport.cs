@@ -5,7 +5,7 @@ namespace TkpSalaryCalculator.Application.Internal;
 
 internal static class ClosingRuleHistorySupport
 {
-    public static readonly PayrollPeriodKey Baseline = new(new YearMonth(1, 1));
+    public static readonly PayrollPeriodKey Baseline = new(new YearMonth(1000, 1));
 
     public static IReadOnlyList<ClosingRule> ForCalculation(IReadOnlyList<ClosingRule> history)
     {
