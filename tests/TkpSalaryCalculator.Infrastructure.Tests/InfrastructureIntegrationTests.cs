@@ -26,6 +26,8 @@ public sealed class InfrastructureIntegrationTests
         Assert.Equal("wal", Assert.IsType<string>(await ScalarAsync(connection, "PRAGMA journal_mode;")),
             StringComparer.OrdinalIgnoreCase);
         Assert.Equal(1L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM app_metadata WHERE id = 1;"));
+        Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(connection,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
 
         var requiredTables = new[]
         {
@@ -133,6 +135,7 @@ public sealed class InfrastructureIntegrationTests
                 await versionOne.OpenAsync();
                 await ExecuteAsync(versionOne, """
                     DROP INDEX ix_work_record_source_preset;
+                    ALTER TABLE app_metadata DROP COLUMN bundled_bootstrap_version;
                     PRAGMA user_version = 1;
                     """);
             }
@@ -388,7 +391,7 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
-    public async Task DB007_VersionOneToTwoAddsMeasuredUsageIndexAndPreservesInputHistory()
+    public async Task DB007_VersionOneToCurrentAddsMeasuredUsageIndexAndPreservesInputHistory()
     {
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 0, 0, TimeSpan.Zero));
@@ -409,7 +412,9 @@ public sealed class InfrastructureIntegrationTests
         await migrated.InitializeAsync();
 
         await using var connection = await fixture.OpenRawAsync();
-        Assert.Equal(2L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(SqliteDatabase.CurrentSchemaVersion, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(connection,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
         Assert.Equal(1L, await ScalarLongAsync(connection, """
             SELECT COUNT(*) FROM sqlite_master
             WHERE type = 'index' AND name = 'ix_work_record_source_preset';
@@ -747,7 +752,7 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
-    public async Task DATA007_PreparedImportHasSingleConsumerAndRollbackRestoresRetryState()
+    public async Task DATA007_PreparedImportRejectsAmbientTransactionAndRetainsSingleConsumerState()
     {
         await using var source = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 6, 30, 0, TimeSpan.Zero));
@@ -763,11 +768,10 @@ public sealed class InfrastructureIntegrationTests
             new SqliteTransactionRunner(destination.Database), clock);
         var preview = await useCase.PrepareImportAsync(new MemoryStream(bytes), default);
 
-        await Assert.ThrowsAsync<IOException>(() => new SqliteTransactionRunner(destination.Database)
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new SqliteTransactionRunner(destination.Database)
             .ExecuteAsync(async token =>
             {
                 Assert.True(await staging.TryConsumeAndReplaceLiveDataAsync(preview.Id, clock.UtcNow, token));
-                throw new IOException("rollback after replacement");
             }, default));
 
         var attempts = await Task.WhenAll(

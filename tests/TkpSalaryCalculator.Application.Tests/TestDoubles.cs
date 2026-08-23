@@ -445,6 +445,7 @@ internal sealed class FakeShiftRepository : IBasicShiftRepository, ITransactiona
 internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransactionalFakeState
 {
     public List<ClosingRule> Values { get; } = [];
+    public int GetHistoryCalls { get; private set; }
     private int version;
     public bool ForceCasFailure { get; set; }
     public int ReplaceCalls { get; private set; }
@@ -455,6 +456,7 @@ internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransacti
 
     public Task<IReadOnlyList<ClosingRule>> GetHistoryAsync(CancellationToken cancellationToken)
     {
+        GetHistoryCalls++;
         return Task.FromResult<IReadOnlyList<ClosingRule>>([.. Values]);
     }
 
@@ -483,8 +485,10 @@ internal sealed class FakeClosingRepository : IClosingRuleRepository, ITransacti
 internal sealed class FakeAllowanceRepository : IMonthlyAllowanceRepository, ITransactionalFakeState
 {
     public List<MonthlyAllowance> Values { get; } = [];
+    public int GetForPeriodCalls { get; private set; }
     public Task<IReadOnlyList<MonthlyAllowance>> GetForPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
     {
+        GetForPeriodCalls++;
         return Task.FromResult<IReadOnlyList<MonthlyAllowance>>([.. Values.Where(x => x.PayrollPeriodKey == payrollPeriodKey)]);
     }
 
@@ -644,9 +648,16 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
         ReplaceCalls++;
         if (!ConsumeResult || !entries.TryGetValue(preparedImportId, out var entry) || entry.State != FakeStagingState.Validated)
             return Task.FromResult(false);
+        var previousLiveData = LiveData.ToArray();
         LiveData.Clear(); LiveData.AddRange(entry.Records);
         entries[preparedImportId] = (FakeStagingState.Consumed, entry.Records);
-        if (ConsumeFailureAfterReplacement is not null) throw ConsumeFailureAfterReplacement;
+        if (ConsumeFailureAfterReplacement is not null)
+        {
+            LiveData.Clear();
+            LiveData.AddRange(previousLiveData);
+            entries[preparedImportId] = (FakeStagingState.Validated, entry.Records);
+            throw ConsumeFailureAfterReplacement;
+        }
         return Task.FromResult(true);
     }
     public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken)

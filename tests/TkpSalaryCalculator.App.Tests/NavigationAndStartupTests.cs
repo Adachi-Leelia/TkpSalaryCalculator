@@ -214,6 +214,8 @@ public sealed class NavigationAndStartupTests
             return Task.FromResult(period);
         }
 
+        public Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
             ReplaceClosingRuleCommand command,
             CancellationToken cancellationToken) => throw new NotSupportedException();

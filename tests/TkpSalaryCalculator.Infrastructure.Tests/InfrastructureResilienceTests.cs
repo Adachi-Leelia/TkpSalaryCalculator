@@ -37,6 +37,60 @@ public sealed partial class InfrastructureResilienceTests
             "SELECT COUNT(*) FROM app_metadata WHERE id = 1 AND initial_snapshot_id IS NOT NULL;"));
         Assert.Equal(5L, await ScalarLongAsync(after, "SELECT COUNT(*) FROM service_preset;"));
         Assert.Equal(35L, await ScalarLongAsync(after, "SELECT COUNT(*) FROM holiday_date;"));
+        Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(after,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
+    }
+
+    [Fact]
+    public async Task BootstrapDisabledDatabaseKeepsInstallationMarkerUnapplied()
+    {
+        await using var fixture = TestDatabase.CreateUninitialized(bootstrapDefaults: false);
+
+        await fixture.Database.InitializeAsync();
+
+        await using var connection = await fixture.OpenAsync();
+        Assert.Equal(0L, await ScalarLongAsync(connection,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
+        Assert.Equal(0L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM holiday_calendar_version;"));
+        Assert.Equal(0L, await ScalarLongAsync(connection,
+            "SELECT COUNT(*) FROM app_metadata WHERE initial_snapshot_id IS NOT NULL;"));
+    }
+
+    [Fact]
+    public async Task ExistingDatabaseBackfillsUnappliedBundledVersionOnceAndCurrentRestartKeepsMarker()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        await using (var connection = await fixture.OpenAsync())
+            await ExecuteAsync(connection, "UPDATE app_metadata SET bundled_bootstrap_version = 0 WHERE id = 1;");
+
+        await new SqliteDatabase(fixture.DatabasePath).InitializeAsync();
+        await new SqliteDatabase(fixture.DatabasePath).InitializeAsync();
+
+        await using var reopened = await fixture.OpenAsync();
+        Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(reopened,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
+        Assert.Equal(35L, await ScalarLongAsync(reopened, "SELECT COUNT(*) FROM holiday_date;"));
+    }
+
+    [Fact]
+    public async Task CurrentBundledMarkerRestartDoesNotAttemptHolidayInsertsOrChangeDatabase()
+    {
+        await using var fixture = await TestDatabase.CreateAsync();
+        await using var observer = await fixture.OpenAsync();
+        await ExecuteAsync(observer, """
+            CREATE TRIGGER reject_redundant_bundled_holiday_insert
+            BEFORE INSERT ON holiday_date
+            BEGIN
+                SELECT RAISE(ABORT, 'redundant bundled holiday insert');
+            END;
+            """);
+        var dataVersionBefore = await ScalarLongAsync(observer, "PRAGMA data_version;");
+
+        await new SqliteDatabase(fixture.DatabasePath).InitializeAsync();
+
+        Assert.Equal(dataVersionBefore, await ScalarLongAsync(observer, "PRAGMA data_version;"));
+        Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(observer,
+            "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
     }
 
     [Fact]
@@ -408,7 +462,7 @@ public sealed partial class InfrastructureResilienceTests
             return Task.FromResult(new TestDatabase(root));
         }
 
-        private static TestDatabase CreateUninitialized(bool bootstrapDefaults)
+        internal static TestDatabase CreateUninitialized(bool bootstrapDefaults)
         {
             var root = Path.Combine(Path.GetTempPath(), $"tkp-infrastructure-resilience-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);

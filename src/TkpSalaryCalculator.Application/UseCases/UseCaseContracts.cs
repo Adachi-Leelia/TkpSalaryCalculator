@@ -161,6 +161,11 @@ public interface IPayrollPeriodSettingsUseCase
         DateOnly localDate,
         CancellationToken cancellationToken);
 
+    /// <summary>月額手当画面に必要な期間境界と手当を、給与計算を行わず取得します。</summary>
+    Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(
+        PayrollPeriodKey payrollPeriodKey,
+        CancellationToken cancellationToken);
+
     /// <summary>締め日変更後の最初の給与期間を、副作用なく現在の期間と比較します。</summary>
     Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
         ReplaceClosingRuleCommand command,

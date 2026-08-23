@@ -359,7 +359,9 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         return preview;
     }
 
-    // DATA-002/DATA-007: only this transaction deletes and replaces live rows.
+    // DATA-002/DATA-007: replacement is committed before installation-local bootstrap is applied.
+    // A temporary snapshot of the old live rows remains on the same connection until bootstrap succeeds,
+    // so a bootstrap or final-validation failure can restore the pre-import database before returning.
     public async Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId,
         DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {
@@ -376,64 +378,88 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             return false;
         }
 
-        // When Application already opened the live transaction, defer the non-database state transition
-        // until that outer transaction actually commits or rolls back.
-        var ambient = liveDatabase.AmbientTransaction;
         try
         {
-            var replaced = await liveDatabase.WriteAsync(async (live, transaction, token) =>
+            if (liveDatabase.AmbientTransaction is not null)
+                throw new InvalidOperationException("Import replacement must own its transaction boundary.");
+
+            await using (var stage = await OpenStageConnectionAsync(stagePath, cancellationToken).ConfigureAwait(false))
+            await using (var stagedState = stage.CreateCommand())
             {
-                await using (var stage = await OpenStageConnectionAsync(stagePath, token).ConfigureAwait(false))
-                await using (var stagedState = stage.CreateCommand())
+                stagedState.CommandText = "SELECT is_validated FROM staged_state WHERE id = 1;";
+                if (Convert.ToInt64(await stagedState.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+                        CultureInfo.InvariantCulture) != 1)
                 {
-                    stagedState.CommandText = "SELECT is_validated FROM staged_state WHERE id = 1;";
-                    if (Convert.ToInt64(await stagedState.ExecuteScalarAsync(token).ConfigureAwait(false),
-                            CultureInfo.InvariantCulture) != 1)
-                        return false;
+                    active.TryUpdate(preparedImportId.Value, PreparedImportState.Validated,
+                        PreparedImportState.Consuming);
+                    return false;
                 }
+            }
 
-                var candidate = new SqliteDatabase(candidatePath, bootstrapDefaults: false);
-                await candidate.InitializeAsync(token).ConfigureAwait(false);
-                await using var source = await candidate.OpenConnectionAsync(token).ConfigureAwait(false);
+            var candidate = new SqliteDatabase(candidatePath, bootstrapDefaults: false);
+            await candidate.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            await using var source = await candidate.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var live = await liveDatabase.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-                await SqliteDatabase.ExecuteNonQueryAsync(live, transaction, "PRAGMA defer_foreign_keys = ON;", token)
-                    .ConfigureAwait(false);
-                foreach (var table in DeleteOrder)
-                    await SqliteDatabase.ExecuteNonQueryAsync(live, transaction, $"DELETE FROM {table};", token)
+            await using (var replacement = live.BeginTransaction(deferred: false))
+            {
+                try
+                {
+                    await CreateLiveBackupAsync(live, replacement, cancellationToken).ConfigureAwait(false);
+                    await SqliteDatabase.ExecuteNonQueryAsync(live, replacement, "PRAGMA defer_foreign_keys = ON;",
+                        cancellationToken).ConfigureAwait(false);
+                    foreach (var table in DeleteOrder)
+                        await SqliteDatabase.ExecuteNonQueryAsync(live, replacement, $"DELETE FROM {table};",
+                            cancellationToken).ConfigureAwait(false);
+                    foreach (var table in InsertOrder)
+                        await CopyTableAsync(source, live, replacement, table, cancellationToken).ConfigureAwait(false);
+                    await CopyImportedMetadataAsync(source, live, replacement, importedAtUtc, cancellationToken)
                         .ConfigureAwait(false);
-                foreach (var table in InsertOrder)
-                    await CopyTableAsync(source, live, transaction, table, token).ConfigureAwait(false);
-                await CopyImportedMetadataAsync(source, live, transaction, importedAtUtc, token).ConfigureAwait(false);
-                // App-bundled holiday data is installation data rather than user data. Reinstall the immutable
-                // version in the same replacement transaction; an imported initial snapshot prevents defaults
-                // from being added to the user's settings. Bootstrap validates the reserved ID before insertion.
-                await SqliteDatabase.BootstrapVersionOneAsync(live, transaction, SqliteValue.Utc(importedAtUtc), token)
-                    .ConfigureAwait(false);
-                await ValidateCandidateAsync(live, transaction, FormatVersion, token).ConfigureAwait(false);
-                return true;
-            }, cancellationToken).ConfigureAwait(false);
-
-            if (!replaced)
-            {
-                active.TryUpdate(preparedImportId.Value, PreparedImportState.Validated,
-                    PreparedImportState.Consuming);
-                return false;
+                    await replacement.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    await RollbackBestEffortAsync(replacement).ConfigureAwait(false);
+                    throw;
+                }
             }
 
-            if (ambient is null)
+            try
             {
-                active.TryUpdate(preparedImportId.Value, PreparedImportState.Consumed,
-                    PreparedImportState.Consuming);
+                // Once replacement is committed, ignore caller cancellation until the database is either
+                // bootstrapped successfully or restored to the pre-import snapshot.
+                await using var bootstrap = live.BeginTransaction(deferred: false);
+                try
+                {
+                    await SqliteDatabase.BootstrapVersionOneAsync(live, bootstrap, SqliteValue.Utc(importedAtUtc),
+                        CancellationToken.None).ConfigureAwait(false);
+                    await ValidateCandidateAsync(live, bootstrap, FormatVersion, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    await bootstrap.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    await RollbackBestEffortAsync(bootstrap).ConfigureAwait(false);
+                    throw;
+                }
             }
-            else
+            catch (Exception bootstrapFailure)
             {
-                ambient.RegisterCompletion(
-                    () => active.TryUpdate(preparedImportId.Value, PreparedImportState.Consumed,
-                        PreparedImportState.Consuming),
-                    () => active.TryUpdate(preparedImportId.Value, PreparedImportState.Validated,
-                        PreparedImportState.Consuming));
+                try
+                {
+                    await RestoreLiveBackupAsync(live, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception restoreFailure)
+                {
+                    throw new AggregateException(
+                        "Bundled bootstrap failed after import and the pre-import database could not be restored.",
+                        bootstrapFailure, restoreFailure);
+                }
+                throw;
             }
 
+            active.TryUpdate(preparedImportId.Value, PreparedImportState.Consumed,
+                PreparedImportState.Consuming);
             return true;
         }
         catch
@@ -442,6 +468,58 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
                 PreparedImportState.Consuming);
             throw;
         }
+    }
+
+    private static async Task CreateLiveBackupAsync(SqliteConnection live, SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        foreach (var table in InsertOrder)
+        {
+            await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
+                $"CREATE TEMP TABLE import_backup_{table.Name} AS SELECT {string.Join(", ", table.Columns)} FROM {table.Name};",
+                cancellationToken).ConfigureAwait(false);
+        }
+        await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
+            $"CREATE TEMP TABLE import_backup_app_metadata AS SELECT {string.Join(", ", MetadataColumns)} FROM app_metadata;",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task RestoreLiveBackupAsync(SqliteConnection live, CancellationToken cancellationToken)
+    {
+        await using var transaction = live.BeginTransaction(deferred: false);
+        try
+        {
+            await SqliteDatabase.ExecuteNonQueryAsync(live, transaction, "PRAGMA defer_foreign_keys = ON;",
+                cancellationToken).ConfigureAwait(false);
+            foreach (var table in DeleteOrder)
+                await SqliteDatabase.ExecuteNonQueryAsync(live, transaction, $"DELETE FROM {table};",
+                    cancellationToken).ConfigureAwait(false);
+            await SqliteDatabase.ExecuteNonQueryAsync(live, transaction, "DELETE FROM app_metadata;",
+                cancellationToken).ConfigureAwait(false);
+            foreach (var table in InsertOrder)
+            {
+                var columns = string.Join(", ", table.Columns);
+                await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
+                    $"INSERT INTO {table.Name}({columns}) SELECT {columns} FROM import_backup_{table.Name};",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            var metadataColumns = string.Join(", ", MetadataColumns);
+            await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
+                $"INSERT INTO app_metadata({metadataColumns}) SELECT {metadataColumns} FROM import_backup_app_metadata;",
+                cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await RollbackBestEffortAsync(transaction).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task RollbackBestEffortAsync(SqliteTransaction transaction)
+    {
+        try { await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch { /* Preserve the operation failure. Disposing the connection also rolls back an open transaction. */ }
     }
 
     public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken)
@@ -848,7 +926,8 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             UPDATE app_metadata SET initial_setup_status = 'Completed', initial_setup_step = NULL,
                 initial_snapshot_id = $initial, export_format_version = $version,
                 last_exported_at_utc = $now, last_data_changed_at_utc = $now,
-                backup_reminder_deferred_until_date = NULL, created_at_utc = $created, updated_at_utc = $now
+                backup_reminder_deferred_until_date = NULL, created_at_utc = $created, updated_at_utc = $now,
+                bundled_bootstrap_version = 0
             WHERE id = 1;
             """;
         update.Parameters.AddWithValue("$initial", initial);
@@ -950,6 +1029,13 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         new("closing_rule_history", "id", "effective_from_year_month", "closing_day", "is_end_of_month", "created_at_utc"),
         new("monthly_allowance", "id", "payroll_period_year_month", "display_name", "amount_yen", "created_at_utc", "updated_at_utc"),
         new("setting_month", "year_month", "snapshot_id", "created_at_utc", "updated_at_utc"),
+    ];
+
+    private static readonly string[] MetadataColumns =
+    [
+        "id", "initial_setup_status", "initial_setup_step", "initial_snapshot_id", "export_format_version",
+        "last_exported_at_utc", "last_data_changed_at_utc", "backup_reminder_deferred_until_date",
+        "created_at_utc", "updated_at_utc", "bundled_bootstrap_version",
     ];
 
     private static readonly string[] DeleteOrder =

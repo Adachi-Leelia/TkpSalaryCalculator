@@ -572,6 +572,29 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task MonthlyAllowancePeriodQueryReadsOnlyBoundariesAndAllowancesOnce()
+    {
+        var context = new TestContext();
+        var key = new PayrollPeriodKey(new YearMonth(2026, 8));
+        context.Closing.Values.Add(new ClosingRule(new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1000, 1)), 20));
+        var allowance = new MonthlyAllowance(new MonthlyAllowanceId(Guid.NewGuid()), key,
+            "資格手当", new YenAmount(5_000));
+        context.Allowances.Values.Add(allowance);
+        var useCase = new PayrollPeriodSettingsUseCase(context.Closing, context.Allowances,
+            context.Transactions, context.Metadata, context.Clock, context.Periods);
+
+        var result = await useCase.GetMonthlyAllowancePeriodAsync(key, default);
+
+        Assert.Equal(new DateOnly(2026, 7, 21), result.Period.StartDate);
+        Assert.Equal(new DateOnly(2026, 8, 20), result.Period.EndDate);
+        Assert.Equal(allowance.Id, Assert.Single(result.Allowances).Id);
+        Assert.Equal(1, context.Closing.GetHistoryCalls);
+        Assert.Equal(1, context.Allowances.GetForPeriodCalls);
+        Assert.Empty(context.Works.Values);
+    }
+
+    [Fact]
     public async Task FirstClosingRule_IsPersistedAsBaselineAndUsedForPeriodCalculation()
     {
         var context = new TestContext();

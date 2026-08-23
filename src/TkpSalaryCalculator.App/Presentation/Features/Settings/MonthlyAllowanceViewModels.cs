@@ -25,7 +25,6 @@ public sealed record MonthlyAllowanceRow(
 public sealed class MonthlyAllowanceViewModel : ViewModelBase
 {
     private readonly IPayrollPeriodSettingsUseCase periods;
-    private readonly ISalaryQueryUseCase salaryQuery;
     private readonly ISettingsNavigator navigator;
     private readonly IConfirmationDialogService dialogs;
     private readonly IAppSessionState sessionState;
@@ -40,7 +39,6 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
 
     public MonthlyAllowanceViewModel(
         IPayrollPeriodSettingsUseCase periods,
-        ISalaryQueryUseCase salaryQuery,
         ISettingsNavigator navigator,
         IConfirmationDialogService dialogs,
         IAppSessionState sessionState,
@@ -50,7 +48,6 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
         IUserErrorPresenter errorPresenter) : base(errorPresenter)
     {
         this.periods = periods ?? throw new ArgumentNullException(nameof(periods));
-        this.salaryQuery = salaryQuery ?? throw new ArgumentNullException(nameof(salaryQuery));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
@@ -120,12 +117,9 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
     {
         await ResolvePeriodAsync(cancellationToken);
         var key = periodKey!.Value;
-        var summaryTask = salaryQuery.GetPayrollPeriodAsync(key, cancellationToken);
-        var allowanceTask = periods.GetAllowancesAsync(key, cancellationToken);
-        await Task.WhenAll(summaryTask, allowanceTask);
-        var summary = await summaryTask;
-        var allowances = await allowanceTask;
-        PeriodText = $"対象給与期間: {key.Value.Year}年{key.Value.Month}月分（{formatter.Date(summary.Period.StartDate, false)}～{formatter.Date(summary.Period.EndDate, false)}）";
+        var screen = await periods.GetMonthlyAllowancePeriodAsync(key, cancellationToken);
+        var allowances = screen.Allowances;
+        PeriodText = $"対象給与期間: {key.Value.Year}年{key.Value.Month}月分（{formatter.Date(screen.Period.StartDate, false)}～{formatter.Date(screen.Period.EndDate, false)}）";
         TotalText = $"手当合計: {formatter.Money(new YenAmount(allowances.Sum(x => x.Amount.Value)))}";
         Rows = allowances.Select(x => new MonthlyAllowanceRow(
             x.Id, x.DisplayName, formatter.Money(x.Amount),

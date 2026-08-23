@@ -41,9 +41,10 @@ public sealed class TimeZoneLocalDateConverter(TimeZoneInfo timeZone) : ILocalDa
 /// <summary>接続設定、スキーマ更新および Ambient トランザクションを所有します。</summary>
 public sealed class SqliteDatabase
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     public const int CurrentSettingSnapshotSchemaVersion = 1;
     public const int CurrentExportFormatVersion = 1;
+    public const int CurrentBundledBootstrapVersion = 1;
 
     private readonly string connectionString;
     private readonly bool bootstrapDefaults;
@@ -234,8 +235,36 @@ public sealed class SqliteDatabase
             0 => await MigrateFromZeroToOneAsync(connection, bootstrapDefaults, cancellationToken)
                 .ConfigureAwait(false),
             1 => await MigrateFromOneToTwoAsync(connection, cancellationToken).ConfigureAwait(false),
+            2 => await MigrateFromTwoToThreeAsync(connection, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"No migration from schema version {fromVersion} is available."),
         };
+    }
+
+    private static async Task<int> MigrateFromTwoToThreeAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            if (!await HasColumnAsync(connection, transaction, "app_metadata", "bundled_bootstrap_version",
+                    cancellationToken).ConfigureAwait(false))
+            {
+                await ExecuteNonQueryAsync(connection, transaction, """
+                    ALTER TABLE app_metadata ADD COLUMN bundled_bootstrap_version INTEGER NOT NULL DEFAULT 0
+                        CHECK(bundled_bootstrap_version >= 0);
+                    """, cancellationToken).ConfigureAwait(false);
+            }
+            await ExecuteNonQueryAsync(connection, transaction, "PRAGMA user_version = 3;", cancellationToken)
+                .ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 3;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async Task<int> MigrateFromOneToTwoAsync(
@@ -277,8 +306,9 @@ public sealed class SqliteDatabase
                     INSERT OR IGNORE INTO app_metadata(
                         id, initial_setup_status, initial_setup_step, initial_snapshot_id,
                         export_format_version, last_exported_at_utc, last_data_changed_at_utc,
-                        backup_reminder_deferred_until_date, created_at_utc, updated_at_utc)
-                    VALUES (1, 'NotStarted', NULL, NULL, $format, NULL, NULL, NULL, $now, $now);
+                        backup_reminder_deferred_until_date, created_at_utc, updated_at_utc,
+                        bundled_bootstrap_version)
+                    VALUES (1, 'NotStarted', NULL, NULL, $format, NULL, NULL, NULL, $now, $now, 0);
                     """;
                 command.Parameters.AddWithValue("$format", CurrentExportFormatVersion);
                 command.Parameters.AddWithValue("$now", now);
@@ -302,11 +332,19 @@ public sealed class SqliteDatabase
 
     private static async Task EnsureBootstrapAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
+        if (await GetBundledBootstrapVersionAsync(connection, null, cancellationToken).ConfigureAwait(false)
+            >= CurrentBundledBootstrapVersion)
+            return;
+
         await using var transaction = connection.BeginTransaction(deferred: false);
         try
         {
-            await BootstrapVersionOneAsync(connection, transaction, SqliteValue.Utc(DateTimeOffset.UtcNow),
-                cancellationToken).ConfigureAwait(false);
+            if (await GetBundledBootstrapVersionAsync(connection, transaction, cancellationToken).ConfigureAwait(false)
+                < CurrentBundledBootstrapVersion)
+            {
+                await BootstrapVersionOneAsync(connection, transaction, SqliteValue.Utc(DateTimeOffset.UtcNow),
+                    cancellationToken).ConfigureAwait(false);
+            }
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -358,7 +396,11 @@ public sealed class SqliteDatabase
             metadata.Transaction = transaction;
             metadata.CommandText = "SELECT initial_snapshot_id FROM app_metadata WHERE id = 1;";
             if (await metadata.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is string)
+            {
+                await SetBundledBootstrapVersionAsync(connection, transaction, cancellationToken)
+                    .ConfigureAwait(false);
                 return;
+            }
         }
 
         await using (var defaults = connection.CreateCommand())
@@ -453,6 +495,41 @@ public sealed class SqliteDatabase
         updateMetadata.Parameters.AddWithValue("$snapshot", BundledBootstrapData.InitialSnapshotId);
         updateMetadata.Parameters.AddWithValue("$now", now);
         await updateMetadata.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await SetBundledBootstrapVersionAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<int> GetBundledBootstrapVersionAsync(SqliteConnection connection,
+        SqliteTransaction? transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;";
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+    }
+
+    private static async Task SetBundledBootstrapVersionAsync(SqliteConnection connection,
+        SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE app_metadata SET bundled_bootstrap_version = $version WHERE id = 1;
+            """;
+        command.Parameters.AddWithValue("$version", CurrentBundledBootstrapVersion);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> HasColumnAsync(SqliteConnection connection, SqliteTransaction transaction,
+        string tableName, string columnName, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"PRAGMA table_info({tableName});";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            if (StringComparer.Ordinal.Equals(reader.GetString(1), columnName)) return true;
+        return false;
     }
 
     internal static async Task ValidateBundledHolidayCalendarCollisionAsync(SqliteConnection connection,
@@ -788,6 +865,7 @@ public sealed class SqliteDatabase
                 backup_reminder_deferred_until_date IS NULL OR length(backup_reminder_deferred_until_date) = 10),
             created_at_utc TEXT NOT NULL,
             updated_at_utc TEXT NOT NULL,
+            bundled_bootstrap_version INTEGER NOT NULL DEFAULT 0 CHECK(bundled_bootstrap_version >= 0),
             FOREIGN KEY (initial_snapshot_id) REFERENCES setting_snapshot(id) ON DELETE RESTRICT
         );
 

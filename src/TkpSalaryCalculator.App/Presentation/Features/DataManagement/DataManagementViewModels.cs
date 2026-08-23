@@ -141,6 +141,7 @@ public sealed class DataManagementViewModel : ViewModelBase
     private void ResetSession()
     {
         var today = localDates.ToLocalDate(clock.UtcNow);
+        sessionState.InitialSetupState = null;
         sessionState.SelectedRootRoute = NavigationRoutes.Home;
         sessionState.CalendarMonth = new YearMonth(today.Year, today.Month);
         sessionState.SelectedCalendarDate = today;

@@ -389,6 +389,8 @@ public sealed class HomeViewModelTests
             return Task.FromResult(current);
         }
 
+        public Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
             ReplaceClosingRuleCommand command,
             CancellationToken cancellationToken) => throw new NotSupportedException();

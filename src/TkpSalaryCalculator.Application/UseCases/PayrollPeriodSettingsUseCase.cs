@@ -38,6 +38,30 @@ public sealed class PayrollPeriodSettingsUseCase(IClosingRuleRepository closingR
     }
 
     /// <inheritdoc />
+    public async Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(
+        PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
+    {
+        ApplicationSupport.ValidatePayrollPeriodKey(payrollPeriodKey, nameof(payrollPeriodKey));
+        cancellationToken.ThrowIfCancellationRequested();
+        var historyTask = closingRules.GetHistoryAsync(cancellationToken);
+        var allowanceTask = allowances.GetForPeriodAsync(payrollPeriodKey, cancellationToken);
+        await Task.WhenAll(historyTask, allowanceTask).ConfigureAwait(false);
+        var history = ClosingRuleHistorySupport.ForCalculation(await historyTask.ConfigureAwait(false));
+        if (history.Count == 0)
+        {
+            throw new ApplicationErrorException(
+                "CLOSING_RULE_REQUIRED",
+                "給与算定期間を決定するため、締め日を設定してください。");
+        }
+
+        var period = periodCalculator.GetPeriod(payrollPeriodKey, history);
+        var periodAllowances = (await allowanceTask.ConfigureAwait(false))
+            .Select(x => new MonthlyAllowanceDto(x.Id, x.DisplayName, x.Amount))
+            .ToArray();
+        return new MonthlyAllowancePeriodDto(period, periodAllowances);
+    }
+
+    /// <inheritdoc />
     public async Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
         ReplaceClosingRuleCommand command, CancellationToken cancellationToken)
     {

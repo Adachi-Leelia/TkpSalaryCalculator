@@ -227,6 +227,78 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task PERF09_MonthlyAllowanceListLoadsPeriodScreenWithoutSalaryCalculationAndMovesPeriods()
+    {
+        var augustKey = new PayrollPeriodKey(August);
+        var septemberKey = new PayrollPeriodKey(new YearMonth(2026, 9));
+        var periodSettings = new PeriodSettingsStub();
+        periodSettings.AllowancePeriods[augustKey] = new MonthlyAllowancePeriodDto(
+            new PayrollPeriod(augustKey, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)),
+            [new MonthlyAllowanceDto(new MonthlyAllowanceId(Guid.NewGuid()), "資格手当", new YenAmount(5_000))]);
+        periodSettings.AllowancePeriods[septemberKey] = new MonthlyAllowancePeriodDto(
+            new PayrollPeriod(septemberKey, new DateOnly(2026, 8, 21), new DateOnly(2026, 9, 20)), []);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22)) { PayrollPeriod = augustKey };
+        var viewModel = new MonthlyAllowanceViewModel(periodSettings, new SettingsNavigatorStub(),
+            new DialogStub(), session, new FixedClock(), new FixedLocalDate(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+
+        await viewModel.LoadAsync();
+        await viewModel.MoveAsync(1);
+
+        Assert.Equal([augustKey, septemberKey], periodSettings.AllowancePeriodCalls);
+        Assert.Equal("対象給与期間: 2026年9月分（2026年8月21日～2026年9月20日）", viewModel.PeriodText);
+        Assert.Equal("手当合計: 0円", viewModel.TotalText);
+        Assert.Empty(viewModel.Rows);
+        Assert.Equal(septemberKey, session.PayrollPeriod);
+    }
+
+    [Fact]
+    public async Task MonthlyAllowanceDeleteReloadsTheLightweightPeriodScreen()
+    {
+        var key = new PayrollPeriodKey(August);
+        var allowance = new MonthlyAllowanceDto(new MonthlyAllowanceId(Guid.NewGuid()), "資格手当", new YenAmount(5_000));
+        var periodSettings = new PeriodSettingsStub();
+        periodSettings.AllowancePeriods[key] = new MonthlyAllowancePeriodDto(
+            new PayrollPeriod(key, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)), [allowance]);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22)) { PayrollPeriod = key };
+        var viewModel = new MonthlyAllowanceViewModel(periodSettings, new SettingsNavigatorStub(),
+            new DialogStub { Result = true }, session, new FixedClock(), new FixedLocalDate(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+        await viewModel.LoadAsync();
+
+        await Assert.Single(viewModel.Rows).Delete();
+
+        Assert.Equal(allowance.Id, periodSettings.DeletedAllowanceId);
+        Assert.Equal(2, periodSettings.AllowancePeriodCalls.Count);
+        Assert.Empty(viewModel.Rows);
+        Assert.Equal("月額手当を削除しました。", viewModel.SuccessMessage);
+    }
+
+    [Fact]
+    public async Task MonthlyAllowanceEditorSaveInvalidatesAllowanceDataAndReturnsToList()
+    {
+        var key = new PayrollPeriodKey(August);
+        var periodSettings = new PeriodSettingsStub();
+        var navigator = new SettingsNavigatorStub();
+        var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var generationBefore = session.GetDataGeneration(AppDataChangeKind.MonthlyAllowances);
+        var viewModel = new MonthlyAllowanceEditorViewModel(periodSettings, navigator,
+            new UserErrorPresenter(), new DialogStub(), session);
+        viewModel.Initialize(key, null);
+        await viewModel.LoadAsync();
+        viewModel.DisplayName = "資格手当";
+        viewModel.AmountText = "5000";
+
+        await viewModel.SaveAsync();
+
+        Assert.Equal("資格手当", periodSettings.LastAllowanceCommand!.DisplayName);
+        Assert.Equal(5_000, periodSettings.LastAllowanceCommand.Amount.Value);
+        Assert.Equal("月額手当を保存しました。", navigator.SuccessMessage);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.MonthlyAllowances) > generationBefore);
+        Assert.False(viewModel.IsDirty);
+    }
+
+    [Fact]
     public async Task BasicShiftList_ResolvesNamesWithoutLoadingRankedInputCandidates()
     {
         var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
@@ -392,6 +464,10 @@ public sealed class SettingsViewModelTests
     private sealed class PeriodSettingsStub : IPayrollPeriodSettingsUseCase
     {
         public List<string>? SharedEvents { get; init; }
+        public Dictionary<PayrollPeriodKey, MonthlyAllowancePeriodDto> AllowancePeriods { get; } = [];
+        public List<PayrollPeriodKey> AllowancePeriodCalls { get; } = [];
+        public MonthlyAllowanceId? DeletedAllowanceId { get; private set; }
+        public SaveMonthlyAllowanceCommand? LastAllowanceCommand { get; private set; }
         public ReplaceClosingRuleCommand? LastCommand { get; private set; }
         public Task<EffectiveClosingRuleDto?> GetClosingRuleAsync(PayrollPeriodKey key, CancellationToken token) =>
             Task.FromResult<EffectiveClosingRuleDto?>(new(key, new ClosingRuleId(Guid.NewGuid()), new PayrollPeriodKey(new YearMonth(2025, 1)), 20));
@@ -405,9 +481,31 @@ public sealed class SettingsViewModelTests
         }
         public Task ReplaceClosingRuleAsync(ReplaceClosingRuleCommand command, ClosingRuleReplacementConfirmationToken confirmationToken, CancellationToken token) { SharedEvents?.Add("replace-period"); LastCommand = command; return Task.CompletedTask; }
         public Task<PayrollPeriod> FindPeriodAsync(DateOnly localDate, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<IReadOnlyList<MonthlyAllowanceDto>> GetAllowancesAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<MonthlyAllowanceDto> SaveAllowanceAsync(SaveMonthlyAllowanceCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task DeleteAllowanceAsync(MonthlyAllowanceId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
+        {
+            AllowancePeriodCalls.Add(payrollPeriodKey);
+            return Task.FromResult(AllowancePeriods[payrollPeriodKey]);
+        }
+        public Task<IReadOnlyList<MonthlyAllowanceDto>> GetAllowancesAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) =>
+            Task.FromResult(AllowancePeriods.TryGetValue(payrollPeriodKey, out var value)
+                ? value.Allowances
+                : (IReadOnlyList<MonthlyAllowanceDto>)[]);
+        public Task<MonthlyAllowanceDto> SaveAllowanceAsync(SaveMonthlyAllowanceCommand command, CancellationToken cancellationToken)
+        {
+            LastAllowanceCommand = command;
+            return Task.FromResult(new MonthlyAllowanceDto(command.Id ?? new MonthlyAllowanceId(Guid.NewGuid()),
+                command.DisplayName, command.Amount));
+        }
+        public Task DeleteAllowanceAsync(MonthlyAllowanceId id, CancellationToken cancellationToken)
+        {
+            DeletedAllowanceId = id;
+            foreach (var pair in AllowancePeriods.ToArray())
+                AllowancePeriods[pair.Key] = pair.Value with
+                {
+                    Allowances = pair.Value.Allowances.Where(x => x.Id != id).ToArray(),
+                };
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class SettingsNavigatorStub : ISettingsNavigator
