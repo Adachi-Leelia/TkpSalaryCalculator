@@ -60,6 +60,7 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
         PreviousCommand = new AsyncCommand(() => MoveAsync(-1), PresentError);
         NextCommand = new AsyncCommand(() => MoveAsync(1), PresentError);
         AddCommand = new AsyncCommand(AddAsync, PresentError);
+        ReloadCommand = new AsyncCommand(LoadAsync, PresentError);
     }
 
     public string PeriodText { get => periodText; private set => SetProperty(ref periodText, value); }
@@ -89,6 +90,7 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
     public AsyncCommand PreviousCommand { get; }
     public AsyncCommand NextCommand { get; }
     public AsyncCommand AddCommand { get; }
+    public AsyncCommand ReloadCommand { get; }
 
     public void SetPeriod(PayrollPeriodKey? value) => periodKey = value;
     public void SetSuccessMessage(string? value) => SuccessMessage = value ?? string.Empty;

@@ -19,15 +19,36 @@ public sealed class ShellHomeNavigator(IAppSessionState sessionState) : IHomeNav
     }
 
     public Task OpenCalculationDetailsAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) =>
-        NavigatePeriodAsync(NavigationRoutes.CalculationDetails, "計算内訳", payrollPeriodKey, cancellationToken);
+        NavigatePayrollPeriodAsync(
+            NavigationRoutes.CalculationDetails,
+            CalculationDetailPage.PayrollPeriodParameter,
+            payrollPeriodKey,
+            cancellationToken);
 
     public Task OpenMonthlyAllowancesAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) =>
-        NavigatePeriodAsync(NavigationRoutes.MonthlyAllowances, "月額手当", payrollPeriodKey, cancellationToken);
+        NavigatePayrollPeriodAsync(
+            NavigationRoutes.MonthlyAllowances,
+            MonthlyAllowancePage.PayrollPeriodParameter,
+            payrollPeriodKey,
+            cancellationToken);
 
     public Task OpenUncalculatedDaysAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) =>
-        NavigatePeriodAsync(NavigationRoutes.UncalculatedDays, "未計算の勤務", payrollPeriodKey, cancellationToken);
+        NavigateHomeDestinationAsync(NavigationRoutes.UncalculatedDays, "未計算の勤務", payrollPeriodKey, cancellationToken);
 
-    private static Task NavigatePeriodAsync(
+    private static Task NavigatePayrollPeriodAsync(
+        string route,
+        string payrollPeriodParameter,
+        PayrollPeriodKey payrollPeriodKey,
+        CancellationToken cancellationToken)
+    {
+        var parameters = new ShellNavigationQueryParameters
+        {
+            [payrollPeriodParameter] = FormatPayrollPeriod(payrollPeriodKey),
+        };
+        return NavigateAsync(route, parameters, cancellationToken);
+    }
+
+    private static Task NavigateHomeDestinationAsync(
         string route,
         string destination,
         PayrollPeriodKey payrollPeriodKey,
@@ -36,11 +57,13 @@ public sealed class ShellHomeNavigator(IAppSessionState sessionState) : IHomeNav
         var parameters = new ShellNavigationQueryParameters
         {
             [HomeDestinationPage.DestinationParameter] = destination,
-            [HomeDestinationPage.PayrollPeriodParameter] =
-                $"{payrollPeriodKey.Value.Year:D4}-{payrollPeriodKey.Value.Month:D2}",
+            [HomeDestinationPage.PayrollPeriodParameter] = FormatPayrollPeriod(payrollPeriodKey),
         };
         return NavigateAsync(route, parameters, cancellationToken);
     }
+
+    private static string FormatPayrollPeriod(PayrollPeriodKey payrollPeriodKey) =>
+        $"{payrollPeriodKey.Value.Year:D4}-{payrollPeriodKey.Value.Month:D2}";
 
     private static Task NavigateAsync(
         string route,
@@ -68,7 +91,6 @@ internal static class HomeRouteRegistration
     {
         if (Interlocked.Exchange(ref registered, 1) != 0) return;
         Routing.RegisterRoute(NavigationRoutes.CalculationDetails, typeof(CalculationDetailPage));
-        Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances, typeof(MonthlyAllowancePage));
         Routing.RegisterRoute(NavigationRoutes.UncalculatedDays, typeof(HomeDestinationPage));
     }
 }
