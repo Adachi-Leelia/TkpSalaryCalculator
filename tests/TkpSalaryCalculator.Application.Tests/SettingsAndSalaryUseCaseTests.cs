@@ -3,6 +3,50 @@ namespace TkpSalaryCalculator.Application.Tests;
 public sealed class SettingsAndSalaryUseCaseTests
 {
     [Fact]
+    public async Task CloneAndReplaceWithServicePreset_SavesSnapshotAndPresetTogether()
+    {
+        var context = new TestContext();
+        var month = new YearMonth(2026, 8);
+        var current = TestData.Snapshot();
+        context.Settings.Months[month] = current;
+        var replacement = new SettingSnapshotReplacementDto(current.Services, current.TimeCategories,
+            current.Rates, current.Premiums, current.CountBonuses);
+        var useCase = new MonthSettingsUseCase(context.Settings, context.Works, context.Holidays,
+            context.Salary, context.Transactions, context.Metadata, context.Clock, context.Presets);
+        var preview = await useCase.PreviewReplacementAsync(month, replacement, default);
+
+        await useCase.CloneAndReplaceWithServicePresetAsync(month, replacement, preview.ConfirmationToken,
+            new ServicePresetChangeCommand(new SaveServicePresetCommand(null, "任意時間", TestData.ServiceId, null,
+                new WorkMinutes(60), new DisplayOrder(0), true), null), default);
+
+        Assert.NotEqual(current.Id, context.Settings.Months[month].Id);
+        var preset = Assert.Single(context.Presets.Values);
+        Assert.Equal(TestData.ServiceId, preset.ServiceId);
+        Assert.Null(preset.TimeCategoryId);
+    }
+
+    [Fact]
+    public async Task CloneAndReplaceWithServicePreset_RollsBackSnapshotWhenPresetSaveFails()
+    {
+        var context = new TestContext();
+        var month = new YearMonth(2026, 8);
+        var current = TestData.Snapshot();
+        context.Settings.Months[month] = current;
+        var replacement = new SettingSnapshotReplacementDto(current.Services, current.TimeCategories,
+            current.Rates, current.Premiums, current.CountBonuses);
+        var useCase = new MonthSettingsUseCase(context.Settings, context.Works, context.Holidays,
+            context.Salary, context.Transactions, context.Metadata, context.Clock, new FailingPresetRepository());
+        var preview = await useCase.PreviewReplacementAsync(month, replacement, default);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => useCase.CloneAndReplaceWithServicePresetAsync(
+            month, replacement, preview.ConfirmationToken,
+            new ServicePresetChangeCommand(new SaveServicePresetCommand(null, "任意時間", TestData.ServiceId, null,
+                new WorkMinutes(60), new DisplayOrder(0), true), null), default));
+
+        Assert.Equal(current.Id, context.Settings.Months[month].Id);
+    }
+
+    [Fact]
     public async Task CloneAndReplace_ChangesOnlyTargetMonthAndMarksChanged()
     {
         var context = new TestContext();
@@ -441,5 +485,16 @@ public sealed class SettingsAndSalaryUseCaseTests
         Assert.Equal(20, (await payroll.GetClosingRuleAsync(key, default))!.ClosingDay);
         await payroll.DeleteAllowanceAsync(allowance.Id, default);
         Assert.Empty(await payroll.GetAllowancesAsync(key, default));
+    }
+    private sealed class FailingPresetRepository : IServicePresetRepository
+    {
+        public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ServicePresetDto>>([]);
+
+        public Task UpsertAsync(ServicePresetDto preset, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("preset save failed");
+
+        public Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("preset delete failed");
     }
 }

@@ -3,12 +3,34 @@
     x:Class="TkpSalaryCalculator.App.Presentation.Features.Settings.SettingsMenuPage"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings"
+    x:DataType="settings:SettingsMenuViewModel"
     Title="設定">
-    <VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="20">
-        <Label Style="{StaticResource PageTitleStyle}" Text="設定" />
-        <controls:EmptyStateView
-            Message="給与設定、基本シフト、データ管理の項目は、各実装段階でこの画面へ追加されます。"
-            Title="設定メニューを準備中です" />
-    </VerticalStackLayout>
+    <ScrollView>
+        <VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="14">
+            <Label Style="{StaticResource PageTitleStyle}" Text="設定" />
+            <Border Padding="14" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 12">
+                <VerticalStackLayout Spacing="10">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="給与設定" />
+                    <Label FontAttributes="Bold" Text="{Binding MonthHeaderText}" />
+                    <Label Style="{StaticResource SupportingTextStyle}" Text="この年月だけの単価・割増・件数加算を編集します。入力補助とデータ管理には適用されません。" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                        <Button Command="{Binding PreviousMonthCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="前の月" />
+                        <Button Grid.Column="1" Command="{Binding NextMonthCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="次の月" />
+                    </Grid>
+                    <Button Command="{Binding CopyPreviousMonthCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="前月の設定をコピー" />
+                </VerticalStackLayout>
+            </Border>
+            <Label IsVisible="{Binding HasSuccessMessage}" Text="{Binding SuccessMessage}" TextColor="{StaticResource Success}" />
+            <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+            <Button Command="{Binding OpenServicesCommand}" Text="サービス・単価" />
+            <Button Command="{Binding OpenPremiumsCommand}" Text="割増" />
+            <Button Command="{Binding OpenCountBonusesCommand}" Text="件数加算" />
+            <Button Command="{Binding OpenPayrollPeriodCommand}" Text="給与期間" />
+            <Label Style="{StaticResource SectionTitleStyle}" Text="入力補助" />
+            <Label Style="{StaticResource SupportingTextStyle}" Text="よく使うサービス設定（全期間共通）は、サービス・単価画面で給与設定と区別して管理できます。" />
+            <Label Style="{StaticResource SectionTitleStyle}" Text="データ・アプリ" />
+            <Label Style="{StaticResource SupportingTextStyle}" Text="データ管理、基本シフト、月額手当、アプリ情報は後続の実装段階で追加します。" />
+        </VerticalStackLayout>
+    </ScrollView>
 </ContentPage>

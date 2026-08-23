@@ -87,3 +87,11 @@ public sealed record SaveServicePresetCommand(
     WorkMinutes DefaultWorkMinutes,
     DisplayOrder DisplayOrder,
     bool IsEnabled);
+
+/// <summary>
+/// 対象年月のサービス設定と同時に確定する、全期間共通の入力候補の変更です。
+/// 保存と削除は同時に指定できません。
+/// </summary>
+public sealed record ServicePresetChangeCommand(
+    SaveServicePresetCommand? Save,
+    ServicePresetId? DeleteId);

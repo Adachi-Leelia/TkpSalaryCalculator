@@ -39,5 +39,13 @@
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Calendar\CalendarViewModel.cs" Link="Production\CalendarViewModel.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Calendar\DayViewModel.cs" Link="Production\DayViewModel.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Calendar\WorkEditorViewModel.cs" Link="Production\WorkEditorViewModel.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\SettingsNavigation.cs" Link="Production\SettingsNavigation.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\SettingsMonthContext.cs" Link="Production\SettingsMonthContext.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\SettingsMenuViewModel.cs" Link="Production\SettingsMenuViewModel.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\MonthSettingsEditorViewModel.cs" Link="Production\MonthSettingsEditorViewModel.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\ServiceSettingsViewModels.cs" Link="Production\ServiceSettingsViewModels.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\PremiumSettingsViewModels.cs" Link="Production\PremiumSettingsViewModels.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\CountBonusSettingsViewModels.cs" Link="Production\CountBonusSettingsViewModels.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\PayrollPeriodSettingsViewModel.cs" Link="Production\PayrollPeriodSettingsViewModel.cs" />
   </ItemGroup>
 </Project>

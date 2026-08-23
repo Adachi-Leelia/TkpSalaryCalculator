@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage x:Class="TkpSalaryCalculator.App.Presentation.Features.Settings.PayrollPeriodSettingsPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings" xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="settings:PayrollPeriodSettingsViewModel" Title="給与期間設定">
+    <Grid RowDefinitions="*,Auto" SafeAreaEdges="All"><ScrollView><VerticalStackLayout Padding="20" Spacing="12">
+        <Label Style="{StaticResource PageTitleStyle}" Text="給与期間設定" />
+        <Label FontAttributes="Bold" Text="{Binding EffectiveMonthText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="設定対象年月だけの給与設定とは異なり、締め日は指定した給与期間年月以降へ適用されます。" />
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="10"><Button Command="{Binding PreviousMonthCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="前の月" /><Button Grid.Column="1" Command="{Binding NextMonthCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="次の月" /></Grid>
+        <Label Text="{Binding CurrentRuleText}" /><Label Text="締め日" /><Picker ItemDisplayBinding="{Binding DisplayName}" ItemsSource="{Binding ClosingDays}" SelectedItem="{Binding SelectedClosingDay}" />
+        <Border Padding="12" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 10"><Label Text="{Binding ScopeExplanation}" /></Border>
+        <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+    </VerticalStackLayout></ScrollView><controls:FixedSaveBar Grid.Row="1" IsSaving="{Binding IsBusy}" SaveCommand="{Binding SaveCommand}" SaveText="期間を確認して保存" /></Grid>
+</ContentPage>

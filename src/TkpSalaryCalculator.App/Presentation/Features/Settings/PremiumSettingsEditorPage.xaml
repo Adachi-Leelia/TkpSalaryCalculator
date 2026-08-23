@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage x:Class="TkpSalaryCalculator.App.Presentation.Features.Settings.PremiumSettingsEditorPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings" xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="settings:PremiumSettingsEditorViewModel" Title="{Binding PageTitle}">
+    <Grid RowDefinitions="*,Auto" SafeAreaEdges="All"><ScrollView><VerticalStackLayout Padding="20" Spacing="10">
+        <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" /><Label FontAttributes="Bold" Text="{Binding MonthHeaderText}" />
+        <Label Text="表示名（必須）" /><Entry Text="{Binding DisplayName}" />
+        <Label Text="加算方式" /><Picker ItemDisplayBinding="{Binding DisplayName}" ItemsSource="{Binding CalculationTypes}" SelectedItem="{Binding SelectedCalculationType}" />
+        <Label Text="{Binding ValueLabel}" /><Entry Keyboard="Numeric" Text="{Binding ValueText}" />
+        <Label Style="{StaticResource SectionTitleStyle}" Text="対象曜日・日付" />
+        <FlexLayout Direction="Row" Wrap="Wrap">
+            <HorizontalStackLayout><CheckBox IsChecked="{Binding Sunday}" /><Label VerticalOptions="Center" Text="日" /></HorizontalStackLayout><HorizontalStackLayout><CheckBox IsChecked="{Binding Monday}" /><Label VerticalOptions="Center" Text="月" /></HorizontalStackLayout><HorizontalStackLayout><CheckBox IsChecked="{Binding Tuesday}" /><Label VerticalOptions="Center" Text="火" /></HorizontalStackLayout><HorizontalStackLayout><CheckBox IsChecked="{Binding Wednesday}" /><Label VerticalOptions="Center" Text="水" /></HorizontalStackLayout><HorizontalStackLayout><CheckBox IsChecked="{Binding Thursday}" /><Label VerticalOptions="Center" Text="木" /></HorizontalStackLayout><HorizontalStackLayout><CheckBox IsChecked="{Binding Friday}" /><Label VerticalOptions="Center" Text="金" /></HorizontalStackLayout><HorizontalStackLayout><CheckBox IsChecked="{Binding Saturday}" /><Label VerticalOptions="Center" Text="土" /></HorizontalStackLayout>
+        </FlexLayout>
+        <HorizontalStackLayout><Switch IsToggled="{Binding UsesNationalHolidays}" /><Label VerticalOptions="Center" Text="国民の祝日を対象にする" /></HorizontalStackLayout>
+        <Label Text="個別日付（yyyy-MM-dd、複数はカンマ区切り）" /><Entry Keyboard="Text" Text="{Binding IndividualDatesText}" />
+        <HorizontalStackLayout><Switch IsToggled="{Binding UsesTimeRange}" /><Label VerticalOptions="Center" Text="時間帯を指定する" /></HorizontalStackLayout>
+        <Grid IsVisible="{Binding UsesTimeRange}" ColumnDefinitions="*,*" ColumnSpacing="10"><VerticalStackLayout><Label Text="開始時刻" /><TimePicker Time="{Binding StartTime}" /></VerticalStackLayout><VerticalStackLayout Grid.Column="1"><Label Text="終了時刻" /><TimePicker Time="{Binding EndTime}" /></VerticalStackLayout></Grid>
+        <Border Padding="10" BackgroundColor="{StaticResource WarningContainer}" Stroke="{StaticResource Warning}" StrokeShape="RoundRectangle 8"><Label Text="{Binding ConditionExplanation}" /></Border>
+        <Label Style="{StaticResource SectionTitleStyle}" Text="対象サービス種類" /><HorizontalStackLayout><Switch IsToggled="{Binding AppliesToAllServices}" /><Label VerticalOptions="Center" Text="全サービス対象" /></HorizontalStackLayout>
+        <VerticalStackLayout BindableLayout.ItemsSource="{Binding Services}" IsVisible="{Binding ShowServiceSelection}"><BindableLayout.ItemTemplate><DataTemplate x:DataType="settings:SelectableServiceViewModel"><HorizontalStackLayout><CheckBox IsChecked="{Binding IsSelected}" /><Label VerticalOptions="Center" Text="{Binding DisplayName}" /></HorizontalStackLayout></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
+        <HorizontalStackLayout><Switch IsToggled="{Binding IsEnabled}" /><Label VerticalOptions="Center" Text="この年月で有効" /></HorizontalStackLayout>
+        <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+    </VerticalStackLayout></ScrollView><controls:FixedSaveBar Grid.Row="1" IsSaving="{Binding IsBusy}" SaveCommand="{Binding SaveCommand}" SaveText="影響を確認して保存" /></Grid>
+</ContentPage>

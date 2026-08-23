@@ -102,6 +102,17 @@ public interface IMonthSettingsUseCase
         SettingReplacementConfirmationToken confirmationToken,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// 対象年月の設定スナップショット差替えと、全期間共通のサービス入力候補の変更を
+    /// 1つのトランザクションで確定します。
+    /// </summary>
+    Task<MonthSettingsDto> CloneAndReplaceWithServicePresetAsync(
+        YearMonth yearMonth,
+        SettingSnapshotReplacementDto replacement,
+        SettingReplacementConfirmationToken confirmationToken,
+        ServicePresetChangeCommand presetChange,
+        CancellationToken cancellationToken);
+
     /// <summary>選択月を前月の給与設定で置換した場合の結果をプレビューします。</summary>
     Task<SettingReplacementPreviewDto> PreviewCopyPreviousMonthAsync(
         YearMonth yearMonth,

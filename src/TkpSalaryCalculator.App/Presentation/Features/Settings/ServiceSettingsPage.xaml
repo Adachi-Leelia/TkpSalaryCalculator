@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage x:Class="TkpSalaryCalculator.App.Presentation.Features.Settings.ServiceSettingsPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings"
+    xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="settings:ServiceSettingsViewModel" Title="サービス・単価">
+    <ScrollView>
+        <VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="12">
+            <Label Style="{StaticResource PageTitleStyle}" Text="サービス・単価" />
+            <Label FontAttributes="Bold" Text="{Binding MonthHeaderText}" />
+            <Label Style="{StaticResource SectionTitleStyle}" Text="入力候補（全期間共通）" />
+            <Label Style="{StaticResource SupportingTextStyle}" Text="候補の変更は、作成済み勤務と過去年月の給与計算を変更しません。" />
+            <controls:EmptyStateView IsVisible="{Binding HasNoInputCandidates}" Title="入力候補はありません" Message="サービス・単価を追加すると候補も登録できます。" />
+            <VerticalStackLayout BindableLayout.ItemsSource="{Binding InputCandidateRows}" Spacing="8">
+                <BindableLayout.ItemTemplate><DataTemplate x:DataType="settings:ServicePresetRow">
+                    <Border Padding="12" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
+                        <VerticalStackLayout><Label FontAttributes="Bold" Text="{Binding DisplayName}" /><Label Text="{Binding ServiceName}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding TimeCategoryName}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StandardTimeText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StatusText}" /><Button Clicked="OnCandidateEditClicked" CommandParameter="{Binding .}" Style="{StaticResource SecondaryButtonStyle}" Text="入力候補を編集" /></VerticalStackLayout>
+                    </Border>
+                </DataTemplate></BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+            <Label Style="{StaticResource SectionTitleStyle}" Text="{Binding MonthlySectionTitle}" />
+            <Label Style="{StaticResource SupportingTextStyle}" Text="単価と有効状態は、上に表示した設定対象年月だけに適用されます。" />
+            <controls:EmptyStateView IsVisible="{Binding HasNoMonthlyRows}" Title="サービスがありません" Message="最初のサービス種類と時間区分を追加してください。" />
+            <VerticalStackLayout BindableLayout.ItemsSource="{Binding MonthlyRows}" Spacing="8">
+                <BindableLayout.ItemTemplate><DataTemplate x:DataType="settings:ServiceSettingRow">
+                    <Border Padding="12" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
+                        <VerticalStackLayout Spacing="4"><Label FontAttributes="Bold" Text="{Binding ServiceName}" /><Label Text="{Binding TimeCategoryName}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StandardTimeText}" /><Label Text="{Binding RateText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StatusText}" /><Button Clicked="OnEditClicked" CommandParameter="{Binding .}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" /></VerticalStackLayout>
+                    </Border>
+                </DataTemplate></BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+            <Button Command="{Binding AddCommand}" Text="サービス種類・時間区分を追加" />
+            <Label IsVisible="{Binding HasSuccessMessage}" Text="{Binding SuccessMessage}" TextColor="{StaticResource Success}" />
+            <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>
