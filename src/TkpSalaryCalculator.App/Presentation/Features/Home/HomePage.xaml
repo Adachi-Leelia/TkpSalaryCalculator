@@ -60,7 +60,6 @@
                     StrokeShape="RoundRectangle 16">
                     <VerticalStackLayout Spacing="12">
                         <Label
-                            SemanticProperties.ExcludedFromAccessibility="True"
                             Style="{StaticResource SupportingTextStyle}"
                             Text="給与見込み合計" />
                         <Label
