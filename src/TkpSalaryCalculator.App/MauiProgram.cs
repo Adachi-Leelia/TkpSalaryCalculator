@@ -106,6 +106,8 @@ public static class MauiProgram
         services.AddSingleton<IConfirmationDialogService, ConfirmationDialogService>();
         services.AddSingleton<IHomeNavigator, ShellHomeNavigator>();
         services.AddSingleton<ICalendarNavigator, ShellCalendarNavigator>();
+        services.AddSingleton<ISettingsNavigator, ShellSettingsNavigator>();
+        services.AddSingleton<SettingsMonthContext>();
 
         services.AddSingleton<StartupViewModel>();
         services.AddSingleton<StartupPage>();
@@ -121,6 +123,21 @@ public static class MauiProgram
         services.AddTransient<DayPage>();
         services.AddTransient<WorkEditorViewModel>();
         services.AddTransient<WorkEditorPage>();
+        services.AddTransient<SettingsMenuViewModel>();
         services.AddTransient<SettingsMenuPage>();
+        services.AddTransient<ServiceSettingsViewModel>();
+        services.AddTransient<ServiceSettingsPage>();
+        services.AddTransient<ServiceSettingsEditorViewModel>();
+        services.AddTransient<ServiceSettingsEditorPage>();
+        services.AddTransient<PremiumSettingsViewModel>();
+        services.AddTransient<PremiumSettingsPage>();
+        services.AddTransient<PremiumSettingsEditorViewModel>();
+        services.AddTransient<PremiumSettingsEditorPage>();
+        services.AddTransient<CountBonusSettingsViewModel>();
+        services.AddTransient<CountBonusSettingsPage>();
+        services.AddTransient<CountBonusSettingsEditorViewModel>();
+        services.AddTransient<CountBonusSettingsEditorPage>();
+        services.AddTransient<PayrollPeriodSettingsViewModel>();
+        services.AddTransient<PayrollPeriodSettingsPage>();
     }
 }

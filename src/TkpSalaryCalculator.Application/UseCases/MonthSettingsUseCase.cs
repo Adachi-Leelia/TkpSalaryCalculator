@@ -14,7 +14,7 @@ namespace TkpSalaryCalculator.Application.UseCases;
 /// <remarks>必要なポートとドメインサービスを指定して生成します。</remarks>
 public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IWorkRecordRepository records,
     IHolidayCalendarRepository holidays, ISalaryCalculator calculator, ITransactionRunner transactions,
-    IAppMetadataRepository metadata, IUtcClock clock) : IMonthSettingsUseCase
+    IAppMetadataRepository metadata, IUtcClock clock, IServicePresetRepository? presets = null) : IMonthSettingsUseCase
 {
     private readonly ISettingSnapshotRepository settings = settings ?? throw new ArgumentNullException(nameof(settings));
     private readonly IWorkRecordRepository records = records ?? throw new ArgumentNullException(nameof(records));
@@ -23,6 +23,7 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
     private readonly ITransactionRunner transactions = transactions ?? throw new ArgumentNullException(nameof(transactions));
     private readonly IAppMetadataRepository metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
     private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
+    private readonly IServicePresetRepository presets = presets ?? EmptyServicePresetRepository.Instance;
 
 
     /// <inheritdoc />
@@ -63,6 +64,45 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
             var result = await settings.TryCloneAndReplaceMonthSnapshotAsync(yearMonth, confirmationToken.TargetSnapshotId,
                 validatedReplacement, current.HolidayCalendarVersionId, clock.UtcNow.ToUniversalTime(), token).ConfigureAwait(false)
                 ?? throw ChangedSincePreview();
+            await ApplicationSupport.MarkChangedAsync(metadata, clock, token).ConfigureAwait(false);
+            return new MonthSettingsDto(yearMonth, result);
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<MonthSettingsDto> CloneAndReplaceWithServicePresetAsync(YearMonth yearMonth,
+        SettingSnapshotReplacementDto replacement, SettingReplacementConfirmationToken confirmationToken,
+        ServicePresetChangeCommand presetChange, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        ArgumentNullException.ThrowIfNull(confirmationToken);
+        ArgumentNullException.ThrowIfNull(presetChange);
+        if (presetChange.Save is not null && presetChange.DeleteId is not null)
+            throw new ArgumentException("入力候補の保存と削除は同時に指定できません。", nameof(presetChange));
+        ApplicationSupport.ValidateYearMonth(yearMonth, nameof(yearMonth));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return await transactions.ExecuteAsync(async token =>
+        {
+            var current = await settings.GetEffectiveForMonthAsync(yearMonth, token).ConfigureAwait(false);
+            var validatedReplacement = ValidateReplacement(current, replacement, current.HolidayCalendarVersionId);
+            await ValidateConfirmationAsync(yearMonth, validatedReplacement, current.HolidayCalendarVersionId,
+                confirmationToken, null, token).ConfigureAwait(false);
+            var result = await settings.TryCloneAndReplaceMonthSnapshotAsync(yearMonth, confirmationToken.TargetSnapshotId,
+                validatedReplacement, current.HolidayCalendarVersionId, clock.UtcNow.ToUniversalTime(), token).ConfigureAwait(false)
+                ?? throw ChangedSincePreview();
+
+            if (presetChange.Save is { } save)
+            {
+                var preset = CreatePreset(save, validatedReplacement);
+                await presets.UpsertAsync(preset, token).ConfigureAwait(false);
+            }
+            else if (presetChange.DeleteId is { } deleteId)
+            {
+                ApplicationSupport.ValidateId(deleteId.Value, nameof(presetChange.DeleteId));
+                await presets.DeleteAsync(deleteId, token).ConfigureAwait(false);
+            }
+
             await ApplicationSupport.MarkChangedAsync(metadata, clock, token).ConfigureAwait(false);
             return new MonthSettingsDto(yearMonth, result);
         }, cancellationToken).ConfigureAwait(false);
@@ -236,6 +276,26 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
         "SETTINGS_PREVIEW_STALE", "確認後に対象月の設定または勤務が変更されました。影響をもう一度確認してください。");
     }
 
+    private static ServicePresetDto CreatePreset(SaveServicePresetCommand command,
+        SettingSnapshotReplacementDto replacement)
+    {
+        ApplicationSupport.ValidateId(command.ServiceId.Value, nameof(command.ServiceId));
+        if (command.TimeCategoryId is { } categoryId)
+            ApplicationSupport.ValidateId(categoryId.Value, nameof(command.TimeCategoryId));
+        var name = command.DisplayName?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ApplicationErrorException("PRESET_NAME_REQUIRED", "入力候補名を入力してください。", "DisplayName");
+        if (command.DefaultWorkMinutes.Value is < 1 or > 1440)
+            throw new ApplicationErrorException("PRESET_MINUTES_INVALID", "標準勤務時間は1分から24時間以内で入力してください。", "DefaultWorkMinutes");
+        if (!replacement.Services.Any(value => value.Id == command.ServiceId) ||
+            command.TimeCategoryId is { } timeCategoryId && !replacement.TimeCategories.Any(value =>
+                value.Id == timeCategoryId && value.ServiceId == command.ServiceId))
+            throw new ApplicationErrorException("PRESET_SETTING_REFERENCE_INVALID", "入力候補のサービス設定が不正です。");
+
+        return new ServicePresetDto(command.Id ?? new ServicePresetId(Guid.NewGuid()), name,
+            command.ServiceId, command.TimeCategoryId, command.DefaultWorkMinutes, command.DisplayOrder, command.IsEnabled);
+    }
+
 
     private static SettingSnapshotReplacementDto ValidateReplacement(SettingSnapshot current, SettingSnapshotReplacementDto replacement,
         HolidayCalendarVersionId holidayVersionId)
@@ -258,6 +318,17 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
     {
         return new(
         value.Services, value.TimeCategories, value.Rates, value.Premiums, value.CountBonuses);
+    }
+
+    private sealed class EmptyServicePresetRepository : IServicePresetRepository
+    {
+        public static EmptyServicePresetRepository Instance { get; } = new();
+        public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ServicePresetDto>>([]);
+        public Task UpsertAsync(ServicePresetDto preset, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("サービス入力候補リポジトリが登録されていません。");
+        public Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("サービス入力候補リポジトリが登録されていません。");
     }
 
 }

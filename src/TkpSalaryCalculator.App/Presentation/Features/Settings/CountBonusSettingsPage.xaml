@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage x:Class="TkpSalaryCalculator.App.Presentation.Features.Settings.CountBonusSettingsPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings" xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
+    x:DataType="settings:CountBonusSettingsViewModel" Title="件数加算">
+    <ScrollView><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="12">
+        <Label Style="{StaticResource PageTitleStyle}" Text="件数加算" /><Label FontAttributes="Bold" Text="{Binding MonthHeaderText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="一覧と変更内容は、表示中の設定対象年月だけに適用されます。" />
+        <controls:EmptyStateView IsVisible="{Binding HasNoRows}" Title="件数加算はありません" Message="勤務記録1件当たりの加算を追加できます。" />
+        <VerticalStackLayout BindableLayout.ItemsSource="{Binding Rows}" Spacing="8"><BindableLayout.ItemTemplate><DataTemplate x:DataType="settings:CountBonusSettingRow"><Border Padding="12" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10"><VerticalStackLayout Spacing="4"><Label FontAttributes="Bold" Text="{Binding DisplayName}" /><Label Text="{Binding AmountText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding TargetText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StatusText}" /><Button Clicked="OnEditClicked" CommandParameter="{Binding .}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" /></VerticalStackLayout></Border></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
+        <Button Command="{Binding AddCommand}" Text="件数加算を追加" /><Label IsVisible="{Binding HasSuccessMessage}" Text="{Binding SuccessMessage}" TextColor="{StaticResource Success}" /><Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+    </VerticalStackLayout></ScrollView>
+</ContentPage>

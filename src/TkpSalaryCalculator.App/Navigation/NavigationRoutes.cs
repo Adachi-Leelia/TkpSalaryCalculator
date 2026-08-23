@@ -11,6 +11,13 @@ public static class NavigationRoutes
     public const string Day = "day";
     public const string WorkEditor = "work-editor";
     public const string Settings = "settings";
+    public const string ServiceSettings = "service-settings";
+    public const string ServiceSettingsEditor = "service-settings-editor";
+    public const string PremiumSettings = "premium-settings";
+    public const string PremiumSettingsEditor = "premium-settings-editor";
+    public const string CountBonusSettings = "count-bonus-settings";
+    public const string CountBonusSettingsEditor = "count-bonus-settings-editor";
+    public const string PayrollPeriodSettings = "payroll-period-settings";
     public const string CalculationDetails = "calculation-details";
     public const string MonthlyAllowances = "monthly-allowances";
     public const string UncalculatedDays = "uncalculated-days";

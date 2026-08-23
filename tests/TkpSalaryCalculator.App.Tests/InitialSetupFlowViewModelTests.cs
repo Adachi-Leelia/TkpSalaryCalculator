@@ -560,6 +560,14 @@ public sealed class InitialSetupFlowViewModelTests
             return Task.FromResult(new MonthSettingsDto(yearMonth, snapshot));
         }
 
+        public Task<MonthSettingsDto> CloneAndReplaceWithServicePresetAsync(
+            YearMonth yearMonth,
+            SettingSnapshotReplacementDto replacement,
+            SettingReplacementConfirmationToken confirmationToken,
+            ServicePresetChangeCommand presetChange,
+            CancellationToken cancellationToken) =>
+            CloneAndReplaceAsync(yearMonth, replacement, confirmationToken, cancellationToken);
+
         public Task<SettingReplacementPreviewDto> PreviewCopyPreviousMonthAsync(
             YearMonth yearMonth,
             CancellationToken cancellationToken) => throw new NotSupportedException();
