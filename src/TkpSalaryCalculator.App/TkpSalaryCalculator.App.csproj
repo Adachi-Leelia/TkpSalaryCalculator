@@ -19,8 +19,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <MauiIcon Include="Resources\AppIcon\appicon.svg" Color="#244A3B" />
-    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#F7FAF8" BaseSize="128,128" />
+    <MauiIcon Include="Resources\AppIcon\appicon.png" Color="#FFFFFF" />
+    <MauiSplashScreen Include="Resources\Splash\splash.png" Color="#ff78d4" BaseSize="128,128" />
   </ItemGroup>
 
   <ItemGroup>
