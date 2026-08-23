@@ -97,6 +97,36 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task PreviewReplacement_ReusesCurrentAndCandidateSnapshotPerWorkDate()
+    {
+        var context = new TestContext();
+        var month = new YearMonth(2026, 8);
+        var date = new DateOnly(2026, 8, 1);
+        var premium = new SnapshotPremium(new PremiumId(Guid.NewGuid()), "月曜夜間",
+            PremiumCalculationType.FixedPerHour, null, new YenAmount(100),
+            new MinuteOfDay(1320), new MinuteOfDay(300), false,
+            new HashSet<DayOfWeek> { DayOfWeek.Monday }, new HashSet<DateOnly>(),
+            new HashSet<ServiceId>(), true);
+        var current = TestData.Snapshot(premiums: [premium]);
+        context.Settings.Months[month] = current;
+        for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
+        var replacement = new SettingSnapshotReplacementDto(current.Services, current.TimeCategories,
+            current.Rates, current.Premiums, current.CountBonuses);
+        var calculator = new RecordingSalaryCalculator();
+        var useCase = new MonthSettingsUseCase(context.Settings, context.Works, context.Holidays,
+            calculator, context.Transactions, context.Metadata, context.Clock);
+
+        var result = await useCase.PreviewReplacementAsync(month, replacement, default);
+
+        Assert.Equal(result.CurrentCalculatedSubtotal, result.ReplacementCalculatedSubtotal);
+        Assert.Equal(40, calculator.Requests.Count);
+        Assert.Equal(2, calculator.Requests.Select(x => x.SettingSnapshot)
+            .Distinct(ReferenceEqualityComparer.Instance).Count());
+        Assert.Equal(1, context.Holidays.GetManyCalls);
+        Assert.Single(context.Holidays.RequestedVersions.Distinct());
+    }
+
+    [Fact]
     public async Task PreviewReplacement_NullChild_ReturnsSafeValidationIssue()
     {
         var context = new TestContext();
@@ -275,6 +305,42 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task SalaryQuery_UsesHolidayVersionSelectedByEachCalendarMonth()
+    {
+        var context = new TestContext();
+        var julyHoliday = new HolidayCalendarVersionId(Guid.NewGuid());
+        var augustHoliday = new HolidayCalendarVersionId(Guid.NewGuid());
+        var holidayPremium = new SnapshotPremium(new PremiumId(Guid.NewGuid()), "祝日加算",
+            PremiumCalculationType.FixedPerRecord, null, new YenAmount(100), null, null, true,
+            new HashSet<DayOfWeek>(), new HashSet<DateOnly>(), new HashSet<ServiceId>(), true);
+        context.Settings.Months[new YearMonth(2026, 7)] = TestData.Snapshot(
+            premiums: [holidayPremium], holidayCalendarVersionId: julyHoliday);
+        context.Settings.Months[new YearMonth(2026, 8)] = TestData.Snapshot(
+            premiums: [holidayPremium], holidayCalendarVersionId: augustHoliday);
+        context.Holidays.Calendars[julyHoliday] = new Dictionary<DateOnly, string>
+        {
+            [new DateOnly(2026, 7, 21)] = "テスト祝日",
+        };
+        context.Holidays.Calendars[augustHoliday] = new Dictionary<DateOnly, string>();
+        context.Works.Values.AddRange([
+            TestData.Work(new DateOnly(2026, 7, 21)),
+            TestData.Work(new DateOnly(2026, 8, 1)),
+        ]);
+        var key = new PayrollPeriodKey(new YearMonth(2026, 8));
+        context.Closing.Values.Add(new ClosingRule(new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)), 20));
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods);
+
+        var result = await useCase.GetPayrollPeriodAsync(key, default);
+
+        Assert.Equal(100, result.PremiumSubtotal.Value);
+        Assert.Equal(2100, result.CalculatedSubtotal.Value);
+        Assert.Equal(1, context.Holidays.GetManyCalls);
+        Assert.Equal(2, context.Holidays.RequestedVersions.Distinct().Count());
+    }
+
+    [Fact]
     public async Task CalendarDayAndMonthQueries_UseOrchestratedApplicationModels()
     {
         var context = new TestContext();
@@ -297,6 +363,123 @@ public sealed class SettingsAndSalaryUseCaseTests
         Assert.Equal(31, month.Count);
         Assert.Equal(1, month[0].WorkRecordCount);
         Assert.Equal(1, month[0].BasicShiftCandidateCount);
+    }
+
+    [Fact]
+    public async Task SalaryQuery_EmptyCalendarSkipsCalculationDataAndBatchesWeekdayShifts()
+    {
+        var context = new TestContext();
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods);
+
+        var month = await useCase.GetCalendarMonthAsync(new YearMonth(2026, 8), default);
+
+        Assert.Equal(31, month.Count);
+        Assert.All(month, day =>
+        {
+            Assert.Equal(0, day.WorkRecordCount);
+            Assert.Equal(0, day.CalculatedSubtotal.Value);
+            Assert.Equal(0, day.UncalculatedCount);
+        });
+        Assert.Equal(0, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal(0, context.Holidays.GetManyCalls);
+        Assert.Equal(1, context.Shifts.GetForWeekdaysCalls);
+        Assert.Equal(7, context.Shifts.RequestedWeekdays.Distinct().Count());
+        Assert.Equal(0, context.Shifts.GetForWeekdayCalls);
+    }
+
+    [Fact]
+    public async Task SalaryQuery_TwentyRecordsReuseOneDailyCalculationSnapshot()
+    {
+        var context = new TestContext();
+        var date = new DateOnly(2026, 8, 1);
+        var premium = new SnapshotPremium(new PremiumId(Guid.NewGuid()), "月曜夜間",
+            PremiumCalculationType.FixedPerHour, null, new YenAmount(100),
+            new MinuteOfDay(1320), new MinuteOfDay(300), false,
+            new HashSet<DayOfWeek> { DayOfWeek.Monday }, new HashSet<DateOnly>(),
+            new HashSet<ServiceId>(), true);
+        context.Settings.Fallback = TestData.Snapshot(premiums: [premium]);
+        for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
+        var calculator = new RecordingSalaryCalculator();
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, calculator, context.Periods);
+
+        var month = await useCase.GetCalendarMonthAsync(new YearMonth(2026, 8), default);
+
+        Assert.Equal(20_000, month[0].CalculatedSubtotal.Value);
+        Assert.Equal(20, calculator.Requests.Count);
+        Assert.All(calculator.Requests,
+            request => Assert.Same(calculator.Requests[0].SettingSnapshot, request.SettingSnapshot));
+        Assert.Equal(1, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal([new YearMonth(2026, 8)], context.Settings.EffectiveMonthRequests.Distinct());
+        Assert.Equal(1, context.Holidays.GetManyCalls);
+        Assert.Equal([TestData.HolidayId], context.Holidays.RequestedVersions.Distinct());
+        Assert.Equal(1, context.Shifts.GetForWeekdaysCalls);
+    }
+
+    [Fact]
+    public async Task SalaryQuery_SixtyOneDayPeriodUsesTwoMonthsAndHolidayVersionsOnceEach()
+    {
+        var context = new TestContext();
+        var julyMonth = new YearMonth(2026, 7);
+        var augustMonth = new YearMonth(2026, 8);
+        var julyHoliday = new HolidayCalendarVersionId(Guid.NewGuid());
+        var augustHoliday = new HolidayCalendarVersionId(Guid.NewGuid());
+        var july = TestData.Snapshot(holidayCalendarVersionId: julyHoliday);
+        var augustBase = TestData.Snapshot(serviceEnabled: false, categoryEnabled: false,
+            holidayCalendarVersionId: augustHoliday);
+        var august = new SettingSnapshot(augustBase.Id, augustBase.BasedOnId,
+            augustBase.HolidayCalendarVersionId, augustBase.SchemaVersion, augustBase.CreatedAtUtc,
+            augustBase.Services, augustBase.TimeCategories,
+            [new SnapshotRate(TestData.ServiceId, TestData.CategoryId,
+                RateType.FixedPerRecord, new YenAmount(2000))],
+            augustBase.Premiums, augustBase.CountBonuses);
+        context.Settings.Months[julyMonth] = july;
+        context.Settings.Months[augustMonth] = august;
+        var key = new PayrollPeriodKey(augustMonth);
+        context.Closing.Values.Add(new ClosingRule(new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)), 1));
+        context.Closing.Values.Add(new ClosingRule(new ClosingRuleId(Guid.NewGuid()), key, 31));
+        for (var date = new DateOnly(2026, 7, 2); date <= new DateOnly(2026, 8, 31); date = date.AddDays(1))
+            for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods);
+
+        var result = await useCase.GetPayrollPeriodAsync(key, default);
+
+        Assert.Equal(new DateOnly(2026, 7, 2), result.Period.StartDate);
+        Assert.Equal(new DateOnly(2026, 8, 31), result.Period.EndDate);
+        Assert.Equal(61, result.Days.Count);
+        Assert.Equal(1220, result.Days.Sum(x => x.Records.Count));
+        Assert.Equal(1_840_000, result.CalculatedSubtotal.Value);
+        Assert.Equal(0, result.UncalculatedCount);
+        Assert.Equal(1, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal([julyMonth, augustMonth], context.Settings.EffectiveMonthRequests.Distinct().OrderBy(x => x));
+        Assert.Equal(1, context.Holidays.GetManyCalls);
+        Assert.Equal(2, context.Holidays.RequestedVersions.Distinct().Count());
+        Assert.Contains(julyHoliday, context.Holidays.RequestedVersions);
+        Assert.Contains(augustHoliday, context.Holidays.RequestedVersions);
+    }
+
+    [Fact]
+    public async Task SalaryQuery_MissingRateRemainsUncalculatedWithBatchedReads()
+    {
+        var context = new TestContext();
+        var month = new YearMonth(2026, 8);
+        var current = TestData.Snapshot();
+        context.Settings.Months[month] = new SettingSnapshot(current.Id, current.BasedOnId,
+            current.HolidayCalendarVersionId, current.SchemaVersion, current.CreatedAtUtc,
+            current.Services, current.TimeCategories, [], current.Premiums, current.CountBonuses);
+        context.Works.Values.Add(TestData.Work(new DateOnly(2026, 8, 1)));
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods);
+
+        var result = await useCase.GetCalendarMonthAsync(month, default);
+
+        Assert.Equal(1, result[0].UncalculatedCount);
+        Assert.Equal(0, result[0].CalculatedSubtotal.Value);
+        Assert.Equal(1, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal(1, context.Holidays.GetManyCalls);
     }
 
     [Fact]

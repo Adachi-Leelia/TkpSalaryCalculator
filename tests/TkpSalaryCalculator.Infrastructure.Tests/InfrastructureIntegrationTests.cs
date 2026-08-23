@@ -112,6 +112,9 @@ public sealed class InfrastructureIntegrationTests
         Assert.Equal("休日", calendar.Holidays[new DateOnly(2026, 5, 6)]);
         Assert.Equal("休日", calendar.Holidays[new DateOnly(2026, 9, 22)]);
         Assert.Equal("休日", calendar.Holidays[new DateOnly(2027, 3, 22)]);
+        var calendars = await new SqliteHolidayCalendarRepository(fixture.Database)
+            .GetManyAsync([snapshot.HolidayCalendarVersionId], default);
+        Assert.Equal(calendar.Holidays, calendars[snapshot.HolidayCalendarVersionId].Holidays);
         Assert.Empty(await new SqliteClosingRuleRepository(fixture.Database, clock).GetHistoryAsync(default));
     }
 
@@ -233,6 +236,10 @@ public sealed class InfrastructureIntegrationTests
         Assert.NotEqual(beforeAugust.Id, changed!.Id);
         Assert.Equal(1000, (await repository.FindForMonthAsync(new YearMonth(2026, 7), default))!.Rates.Single().Amount.Value);
         Assert.Equal(2500, (await repository.FindForMonthAsync(new YearMonth(2026, 8), default))!.Rates.Single().Amount.Value);
+        var effective = await repository.GetEffectiveForMonthsAsync(
+            [new YearMonth(2026, 7), new YearMonth(2026, 8)], default);
+        Assert.Equal(1000, effective[new YearMonth(2026, 7)].Rates.Single().Amount.Value);
+        Assert.Equal(2500, effective[new YearMonth(2026, 8)].Rates.Single().Amount.Value);
     }
 
     [Fact]
@@ -388,6 +395,10 @@ public sealed class InfrastructureIntegrationTests
             new MinuteOfDay(600), new DisplayOrder(0), true);
         await shifts.UpsertAsync(shift, default);
         Assert.Equal(shift, Assert.Single(await shifts.GetForWeekdayAsync(DayOfWeek.Monday, default)));
+        var shiftsByWeekday = await shifts.GetForWeekdaysAsync(
+            [DayOfWeek.Monday, DayOfWeek.Tuesday], default);
+        Assert.Equal(shift, Assert.Single(shiftsByWeekday[DayOfWeek.Monday]));
+        Assert.Empty(shiftsByWeekday[DayOfWeek.Tuesday]);
 
         var closing = new SqliteClosingRuleRepository(fixture.Database, clock);
         var snapshot = await closing.GetSnapshotAsync(default);

@@ -172,8 +172,15 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
         var confirmation = new SettingReplacementConfirmationToken(month, current.Id, sourceSnapshotId,
             Fingerprint(monthRecords), Fingerprint(normalizedReplacement), holidayVersionId);
 
-        var currentCalendar = await holidays.GetAsync(current.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
-        var candidateCalendar = await holidays.GetAsync(candidate.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
+        var calendars = await holidays.GetManyAsync(
+            [current.HolidayCalendarVersionId, candidate.HolidayCalendarVersionId], cancellationToken).ConfigureAwait(false);
+        var currentCalendar = calendars[current.HolidayCalendarVersionId];
+        var candidateCalendar = calendars[candidate.HolidayCalendarVersionId];
+        var calculationSnapshots = monthRecords.Select(x => x.WorkDate).Distinct().ToDictionary(
+            date => date,
+            date => (
+                Current: ApplicationSupport.ForCalculationDate(current, date, currentCalendar),
+                Candidate: ApplicationSupport.ForCalculationDate(candidate, date, candidateCalendar)));
         long currentTotal = 0;
         long replacementTotal = 0;
         var affected = 0;
@@ -181,10 +188,11 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
         foreach (var value in monthRecords)
         {
             var domain = ApplicationSupport.ToDomain(value);
+            var snapshots = calculationSnapshots[value.WorkDate];
             var before = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
-                ApplicationSupport.ForCalculationDate(current, value.WorkDate, currentCalendar), currentCalendar));
+                snapshots.Current, currentCalendar));
             var after = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
-                ApplicationSupport.ForCalculationDate(candidate, value.WorkDate, candidateCalendar), candidateCalendar));
+                snapshots.Candidate, candidateCalendar));
             currentTotal += before.Total?.Value ?? 0;
             replacementTotal += after.Total?.Value ?? 0;
             if (!Equals(before, after)) affected++;

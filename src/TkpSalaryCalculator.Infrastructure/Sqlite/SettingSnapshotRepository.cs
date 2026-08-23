@@ -37,6 +37,38 @@ public sealed class SqliteSettingSnapshotRepository(SqliteDatabase database, IUt
                 ?? throw new InvalidDataException("The effective setting snapshot is missing.");
         }, cancellationToken);
 
+    public Task<IReadOnlyDictionary<YearMonth, SettingSnapshot>> GetEffectiveForMonthsAsync(
+        IReadOnlyCollection<YearMonth> yearMonths,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(yearMonths);
+        cancellationToken.ThrowIfCancellationRequested();
+        var requested = yearMonths.Distinct().OrderBy(x => x).ToArray();
+        if (requested.Length == 0)
+            return Task.FromResult<IReadOnlyDictionary<YearMonth, SettingSnapshot>>(
+                new Dictionary<YearMonth, SettingSnapshot>());
+
+        return database.ReadAsync(async (connection, transaction, token) =>
+        {
+            var snapshotsById = new Dictionary<string, SettingSnapshot>(StringComparer.Ordinal);
+            var result = new Dictionary<YearMonth, SettingSnapshot>(requested.Length);
+            foreach (var yearMonth in requested)
+            {
+                var snapshotId = await FindEffectiveSnapshotIdAsync(connection, transaction, yearMonth, token)
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("No initial or effective setting snapshot exists.");
+                if (!snapshotsById.TryGetValue(snapshotId, out var snapshot))
+                {
+                    snapshot = await LoadSnapshotAsync(connection, transaction, snapshotId, token).ConfigureAwait(false)
+                        ?? throw new InvalidDataException("The effective setting snapshot is missing.");
+                    snapshotsById.Add(snapshotId, snapshot);
+                }
+                result.Add(yearMonth, snapshot);
+            }
+            return (IReadOnlyDictionary<YearMonth, SettingSnapshot>)result;
+        }, cancellationToken);
+    }
+
     public Task<SettingSnapshot> EnsureForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken) =>
         database.WriteAsync(async (connection, transaction, token) =>
         {

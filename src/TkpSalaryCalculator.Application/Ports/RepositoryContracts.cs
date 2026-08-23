@@ -93,6 +93,11 @@ public interface ISettingSnapshotRepository
     /// <summary>月行を作成せず、有効な継承スナップショットを取得します。</summary>
     Task<SettingSnapshot> GetEffectiveForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken);
 
+    /// <summary>月行を作成せず、指定された各月の有効な継承スナップショットを有界にまとめて取得します。</summary>
+    Task<IReadOnlyDictionary<YearMonth, SettingSnapshot>> GetEffectiveForMonthsAsync(
+        IReadOnlyCollection<YearMonth> yearMonths,
+        CancellationToken cancellationToken);
+
     /// <summary>最初に必要となった時点で月参照を作成し、給与設定を引き継いで、仕様に従い検証済みの最新祝日データを選択します。</summary>
     Task<SettingSnapshot> EnsureForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken);
 
@@ -154,6 +159,11 @@ public interface IBasicShiftRepository
         DayOfWeek weekday,
         CancellationToken cancellationToken);
 
+    /// <summary>指定された各曜日のシフトを表示順で有界にまとめて取得します。</summary>
+    Task<IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>> GetForWeekdaysAsync(
+        IReadOnlyCollection<DayOfWeek> weekdays,
+        CancellationToken cancellationToken);
+
     /// <summary>現在のシフトを 1 件検索します。</summary>
     Task<BasicShiftDto?> FindAsync(BasicShiftId id, CancellationToken cancellationToken);
 
@@ -170,6 +180,11 @@ public interface IHolidayCalendarRepository
     /// <summary>完全で不変の祝日カレンダーバージョンを 1 件取得します。</summary>
     Task<HolidayCalendar> GetAsync(
         HolidayCalendarVersionId versionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>完全で不変の祝日カレンダーバージョンを指定された版ごとに有界にまとめて取得します。</summary>
+    Task<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>> GetManyAsync(
+        IReadOnlyCollection<HolidayCalendarVersionId> versionIds,
         CancellationToken cancellationToken);
 
     /// <summary>情報源の基準日によって、検証済みの最新祝日バージョンを取得します。</summary>

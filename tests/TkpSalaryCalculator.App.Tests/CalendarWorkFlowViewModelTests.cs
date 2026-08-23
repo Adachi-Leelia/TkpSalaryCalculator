@@ -721,6 +721,11 @@ public sealed class CalendarWorkFlowViewModelTests
         public Task<HolidayCalendar> GetAsync(HolidayCalendarVersionId versionId, CancellationToken cancellationToken) =>
             Task.FromResult(new HolidayCalendar(versionId, Holidays));
 
+        public Task<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>> GetManyAsync(
+            IReadOnlyCollection<HolidayCalendarVersionId> versionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>>(
+                versionIds.Distinct().ToDictionary(x => x, x => new HolidayCalendar(x, Holidays)));
+
         public Task<HolidayCalendarVersionId> GetLatestVerifiedVersionIdAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new HolidayCalendarVersionId(Guid.NewGuid()));
     }
