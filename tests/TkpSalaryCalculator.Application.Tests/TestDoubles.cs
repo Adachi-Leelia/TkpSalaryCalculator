@@ -172,6 +172,8 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
     public TaskCompletionSource? UpsertGate { get; set; }
     public int UpsertCalls { get; private set; }
     public int InputHistoryCalls { get; private set; }
+    public int FindCalls { get; private set; }
+    public int StreamRangeCalls { get; private set; }
     public Task<bool> AnyAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult(Values.Count != 0);
@@ -189,6 +191,7 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
 
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken)
     {
+        FindCalls++;
         return Task.FromResult(Values.FirstOrDefault(x => x.Id == id));
     }
 
@@ -200,7 +203,15 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
 
     public async IAsyncEnumerable<WorkRecordDto> StreamRangeAsync(DateOnly startDate, DateOnly endDate,
         [EnumeratorCancellation] CancellationToken cancellationToken)
-    { foreach (var value in Values.Where(x => x.WorkDate >= startDate && x.WorkDate <= endDate).OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value)) { cancellationToken.ThrowIfCancellationRequested(); yield return value; await Task.Yield(); } }
+    {
+        StreamRangeCalls++;
+        foreach (var value in Values.Where(x => x.WorkDate >= startDate && x.WorkDate <= endDate).OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return value;
+            await Task.Yield();
+        }
+    }
     public async Task UpsertAsync(WorkRecordDto workRecord, CancellationToken cancellationToken)
     {
         UpsertCalls++;

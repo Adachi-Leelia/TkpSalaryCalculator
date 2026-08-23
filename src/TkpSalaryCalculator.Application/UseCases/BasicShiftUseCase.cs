@@ -126,7 +126,7 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    private static BasicShiftPreviewDto BuildPreview(DateOnly workDate, IReadOnlyList<BasicShiftDto> source,
+    internal static BasicShiftPreviewDto BuildPreview(DateOnly workDate, IReadOnlyList<BasicShiftDto> source,
         IReadOnlyList<WorkRecordDto> existing, SettingSnapshot snapshot, HolidayCalendar calendar,
         ISalaryCalculator calculator)
     {

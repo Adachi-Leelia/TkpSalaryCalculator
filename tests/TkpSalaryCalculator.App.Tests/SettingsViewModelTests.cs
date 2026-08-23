@@ -322,6 +322,10 @@ public sealed class SettingsViewModelTests
         public int SettingsCalls { get; private set; }
         public int InputOptionsCalls { get; private set; }
 
+        public Task<WorkEditorScreenDto> GetEditorScreenAsync(
+            DateOnly workDate, WorkRecordId? workRecordId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<MonthSettingsDto> GetSettingsForDateAsync(DateOnly workDate, CancellationToken cancellationToken)
         {
             SettingsCalls++;
@@ -335,6 +339,9 @@ public sealed class SettingsViewModelTests
         public Task<IReadOnlyList<WorkRecordDto>> GetForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<WorkRecordPreviewDto> PreviewAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<WorkRecordPreviewDto> PreviewForEditorAsync(
+            SaveWorkRecordCommand command, WorkEditorScreenDto screen, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

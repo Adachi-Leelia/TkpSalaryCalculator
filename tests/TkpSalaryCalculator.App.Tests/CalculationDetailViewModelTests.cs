@@ -168,6 +168,12 @@ public sealed class CalculationDetailViewModelTests
         public required PayrollPeriodSummaryDto Summary { get; init; }
         public PayrollPeriodKey? RequestedKey { get; private set; }
 
+        public Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
+            YearMonth yearMonth, DateOnly selectedDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<DayScreenDto> GetDayScreenAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();

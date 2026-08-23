@@ -381,6 +381,50 @@ public sealed class WorkRecordUseCaseTests
     }
 
     [Fact]
+    public async Task GetEditorScreen_FetchesEditTargetDirectlyAndReusesContextForPreview()
+    {
+        var context = new TestContext();
+        var date = new DateOnly(2026, 8, 1);
+        for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
+        var target = context.Works.Values[10];
+        var useCase = context.WorkUseCase();
+
+        var screen = await useCase.GetEditorScreenAsync(date, target.Id, default);
+        var command = TestData.SaveCommand(date) with { Id = target.Id };
+        var first = await useCase.PreviewForEditorAsync(command, screen, default);
+        var second = await useCase.PreviewForEditorAsync(command, screen, default);
+
+        Assert.Equal(target, screen.ExistingRecord);
+        Assert.True(first.CanSave);
+        Assert.Equal(first.NormalizedWorkMinutes, second.NormalizedWorkMinutes);
+        Assert.Equal(first.Calculation?.WorkRecordId, second.Calculation?.WorkRecordId);
+        Assert.Equal(first.Calculation?.Total, second.Calculation?.Total);
+        Assert.Equal(1, context.Works.FindCalls);
+        Assert.Equal(0, context.Works.StreamRangeCalls);
+        Assert.Equal(1, context.Works.InputHistoryCalls);
+        Assert.Equal(1, context.Settings.EffectiveMonthCalls);
+        Assert.Equal(1, context.Holidays.GetCalls);
+        Assert.Equal(1, context.Presets.GetAllCalls);
+    }
+
+    [Fact]
+    public async Task PreviewAndSave_LoadHolidayOncePerOperationAndSaveStillRevalidates()
+    {
+        var context = new TestContext();
+        var useCase = context.WorkUseCase();
+        var command = TestData.SaveCommand(new DateOnly(2026, 8, 1));
+
+        var preview = await useCase.PreviewAsync(command, default);
+        var saved = await useCase.SaveAsync(command, default);
+
+        Assert.True(preview.CanSave);
+        Assert.Equal(command.WorkDate, saved.WorkRecord.WorkDate);
+        Assert.Equal(2, context.Settings.EffectiveMonthCalls + context.Settings.EnsureCalls);
+        Assert.Equal(2, context.Holidays.GetCalls);
+        Assert.Equal(1, context.Transactions.Commits);
+    }
+
+    [Fact]
     public async Task GetInputOptions_UsesDisplayOrderAndNameForTiesAndMarksUnavailableCandidates()
     {
         var context = new TestContext();

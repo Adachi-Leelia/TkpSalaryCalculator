@@ -218,17 +218,16 @@ public sealed class CalendarViewModel : ViewModelBase
         CancellationToken cancellationToken,
         DateOnly? preferredDate = null)
     {
-        var values = await salaryQuery.GetCalendarMonthAsync(month, cancellationToken);
         var target = preferredDate
             ?? (sessionState.SelectedCalendarDate is { } remembered &&
                 remembered.Year == month.Year && remembered.Month == month.Month
                     ? remembered
                     : new DateOnly(month.Year, month.Month, 1));
 
-        var daily = await salaryQuery.GetDayAsync(target, cancellationToken);
+        var screen = await salaryQuery.GetCalendarMonthScreenAsync(month, target, cancellationToken);
         DisplayedMonth = month;
         sessionState.CalendarMonth = month;
-        ApplySelectedDate(target, daily, values);
+        ApplySelectedDate(target, screen.SelectedDay, screen.Days);
     }
 
     private async Task SelectDateCoreAsync(

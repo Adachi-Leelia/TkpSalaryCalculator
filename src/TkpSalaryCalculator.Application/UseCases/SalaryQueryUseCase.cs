@@ -27,6 +27,30 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
     /// <inheritdoc />
     public async Task<IReadOnlyList<CalendarDayDto>> GetCalendarMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
     {
+        var (days, _) = await LoadCalendarMonthAsync(yearMonth, null, cancellationToken).ConfigureAwait(false);
+        return days;
+    }
+
+    /// <inheritdoc />
+    public async Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
+        YearMonth yearMonth,
+        DateOnly selectedDate,
+        CancellationToken cancellationToken)
+    {
+        ApplicationSupport.ValidateYearMonth(yearMonth, nameof(yearMonth));
+        if (selectedDate.Year != yearMonth.Year || selectedDate.Month != yearMonth.Month)
+            throw new ArgumentOutOfRangeException(nameof(selectedDate), "選択日は表示月の範囲内で指定してください。");
+
+        var (days, selectedDay) = await LoadCalendarMonthAsync(yearMonth, selectedDate, cancellationToken)
+            .ConfigureAwait(false);
+        return new(days, selectedDay!);
+    }
+
+    private async Task<(IReadOnlyList<CalendarDayDto> Days, DailySalaryDto? SelectedDay)> LoadCalendarMonthAsync(
+        YearMonth yearMonth,
+        DateOnly? selectedDate,
+        CancellationToken cancellationToken)
+    {
         ApplicationSupport.ValidateYearMonth(yearMonth, nameof(yearMonth));
         cancellationToken.ThrowIfCancellationRequested();
         var start = new DateOnly(yearMonth.Year, yearMonth.Month, 1);
@@ -42,16 +66,40 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
             .Select(offset => start.AddDays(offset).DayOfWeek).Distinct().ToArray();
         var shiftsByWeekday = await shifts.GetForWeekdaysAsync(requestedWeekdays, cancellationToken).ConfigureAwait(false);
         var result = new List<CalendarDayDto>(end.Day);
+        DailySalaryDto? selectedDay = null;
         for (var date = start; date <= end; date = date.AddDays(1))
         {
             var dayRecords = byDate.TryGetValue(date, out var values) ? values : [];
             var daily = CalculateDay(date, dayRecords, calculationContext);
+            if (date == selectedDate) selectedDay = daily;
             var weekdayShifts = shiftsByWeekday[date.DayOfWeek];
             var appliedIds = dayRecords.Where(x => x.SourceBasicShiftId is not null).Select(x => x.SourceBasicShiftId!.Value).ToHashSet();
             var candidateCount = weekdayShifts.Count(x => x.IsEnabled && !appliedIds.Contains(x.Id));
             result.Add(new(date, dayRecords.Count, daily.CalculatedSubtotal, daily.UncalculatedCount, candidateCount));
         }
-        return result;
+        return (result, selectedDay);
+    }
+
+    /// <inheritdoc />
+    public async Task<DayScreenDto> GetDayScreenAsync(DateOnly workDate, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var values = new List<WorkRecordDto>();
+        await foreach (var item in records.StreamRangeAsync(workDate, workDate, cancellationToken)
+            .WithCancellation(cancellationToken).ConfigureAwait(false))
+            values.Add(item);
+
+        var month = ApplicationSupport.ToYearMonth(workDate);
+        var snapshot = await settings.GetEffectiveForMonthAsync(month, cancellationToken).ConfigureAwait(false);
+        var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
+        var sourceShifts = await shifts.GetForWeekdayAsync(workDate.DayOfWeek, cancellationToken).ConfigureAwait(false);
+        var context = new SalaryCalculationContext(
+            new Dictionary<YearMonth, SettingSnapshot> { [month] = snapshot },
+            new Dictionary<HolidayCalendarVersionId, HolidayCalendar> { [calendar.VersionId] = calendar });
+        var daily = CalculateDay(workDate, values, context);
+        var shiftPreview = BasicShiftUseCase.BuildPreview(
+            workDate, sourceShifts, values, snapshot, calendar, calculator);
+        return new(daily, new MonthSettingsDto(month, snapshot), shiftPreview);
     }
 
     /// <inheritdoc />

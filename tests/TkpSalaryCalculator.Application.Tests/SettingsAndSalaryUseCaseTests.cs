@@ -366,6 +366,73 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task CalendarMonthScreen_ReusesMonthRangeForSelectedDaySummary()
+    {
+        var context = new TestContext();
+        var month = new YearMonth(2026, 8);
+        var selectedDate = new DateOnly(2026, 8, 21);
+        context.Works.Values.AddRange([
+            TestData.Work(selectedDate),
+            TestData.Work(selectedDate),
+            TestData.Work(selectedDate.AddDays(1)),
+        ]);
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods);
+
+        var screen = await useCase.GetCalendarMonthScreenAsync(month, selectedDate, default);
+
+        Assert.Equal(31, screen.Days.Count);
+        Assert.Equal(selectedDate, screen.SelectedDay.Date);
+        Assert.Equal(2, screen.SelectedDay.Records.Count);
+        Assert.Equal(2_000, screen.SelectedDay.CalculatedSubtotal.Value);
+        Assert.Equal(2, screen.Days.Single(x => x.Date == selectedDate).WorkRecordCount);
+        Assert.Equal(1, context.Works.StreamRangeCalls);
+        Assert.Equal(1, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal(1, context.Holidays.GetManyCalls);
+        Assert.Equal(1, context.Shifts.GetForWeekdaysCalls);
+
+        var legacyMonth = await useCase.GetCalendarMonthAsync(month, default);
+        var legacyDay = await useCase.GetDayAsync(selectedDate, default);
+        Assert.Equal(legacyMonth, screen.Days);
+        Assert.Equal(legacyDay.CalculatedSubtotal, screen.SelectedDay.CalculatedSubtotal);
+        Assert.Equal(legacyDay.Records.Select(x => x.WorkRecord.Id),
+            screen.SelectedDay.Records.Select(x => x.WorkRecord.Id));
+    }
+
+    [Fact]
+    public async Task DayScreen_LoadsRecordsSettingsHolidayAndShiftsOnce()
+    {
+        var context = new TestContext();
+        var date = new DateOnly(2026, 8, 1);
+        for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), date.DayOfWeek, null,
+            TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        context.Shifts.Values.Add(shift);
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods);
+
+        var screen = await useCase.GetDayScreenAsync(date, default);
+
+        Assert.Equal(20, screen.DailySalary.Records.Count);
+        Assert.Equal(20_000, screen.DailySalary.CalculatedSubtotal.Value);
+        Assert.Equal(20, screen.BasicShiftPreview.ExistingWorkRecordCount);
+        Assert.Equal(shift.Id, Assert.Single(screen.BasicShiftPreview.Candidates).Shift.Id);
+        Assert.Equal(1, context.Works.StreamRangeCalls);
+        Assert.Equal(1, context.Settings.EffectiveMonthCalls);
+        Assert.Equal(0, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal(1, context.Holidays.GetCalls);
+        Assert.Equal(0, context.Holidays.GetManyCalls);
+        Assert.Equal(1, context.Shifts.GetForWeekdayCalls);
+        Assert.Equal(0, context.Shifts.GetForWeekdaysCalls);
+
+        var legacyDay = await useCase.GetDayAsync(date, default);
+        Assert.Equal(legacyDay.CalculatedSubtotal, screen.DailySalary.CalculatedSubtotal);
+        Assert.Equal(legacyDay.Records.Select(x => x.WorkRecord.Id),
+            screen.DailySalary.Records.Select(x => x.WorkRecord.Id));
+    }
+
+    [Fact]
     public async Task SalaryQuery_EmptyCalendarSkipsCalculationDataAndBatchesWeekdayShifts()
     {
         var context = new TestContext();

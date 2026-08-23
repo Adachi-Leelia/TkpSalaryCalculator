@@ -122,21 +122,13 @@ public sealed class DayViewModel : ViewModelBase
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
-        var salaryTask = salaryQuery.GetDayAsync(Date, cancellationToken);
-        var recordsTask = workRecords.GetForDateAsync(Date, cancellationToken);
-        var settingsTask = workRecords.GetSettingsForDateAsync(Date, cancellationToken);
-        var shiftTask = basicShifts?.PreviewForDateAsync(Date, cancellationToken);
-        await Task.WhenAll(new Task[] { salaryTask, recordsTask, settingsTask }.Concat(shiftTask is null ? [] : [shiftTask]));
-
-        var daily = await salaryTask;
-        var stored = await recordsTask;
-        var monthSettings = await settingsTask;
-        var calculations = daily.Records.ToDictionary(x => x.WorkRecord.Id);
-        var serviceNames = monthSettings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
-        var categoryNames = monthSettings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
-        if (shiftTask is not null)
+        var screen = await salaryQuery.GetDayScreenAsync(Date, cancellationToken);
+        var daily = screen.DailySalary;
+        var serviceNames = screen.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+        var categoryNames = screen.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+        if (basicShifts is not null)
         {
-            var shiftPreview = await shiftTask;
+            var shiftPreview = screen.BasicShiftPreview;
             existingWorkRecordCount = shiftPreview.ExistingWorkRecordCount;
             ShiftCandidates = shiftPreview.Candidates.Select(candidate =>
             {
@@ -154,20 +146,20 @@ public sealed class DayViewModel : ViewModelBase
         }
         else
         {
-            existingWorkRecordCount = stored.Count;
+            existingWorkRecordCount = daily.Records.Count;
             ShiftCandidates = [];
         }
 
         DateText = formatter.Date(Date);
         TotalText = formatter.Money(daily.CalculatedSubtotal);
         UncalculatedText = daily.UncalculatedCount == 0 ? string.Empty : $"未計算 {daily.UncalculatedCount}件。金額は推測せず、勤務を開いて不足設定を確認してください。";
-        Records = stored.Select(record =>
+        Records = daily.Records.Select(salary =>
         {
-            calculations.TryGetValue(record.Id, out var salary);
+            var record = salary.WorkRecord;
             var service = serviceNames.GetValueOrDefault(record.ServiceId, "サービス");
             var category = record.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
             var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
-            var amount = salary?.Calculation.Status == SalaryCalculationStatus.Calculated && salary.Calculation.Total is { } total
+            var amount = salary.Calculation.Status == SalaryCalculationStatus.Calculated && salary.Calculation.Total is { } total
                 ? formatter.Money(total)
                 : "未計算";
             return new DayWorkRecordRowViewModel(
@@ -175,7 +167,7 @@ public sealed class DayViewModel : ViewModelBase
                 name,
                 formatter.Duration(record.WorkMinutes),
                 amount,
-                salary?.Calculation.Status == SalaryCalculationStatus.Uncalculated,
+                salary.Calculation.Status == SalaryCalculationStatus.Uncalculated,
                 () => navigator.OpenWorkEditorAsync(Date, record.Id, CancellationToken.None),
                 () => OpenCalculationDetailsAsync(record.Id),
                 () => DeleteRecordAsync(record.Id, name),

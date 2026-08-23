@@ -82,6 +82,8 @@ public sealed class CalendarWorkFlowViewModelTests
         Assert.Null(navigator.OpenedDay);
         Assert.Equal(1, work.SettingsForDateCalls);
         Assert.Equal(0, work.InputOptionsCalls);
+        Assert.Equal(0, query.DayScreenCalls);
+        Assert.Equal(2, query.CalendarScreenCalls);
     }
 
     [Fact]
@@ -144,8 +146,9 @@ public sealed class CalendarWorkFlowViewModelTests
         await viewModel.LoadAsync();
 
         Assert.Equal("訪問 / 通常", Assert.Single(viewModel.Records).DisplayName);
-        Assert.Equal(1, work.SettingsForDateCalls);
+        Assert.Equal(0, work.SettingsForDateCalls);
         Assert.Equal(0, work.InputOptionsCalls);
+        Assert.Equal(1, query.DayScreenCalls);
 
         await viewModel.DeleteRecordAsync(RecordId, "訪問 / 通常");
         Assert.Empty(work.Deleted);
@@ -385,7 +388,7 @@ public sealed class CalendarWorkFlowViewModelTests
                     false, 1, true, [new IssueDto("WORK_SERVICE_UNAVAILABLE", null, "この年月では使用できません。")]),
             ]);
         var viewModel = new WorkEditorViewModel(
-            work, new HolidayCalendarStub(), new CalendarNavigatorStub(), new IssuePresenter(), new JapaneseDisplayFormatter(),
+            work, new CalendarNavigatorStub(), new IssuePresenter(), new JapaneseDisplayFormatter(),
             new UserErrorPresenter(), new DialogStub { Result = true });
         viewModel.Initialize(TargetDate, RecordId);
 
@@ -407,6 +410,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var fixture = new EditorFixture();
         fixture.Work.PreviewFactory = command => UncalculatedPreview(command);
         await fixture.ViewModel.LoadAsync();
+        var previewCalls = fixture.Work.PreviewCalls;
 
         Assert.True(fixture.ViewModel.CanSave);
         Assert.Contains("勤務内容は保存できます", fixture.ViewModel.PreviewText);
@@ -414,6 +418,7 @@ public sealed class CalendarWorkFlowViewModelTests
         await fixture.ViewModel.SaveAsync();
 
         Assert.Single(fixture.Work.Saved);
+        Assert.Equal(previewCalls, fixture.Work.PreviewCalls);
         Assert.Equal(1, fixture.Navigator.GoBackCalls);
         Assert.Equal("勤務記録を保存しました。", fixture.Navigator.GoBackSuccessMessage);
         Assert.False(fixture.ViewModel.IsDirty);
@@ -445,12 +450,13 @@ public sealed class CalendarWorkFlowViewModelTests
         work.Stored.Add(Record() with { WorkMinutes = new WorkMinutes(90) });
         var navigator = new CalendarNavigatorStub();
         var viewModel = new WorkEditorViewModel(
-            work, new HolidayCalendarStub(), navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
+            work, navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
             new UserErrorPresenter(), new DialogStub { Result = true });
         viewModel.Initialize(TargetDate, RecordId);
 
         await viewModel.LoadAsync();
         Assert.Equal("90", viewModel.WorkMinutesText);
+        var previewCalls = work.PreviewCalls;
 
         viewModel.WorkMinutesText = "75";
         Assert.False(viewModel.CanSave);
@@ -459,6 +465,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var saved = Assert.Single(work.Saved);
         Assert.Equal(RecordId, saved.Id);
         Assert.Equal(new WorkMinutes(75), saved.WorkMinutes);
+        Assert.Equal(previewCalls + 1, work.PreviewCalls);
         Assert.Equal(1, navigator.GoBackCalls);
     }
 
@@ -576,8 +583,9 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         public EditorFixture()
         {
+            Work.HolidayDates = Holidays.Holidays;
             ViewModel = new WorkEditorViewModel(
-                Work, Holidays, Navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
+                Work, Navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
                 new UserErrorPresenter(), new DialogStub { Result = true });
             ViewModel.Initialize(TargetDate, null);
         }
@@ -592,6 +600,27 @@ public sealed class CalendarWorkFlowViewModelTests
         public Dictionary<YearMonth, IReadOnlyList<CalendarDayDto>> Months { get; } = [];
         public Dictionary<DateOnly, DailySalaryDto> Days { get; init; } = [];
         public Dictionary<DateOnly, Exception> DayExceptions { get; } = [];
+        public int CalendarScreenCalls { get; private set; }
+        public int DayScreenCalls { get; private set; }
+        public Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
+            YearMonth yearMonth, DateOnly selectedDate, CancellationToken cancellationToken)
+        {
+            CalendarScreenCalls++;
+            if (DayExceptions.TryGetValue(selectedDate, out var exception))
+                return Task.FromException<CalendarMonthScreenDto>(exception);
+            return Task.FromResult(new CalendarMonthScreenDto(
+                Months[yearMonth], Days.GetValueOrDefault(selectedDate, EmptyDay(selectedDate))));
+        }
+        public Task<DayScreenDto> GetDayScreenAsync(DateOnly workDate, CancellationToken cancellationToken)
+        {
+            DayScreenCalls++;
+            if (DayExceptions.TryGetValue(workDate, out var exception))
+                return Task.FromException<DayScreenDto>(exception);
+            return Task.FromResult(new DayScreenDto(
+                Days.GetValueOrDefault(workDate, EmptyDay(workDate)),
+                Options().Settings with { YearMonth = new YearMonth(workDate.Year, workDate.Month) },
+                new BasicShiftPreviewDto(workDate, [], Days.GetValueOrDefault(workDate, EmptyDay(workDate)).Records.Count)));
+        }
         public Task<IReadOnlyList<CalendarDayDto>> GetCalendarMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken) =>
             Task.FromResult(Months[yearMonth]);
         public Task<DailySalaryDto> GetDayAsync(DateOnly workDate, CancellationToken cancellationToken) =>
@@ -620,9 +649,19 @@ public sealed class CalendarWorkFlowViewModelTests
         public CopyDayConfirmationToken? LastCopyConfirmationToken { get; private set; }
         public List<string>? SharedEvents { get; init; }
         public WorkInputOptionsDto InputOptions { get; set; } = Options();
+        public IReadOnlyDictionary<DateOnly, string> HolidayDates { get; set; } = new Dictionary<DateOnly, string>();
         public Func<SaveWorkRecordCommand, WorkRecordPreviewDto> PreviewFactory { get; set; } = command => new(
             command.WorkMinutes ?? new WorkMinutes(60), command.StartTime, command.EndTime,
             Calculated(command.Id ?? RecordId, 1_200), true, []);
+
+        public async Task<WorkEditorScreenDto> GetEditorScreenAsync(
+            DateOnly workDate, WorkRecordId? workRecordId, CancellationToken cancellationToken)
+        {
+            var options = await GetInputOptionsAsync(workDate, cancellationToken);
+            var existing = workRecordId is null ? null : Stored.FirstOrDefault(x => x.Id == workRecordId);
+            return new(options, existing,
+                new HolidayCalendar(options.Settings.Snapshot.HolidayCalendarVersionId, HolidayDates));
+        }
 
         public Task<MonthSettingsDto> GetSettingsForDateAsync(DateOnly workDate, CancellationToken cancellationToken)
         {
@@ -646,6 +685,9 @@ public sealed class CalendarWorkFlowViewModelTests
             LastPreviewCommand = command;
             return Task.FromResult(PreviewFactory(command));
         }
+        public Task<WorkRecordPreviewDto> PreviewForEditorAsync(
+            SaveWorkRecordCommand command, WorkEditorScreenDto screen, CancellationToken cancellationToken) =>
+            PreviewAsync(command, cancellationToken);
         public Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken)
         {
             if (SaveException is not null) throw SaveException;

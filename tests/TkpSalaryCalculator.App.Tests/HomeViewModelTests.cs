@@ -286,6 +286,12 @@ public sealed class HomeViewModelTests
         public PayrollPeriodKey? FailingKey { get; set; }
         public Func<PayrollPeriodKey, CancellationToken, Task<PayrollPeriodSummaryDto>>? GetPayrollPeriodAsyncOverride { get; set; }
 
+        public Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
+            YearMonth yearMonth, DateOnly selectedDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<DayScreenDto> GetDayScreenAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void Add(PayrollPeriodSummaryDto summary) => summaries.Add(summary.Period.Key, summary);
 
         public Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(
