@@ -15,6 +15,7 @@ public sealed class DayViewModel : ViewModelBase
     private readonly ICalendarNavigator navigator;
     private readonly IConfirmationDialogService dialogs;
     private readonly JapaneseDisplayFormatter formatter;
+    private readonly IBasicShiftUseCase? basicShifts;
     private DateOnly date;
     private string dateText = string.Empty;
     private string totalText = "0円";
@@ -23,6 +24,8 @@ public sealed class DayViewModel : ViewModelBase
     private DateTime copySourceDate;
     private DateTime copySourceMaximumDate;
     private IReadOnlyList<DayWorkRecordRowViewModel> records = [];
+    private IReadOnlyList<ShiftCandidateRowViewModel> shiftCandidates = [];
+    private int existingWorkRecordCount;
 
     public DayViewModel(
         ISalaryQueryUseCase salaryQuery,
@@ -30,16 +33,19 @@ public sealed class DayViewModel : ViewModelBase
         ICalendarNavigator navigator,
         IConfirmationDialogService dialogs,
         JapaneseDisplayFormatter formatter,
-        IUserErrorPresenter errorPresenter) : base(errorPresenter)
+        IUserErrorPresenter errorPresenter,
+        IBasicShiftUseCase? basicShifts = null) : base(errorPresenter)
     {
         this.salaryQuery = salaryQuery ?? throw new ArgumentNullException(nameof(salaryQuery));
         this.workRecords = workRecords ?? throw new ArgumentNullException(nameof(workRecords));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        this.basicShifts = basicShifts;
         ReloadCommand = new AsyncCommand(LoadAsync, PresentError);
         AddWorkCommand = new AsyncCommand(AddWorkAsync, PresentError);
         CopyDayCommand = new AsyncCommand(CopyDayAsync, PresentError);
+        ApplyShiftsCommand = new AsyncCommand(ApplyShiftsAsync, PresentError, () => ShiftCandidates.Any(x => x.IsSelected && x.CanChoose));
     }
 
     public DateOnly Date => date;
@@ -83,9 +89,21 @@ public sealed class DayViewModel : ViewModelBase
     }
     public bool HasRecords => Records.Count != 0;
     public bool IsEmpty => !HasRecords;
+    public IReadOnlyList<ShiftCandidateRowViewModel> ShiftCandidates
+    {
+        get => shiftCandidates;
+        private set
+        {
+            if (!SetProperty(ref shiftCandidates, value)) return;
+            OnPropertyChanged(nameof(HasShiftCandidates));
+            ApplyShiftsCommand.NotifyCanExecuteChanged();
+        }
+    }
+    public bool HasShiftCandidates => ShiftCandidates.Count != 0;
     public AsyncCommand ReloadCommand { get; }
     public AsyncCommand AddWorkCommand { get; }
     public AsyncCommand CopyDayCommand { get; }
+    public AsyncCommand ApplyShiftsCommand { get; }
 
     public void SetDate(DateOnly value)
     {
@@ -107,7 +125,8 @@ public sealed class DayViewModel : ViewModelBase
         var salaryTask = salaryQuery.GetDayAsync(Date, cancellationToken);
         var recordsTask = workRecords.GetForDateAsync(Date, cancellationToken);
         var optionsTask = workRecords.GetInputOptionsAsync(Date, cancellationToken);
-        await Task.WhenAll(salaryTask, recordsTask, optionsTask);
+        var shiftTask = basicShifts?.PreviewForDateAsync(Date, cancellationToken);
+        await Task.WhenAll(new Task[] { salaryTask, recordsTask, optionsTask }.Concat(shiftTask is null ? [] : [shiftTask]));
 
         var daily = await salaryTask;
         var stored = await recordsTask;
@@ -115,6 +134,29 @@ public sealed class DayViewModel : ViewModelBase
         var calculations = daily.Records.ToDictionary(x => x.WorkRecord.Id);
         var serviceNames = options.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
         var categoryNames = options.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+        if (shiftTask is not null)
+        {
+            var shiftPreview = await shiftTask;
+            existingWorkRecordCount = shiftPreview.ExistingWorkRecordCount;
+            ShiftCandidates = shiftPreview.Candidates.Select(candidate =>
+            {
+                var shift = candidate.Shift;
+                var service = serviceNames.GetValueOrDefault(shift.ServiceId, "現在の設定にないサービス");
+                var category = shift.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
+                var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
+                var row = new ShiftCandidateRowViewModel(
+                    shift.Id, name, formatter.Duration(shift.WorkMinutes), candidate.CanApply,
+                    candidate.CanApply && !candidate.HasSimilarManualRecord,
+                    string.Join(Environment.NewLine, candidate.Issues.Select(x => x.Message)));
+                row.SelectionChanged += (_, _) => ApplyShiftsCommand.NotifyCanExecuteChanged();
+                return row;
+            }).ToArray();
+        }
+        else
+        {
+            existingWorkRecordCount = stored.Count;
+            ShiftCandidates = [];
+        }
 
         DateText = formatter.Date(Date);
         TotalText = formatter.Money(daily.CalculatedSubtotal);
@@ -180,6 +222,25 @@ public sealed class DayViewModel : ViewModelBase
         }
     });
 
+    public Task ApplyShiftsAsync() => RunBusyAsync(async cancellationToken =>
+    {
+        if (basicShifts is null) return;
+        var selected = ShiftCandidates.Where(x => x.CanChoose && x.IsSelected).ToArray();
+        if (selected.Length == 0) return;
+        var warningLines = selected.Where(x => x.HasWarning).Select(x => $"・{x.DisplayName}: {x.WarningText}");
+        var message = $"対象日: {formatter.Date(Date)}{Environment.NewLine}" +
+                      $"反映する勤務記録: {selected.Length}件{Environment.NewLine}" +
+                      $"既存の勤務記録: {existingWorkRecordCount}件{Environment.NewLine}" +
+                      string.Join(Environment.NewLine, selected.Select(x => $"・{x.DisplayName} / {x.DurationText}")) +
+                      (warningLines.Any() ? $"{Environment.NewLine}重複の可能性:{Environment.NewLine}{string.Join(Environment.NewLine, warningLines)}" : string.Empty) +
+                      $"{Environment.NewLine}{Environment.NewLine}確定するまで給与には含まれません。";
+        var confirmed = await dialogs.ConfirmAsync("基本シフトを反映", message, "確定して追加", "キャンセル", cancellationToken);
+        if (!confirmed) return;
+        var results = await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(Date, selected.Select(x => x.Id).ToArray()), cancellationToken);
+        SuccessMessage = $"基本シフトから勤務記録を{results.Count}件追加しました。";
+        await LoadCoreAsync(cancellationToken);
+    });
+
     private string BuildCopyPreviewMessage(CopyDayPreviewDto preview)
     {
         var lines = new List<string>
@@ -209,6 +270,44 @@ public sealed class DayViewModel : ViewModelBase
         await LoadCoreAsync(cancellationToken);
         SuccessMessage = "勤務記録を削除しました。";
     });
+}
+
+public sealed class ShiftCandidateRowViewModel : ObservableObject
+{
+    private bool isSelected;
+
+    public ShiftCandidateRowViewModel(
+        BasicShiftId id,
+        string displayName,
+        string durationText,
+        bool canSelect,
+        bool isSelected,
+        string warningText)
+    {
+        Id = id;
+        DisplayName = displayName;
+        DurationText = durationText;
+        CanChoose = canSelect;
+        this.isSelected = isSelected;
+        WarningText = warningText;
+    }
+
+    public event EventHandler? SelectionChanged;
+    public BasicShiftId Id { get; }
+    public string DisplayName { get; }
+    public string DurationText { get; }
+    public bool CanChoose { get; }
+    public string WarningText { get; }
+    public bool HasWarning => !string.IsNullOrWhiteSpace(WarningText);
+    public bool IsSelected
+    {
+        get => isSelected;
+        set
+        {
+            if (!CanChoose || !SetProperty(ref isSelected, value)) return;
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
 }
 
 public sealed class DayWorkRecordRowViewModel

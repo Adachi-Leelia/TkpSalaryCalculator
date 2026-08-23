@@ -311,6 +311,12 @@ public sealed class SettingsViewModelTests
         public Task OpenCountBonusesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenCountBonusEditorAsync(Guid? countBonusId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenPayrollPeriodAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenMonthlyAllowancesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenMonthlyAllowanceEditorAsync(PayrollPeriodKey payrollPeriodKey, Guid? allowanceId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenBasicShiftsAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenBasicShiftEditorAsync(Guid? basicShiftId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenDataManagementAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenAppInformationAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class DialogStub : IConfirmationDialogService

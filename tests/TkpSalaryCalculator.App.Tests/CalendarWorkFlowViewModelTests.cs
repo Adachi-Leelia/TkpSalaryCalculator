@@ -52,6 +52,35 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
+    public async Task UX003_CalendarOpensShiftConfirmationAndAppliesConfirmedCandidatesWithoutOpeningDayPage()
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, shiftCandidates: 1);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var shift = new BasicShiftDto(
+            new BasicShiftId(Guid.Parse("70000000-0000-0000-0000-000000000001")), TargetDate.DayOfWeek, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), true);
+        var basicShifts = new BasicShiftUseCaseStub
+        {
+            Preview = new BasicShiftPreviewDto(TargetDate, [new BasicShiftCandidateDto(shift, true, false, false, [])], 0),
+        };
+        var dialogs = new DialogStub { Result = true };
+        var navigator = new CalendarNavigatorStub();
+        var viewModel = new CalendarViewModel(
+            query, navigator, new AppSessionState(TargetDate), new ClockStub(), new LocalDateStub(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, new WorkUseCaseStub(), dialogs);
+
+        await viewModel.LoadAsync();
+        await viewModel.ConfirmShiftCandidatesAsync();
+
+        Assert.Equal("基本シフトを反映", dialogs.LastTitle);
+        Assert.Contains("追加する勤務記録: 1件", dialogs.LastMessage);
+        Assert.Equal(TargetDate, basicShifts.Applied?.WorkDate);
+        Assert.Equal([shift.Id], basicShifts.Applied?.BasicShiftIds);
+        Assert.Null(navigator.OpenedDay);
+    }
+
+    [Fact]
     public async Task CalendarMonthMoveUpdatesSessionAndSelectedDayTogether()
     {
         var query = new SalaryQueryStub();
@@ -664,6 +693,24 @@ public sealed class CalendarWorkFlowViewModelTests
             GoBackCalls++;
             GoBackSuccessMessage = successMessage;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BasicShiftUseCaseStub : IBasicShiftUseCase
+    {
+        public BasicShiftPreviewDto? Preview { get; init; }
+        public ApplyBasicShiftsCommand? Applied { get; private set; }
+
+        public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<BasicShiftDto>>([]);
+        public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+            Task.FromResult(Preview ?? new BasicShiftPreviewDto(workDate, [], 0));
+        public Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(ApplyBasicShiftsCommand command, CancellationToken cancellationToken)
+        {
+            Applied = command;
+            return Task.FromResult<IReadOnlyList<SaveWorkRecordResultDto>>([]);
         }
     }
 

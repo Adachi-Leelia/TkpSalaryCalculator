@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage x:Class="TkpSalaryCalculator.App.Presentation.Features.DataManagement.AppInformationPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:data="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.DataManagement"
+    x:DataType="data:AppInformationViewModel" Title="アプリ情報">
+    <ScrollView><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="14">
+        <Label Style="{StaticResource PageTitleStyle}" Text="アプリ情報" />
+        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="16" RowSpacing="10">
+            <Label Text="アプリ名" /><Label Grid.Column="1" FontAttributes="Bold" Text="{Binding AppName}" />
+            <Label Grid.Row="1" Text="表示バージョン" /><Label Grid.Row="1" Grid.Column="1" Text="{Binding DisplayVersion}" />
+            <Label Grid.Row="2" Text="ビルド番号" /><Label Grid.Row="2" Grid.Column="1" Text="{Binding BuildNumber}" />
+            <Label Grid.Row="3" Text="データ形式" /><Label Grid.Row="3" Grid.Column="1" Text="{Binding DataFormatVersion}" />
+        </Grid>
+        <Border Padding="14" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 12">
+            <Label Text="本アプリが表示する給与額は、登録した勤務内容と設定に基づく見込み額です。実際の支給額を保証するものではありません。" />
+        </Border>
+        <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+    </VerticalStackLayout></ScrollView>
+</ContentPage>
