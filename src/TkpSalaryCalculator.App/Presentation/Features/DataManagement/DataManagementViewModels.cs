@@ -47,6 +47,7 @@ public sealed class DataManagementViewModel : ViewModelBase
         this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
+        TrackDataChanges(sessionState, AppDataChangeKind.BackupStatus);
         ExportCommand = new AsyncCommand(ExportAsync, PresentError);
         ImportCommand = new AsyncCommand(ImportAsync, PresentError);
     }
@@ -69,7 +70,9 @@ public sealed class DataManagementViewModel : ViewModelBase
 
     public AsyncCommand ImportCommand { get; }
 
-    public Task LoadAsync() => RunBusyAsync(LoadCoreAsync);
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
     public Task ExportAsync() => RunBusyAsync(async cancellationToken =>
     {
@@ -84,7 +87,10 @@ public sealed class DataManagementViewModel : ViewModelBase
         await using var destination = await documents.CreateExportAsync(fileName, cancellationToken);
         if (destination is null) return;
         await transfers.ExportAsync(destination, appInformation.DisplayVersion, cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         await LoadCoreAsync(cancellationToken);
+        AcceptDataGeneration(generation);
         SuccessMessage = "データをエクスポートしました。";
     });
 
@@ -140,6 +146,7 @@ public sealed class DataManagementViewModel : ViewModelBase
         sessionState.SelectedCalendarDate = today;
         sessionState.SettingsMonth = new YearMonth(today.Year, today.Month);
         sessionState.PayrollPeriod = null;
+        sessionState.ResetDataGenerations();
     }
 
     private static string BuildImportMessage(ImportPreviewDto value)

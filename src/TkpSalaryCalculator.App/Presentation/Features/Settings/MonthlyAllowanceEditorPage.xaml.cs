@@ -17,6 +17,6 @@ public partial class MonthlyAllowanceEditorPage : ContentPage, IQueryAttributabl
             : null;
         viewModel.Initialize(new PayrollPeriodKey(new YearMonth(date.Year, date.Month)), id);
     }
-    protected override async void OnAppearing() { base.OnAppearing(); await viewModel.LoadAsync(); }
+    protected override async void OnAppearing() { base.OnAppearing(); await viewModel.LoadIfNeededAsync(); }
     protected override void OnDisappearing() { viewModel.CancelPendingOperations(); base.OnDisappearing(); }
 }

@@ -1,3 +1,4 @@
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
@@ -16,6 +17,7 @@ public sealed class DayViewModel : ViewModelBase
     private readonly IConfirmationDialogService dialogs;
     private readonly JapaneseDisplayFormatter formatter;
     private readonly IBasicShiftUseCase? basicShifts;
+    private readonly IAppSessionState sessionState;
     private DateOnly date;
     private string dateText = string.Empty;
     private string totalText = "0円";
@@ -34,6 +36,7 @@ public sealed class DayViewModel : ViewModelBase
         IConfirmationDialogService dialogs,
         JapaneseDisplayFormatter formatter,
         IUserErrorPresenter errorPresenter,
+        IAppSessionState sessionState,
         IBasicShiftUseCase? basicShifts = null) : base(errorPresenter)
     {
         this.salaryQuery = salaryQuery ?? throw new ArgumentNullException(nameof(salaryQuery));
@@ -42,6 +45,9 @@ public sealed class DayViewModel : ViewModelBase
         this.dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         this.basicShifts = basicShifts;
+        this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        TrackDataChanges(this.sessionState,
+            AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.BasicShifts);
         ReloadCommand = new AsyncCommand(LoadAsync, PresentError);
         AddWorkCommand = new AsyncCommand(AddWorkAsync, PresentError);
         CopyDayCommand = new AsyncCommand(CopyDayAsync, PresentError);
@@ -107,13 +113,16 @@ public sealed class DayViewModel : ViewModelBase
 
     public void SetDate(DateOnly value)
     {
+        if (date != value) InvalidateTrackedLoad();
         date = value;
         CopySourceMaximumDate = value.AddDays(-1).ToDateTime(TimeOnly.MinValue);
         CopySourceDate = CopySourceMaximumDate;
         OnPropertyChanged(nameof(Date));
     }
 
-    public Task LoadAsync() => RunBusyAsync(LoadCoreAsync);
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
     public Task AddWorkAsync() => navigator.OpenWorkEditorAsync(Date, null, CancellationToken.None);
 
@@ -202,10 +211,13 @@ public sealed class DayViewModel : ViewModelBase
         if (!confirmed) return;
 
         var copied = await workRecords.CopyDayAsync(sourceDate, Date, preview.ConfirmationToken, cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         SuccessMessage = $"勤務記録を{copied.Count}件複製しました。";
         try
         {
             await LoadCoreAsync(cancellationToken);
+            AcceptDataGeneration(generation);
         }
         catch
         {
@@ -229,8 +241,11 @@ public sealed class DayViewModel : ViewModelBase
         var confirmed = await dialogs.ConfirmAsync("基本シフトを反映", message, "確定して追加", "キャンセル", cancellationToken);
         if (!confirmed) return;
         var results = await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(Date, selected.Select(x => x.Id).ToArray()), cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         SuccessMessage = $"基本シフトから勤務記録を{results.Count}件追加しました。";
         await LoadCoreAsync(cancellationToken);
+        AcceptDataGeneration(generation);
     });
 
     private string BuildCopyPreviewMessage(CopyDayPreviewDto preview)
@@ -259,7 +274,10 @@ public sealed class DayViewModel : ViewModelBase
             cancellationToken);
         if (!confirmed) return;
         await workRecords.DeleteAsync(id, cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         await LoadCoreAsync(cancellationToken);
+        AcceptDataGeneration(generation);
         SuccessMessage = "勤務記録を削除しました。";
     });
 }

@@ -62,6 +62,26 @@ public sealed class NavigationAndStartupTests
         Assert.Equal(NavigationRoutes.Home, state.SelectedRootRoute);
     }
 
+    [Fact]
+    public void SessionState_TracksIndependentDataGenerationsAndCanInvalidateAll()
+    {
+        var state = new AppSessionState(new DateOnly(2026, 8, 21));
+        var workBefore = state.GetDataGeneration(AppDataChangeKind.WorkRecords);
+        var settingsBefore = state.GetDataGeneration(AppDataChangeKind.Settings);
+
+        state.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+
+        Assert.True(state.GetDataGeneration(AppDataChangeKind.WorkRecords) > workBefore);
+        Assert.Equal(settingsBefore, state.GetDataGeneration(AppDataChangeKind.Settings));
+
+        var workAfterChange = state.GetDataGeneration(AppDataChangeKind.WorkRecords);
+        var settingsAfterChange = state.GetDataGeneration(AppDataChangeKind.Settings);
+        state.ResetDataGenerations();
+
+        Assert.True(state.GetDataGeneration(AppDataChangeKind.WorkRecords) > workAfterChange);
+        Assert.True(state.GetDataGeneration(AppDataChangeKind.Settings) > settingsAfterChange);
+    }
+
     [Theory]
     [InlineData(InitialSetupStatus.NotStarted, null)]
     [InlineData(InitialSetupStatus.InProgress, "closing-day")]

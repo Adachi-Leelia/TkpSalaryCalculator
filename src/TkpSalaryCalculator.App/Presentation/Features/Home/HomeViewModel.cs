@@ -163,6 +163,9 @@ public sealed class HomeViewModel : ViewModelBase
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        TrackDataChanges(sessionState,
+            AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.ClosingRules |
+            AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BackupStatus);
 
         PeriodHeader = new PayrollPeriodHeaderViewModel(MoveByAsync, MoveToCurrentAsync, formatter, PresentError);
         BackupReminder = new BackupReminderViewModel(backupReminder, GetLocalToday, PresentError);
@@ -266,11 +269,13 @@ public sealed class HomeViewModel : ViewModelBase
 
     public ICommand UncalculatedDaysCommand => uncalculatedDaysCommand;
 
-    /// <summary>画面を表示するたびに、保存後やインポート後の最新状態を読み直します。</summary>
     public Task LoadAsync() => QueueSummaryRequestAsync(async cancellationToken =>
         sessionState.PayrollPeriod ??
         (await payrollPeriods.FindPeriodAsync(GetLocalToday(), cancellationToken)).Key,
         reloadBackup: true);
+
+    /// <summary>初回表示または依存データの変更後だけ最新状態を読み直します。</summary>
+    public Task LoadIfNeededAsync() => IsTrackedDataCurrent() ? Task.CompletedTask : LoadAsync();
 
     public Task MoveByAsync(int monthDelta)
     {
@@ -307,11 +312,12 @@ public sealed class HomeViewModel : ViewModelBase
     {
         ArgumentNullException.ThrowIfNull(getKey);
         var requestVersion = Interlocked.Increment(ref latestSummaryRequestVersion);
+        var dataGeneration = CaptureTrackedDataGeneration();
         lock (summaryRequestLock)
         {
             reloadBackupAfterLatestSummaryRequest |= reloadBackup;
             var precedingRequest = queuedSummaryRequest;
-            queuedSummaryRequest = LoadAfterPrecedingRequestAsync(precedingRequest, requestVersion, getKey);
+            queuedSummaryRequest = LoadAfterPrecedingRequestAsync(precedingRequest, requestVersion, dataGeneration, getKey);
             return queuedSummaryRequest;
         }
     }
@@ -319,12 +325,13 @@ public sealed class HomeViewModel : ViewModelBase
     private async Task LoadAfterPrecedingRequestAsync(
         Task precedingRequest,
         int requestVersion,
+        long dataGeneration,
         Func<CancellationToken, Task<PayrollPeriodKey>> getKey)
     {
         await precedingRequest;
         if (!IsLatestSummaryRequest(requestVersion)) return;
 
-        await RunBusyAsync(async cancellationToken =>
+        if (await TryRunBusyAsync(async cancellationToken =>
         {
             var key = await getKey(cancellationToken);
             var value = await salaryQuery.GetPayrollPeriodAsync(key, cancellationToken);
@@ -336,7 +343,8 @@ public sealed class HomeViewModel : ViewModelBase
             {
                 await BackupReminder.LoadAsync(cancellationToken);
             }
-        });
+        }))
+            AcceptDataGeneration(dataGeneration);
     }
 
     private bool IsLatestSummaryRequest(int requestVersion) =>

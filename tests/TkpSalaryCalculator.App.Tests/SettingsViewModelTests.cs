@@ -16,7 +16,28 @@ public sealed class SettingsViewModelTests
     private static readonly TimeCategoryId Category = new(Guid.Parse("20000000-0000-0000-0000-000000000001"));
 
     [Fact]
-    public async Task UI009_ChangingSettingsMonthUpdatesHeaderContentAndSessionTogether()
+    public async Task PERF05_SettingsContextReusesSnapshotUntilSettingsGenerationChanges()
+    {
+        var settings = new MonthSettingsStub();
+        settings.Values[August] = Snapshot(1_200);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var context = Context(settings, session);
+
+        await context.RefreshAsync(default);
+        await context.RefreshAsync(default);
+        session.NotifyDataChanged(AppDataChangeKind.WorkRecords);
+        await context.RefreshAsync(default);
+
+        Assert.Single(settings.GetCalls);
+
+        session.NotifyDataChanged(AppDataChangeKind.Settings);
+        await context.RefreshAsync(default);
+
+        Assert.Equal(2, settings.GetCalls.Count);
+    }
+
+    [Fact]
+    public async Task PERF08_ChangingSettingsMonthUpdatesHeaderAndSessionWithoutLoadingSnapshot()
     {
         var settings = new MonthSettingsStub();
         settings.Values[August] = Snapshot(1_200);
@@ -31,8 +52,8 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal(new YearMonth(2026, 9), session.SettingsMonth);
         Assert.Equal("設定対象年月: 2026年9月", viewModel.MonthHeaderText);
-        Assert.Equal(1_500, Assert.Single(context.Value!.Snapshot.Rates).Amount.Value);
-        Assert.Equal([August, new YearMonth(2026, 9)], settings.GetCalls);
+        Assert.Null(context.Value);
+        Assert.Empty(settings.GetCalls);
     }
 
     [Fact]
@@ -78,6 +99,7 @@ public sealed class SettingsViewModelTests
         var settings = new MonthSettingsStub { SharedEvents = events };
         settings.Values[August] = Snapshot(1_200);
         var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var settingsGeneration = session.GetDataGeneration(AppDataChangeKind.Settings);
         var navigator = new SettingsNavigatorStub();
         var viewModel = new CountBonusSettingsEditorViewModel(Context(settings, session), settings,
             new DialogStub { Result = true, SharedEvents = events }, new JapaneseDisplayFormatter(), navigator,
@@ -96,6 +118,7 @@ public sealed class SettingsViewModelTests
         Assert.Empty(bonus.ServiceIds);
         Assert.Equal("件数加算設定を保存しました。", navigator.SuccessMessage);
         Assert.False(viewModel.IsDirty);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.Settings) > settingsGeneration);
     }
 
     [Fact]
@@ -213,7 +236,8 @@ public sealed class SettingsViewModelTests
         var work = new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200)));
         var viewModel = new BasicShiftViewModel(
             shifts, work, new SettingsNavigatorStub(), new DialogStub(),
-            new FixedClock(), new FixedLocalDate(), new JapaneseDisplayFormatter(), new UserErrorPresenter());
+            new FixedClock(), new FixedLocalDate(), new JapaneseDisplayFormatter(), new UserErrorPresenter(),
+            new AppSessionState(new DateOnly(2026, 8, 22)));
 
         await viewModel.LoadAsync();
 

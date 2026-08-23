@@ -119,7 +119,8 @@ public sealed class CalculationDetailViewModelTests
         salary,
         periods ?? new PayrollPeriodStub(),
         new JapaneseDisplayFormatter(),
-        new UserErrorPresenter());
+        new UserErrorPresenter(),
+        new AppSessionState(new DateOnly(2026, 8, 21)));
 
     private static PayrollPeriodSummaryDto Summary(IReadOnlyList<WorkRecordSalaryDto> records)
     {

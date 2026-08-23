@@ -10,9 +10,11 @@ public sealed class DataManagementViewModelTests
         var transfers = new TransferStub();
         var root = new RootNavigatorStub();
         var notifications = new NotificationStub();
+        var session = new AppSessionState(new DateOnly(2026, 8, 21));
+        var generationBefore = session.GetDataGeneration(AppDataChangeKind.All);
         var viewModel = new DataManagementViewModel(
             transfers, new BackupReminderStub(), new DocumentStub(), new AppInformationStub(), new DialogStub(),
-            notifications, root, new AppSessionState(new DateOnly(2026, 8, 21)), new ClockStub(), new LocalDateStub(),
+            notifications, root, session, new ClockStub(), new LocalDateStub(),
             new UserErrorPresenter());
         root.OnSetRoot = viewModel.CancelPendingOperations;
 
@@ -21,6 +23,8 @@ public sealed class DataManagementViewModelTests
         Assert.True(transfers.Committed);
         Assert.Equal("インポート完了", notifications.Title);
         Assert.True(notifications.UsedLifetimeIndependentToken);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.All) > generationBefore);
+        Assert.Equal(NavigationRoutes.Home, session.SelectedRootRoute);
     }
 
     private sealed class TransferStub : IDataTransferUseCase

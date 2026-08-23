@@ -44,12 +44,33 @@ public interface IAppSessionState
     YearMonth SettingsMonth { get; set; }
 
     PayrollPeriodKey? PayrollPeriod { get; set; }
+
+    long GetDataGeneration(AppDataChangeKind dependencies);
+
+    void NotifyDataChanged(AppDataChangeKind changes);
+
+    void ResetDataGenerations();
+}
+
+[Flags]
+public enum AppDataChangeKind
+{
+    None = 0,
+    WorkRecords = 1 << 0,
+    Settings = 1 << 1,
+    ClosingRules = 1 << 2,
+    MonthlyAllowances = 1 << 3,
+    BasicShifts = 1 << 4,
+    BackupStatus = 1 << 5,
+    All = WorkRecords | Settings | ClosingRules | MonthlyAllowances | BasicShifts | BackupStatus,
 }
 
 /// <summary>Android の一時的な画面再生成をまたいで、ルート選択と表示対象を保持します。</summary>
 public sealed class AppSessionState(DateOnly localToday) : IAppSessionState
 {
     private string selectedRootRoute = NavigationRoutes.Home;
+    private readonly long[] dataGenerations = new long[6];
+    private long nextDataGeneration;
 
     public InitialSetupStateDto? InitialSetupState { get; set; }
 
@@ -66,6 +87,36 @@ public sealed class AppSessionState(DateOnly localToday) : IAppSessionState
     public YearMonth SettingsMonth { get; set; } = new(localToday.Year, localToday.Month);
 
     public PayrollPeriodKey? PayrollPeriod { get; set; }
+
+    public long GetDataGeneration(AppDataChangeKind dependencies)
+    {
+        var generation = 0L;
+        for (var index = 0; index < dataGenerations.Length; index++)
+        {
+            var kind = (AppDataChangeKind)(1 << index);
+            if ((dependencies & kind) != 0)
+                generation = Math.Max(generation, dataGenerations[index]);
+        }
+
+        return generation;
+    }
+
+    public void NotifyDataChanged(AppDataChangeKind changes)
+    {
+        if ((changes & ~AppDataChangeKind.All) != 0)
+            throw new ArgumentOutOfRangeException(nameof(changes));
+        if (changes == AppDataChangeKind.None) return;
+
+        var generation = Interlocked.Increment(ref nextDataGeneration);
+        for (var index = 0; index < dataGenerations.Length; index++)
+        {
+            var kind = (AppDataChangeKind)(1 << index);
+            if ((changes & kind) != 0)
+                Volatile.Write(ref dataGenerations[index], generation);
+        }
+    }
+
+    public void ResetDataGenerations() => NotifyDataChanged(AppDataChangeKind.All);
 }
 
 /// <summary>DB 初期化と初期設定状態の確認を終えてから、進入可能なルートだけを公開します。</summary>

@@ -57,6 +57,7 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        TrackDataChanges(sessionState, AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.ClosingRules);
         PreviousCommand = new AsyncCommand(() => MoveAsync(-1), PresentError);
         NextCommand = new AsyncCommand(() => MoveAsync(1), PresentError);
         AddCommand = new AsyncCommand(AddAsync, PresentError);
@@ -92,19 +93,24 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
     public AsyncCommand AddCommand { get; }
     public AsyncCommand ReloadCommand { get; }
 
-    public void SetPeriod(PayrollPeriodKey? value) => periodKey = value;
+    public void SetPeriod(PayrollPeriodKey? value)
+    {
+        if (periodKey != value) InvalidateTrackedLoad();
+        periodKey = value;
+    }
     public void SetSuccessMessage(string? value) => SuccessMessage = value ?? string.Empty;
 
-    public Task LoadAsync() => RunBusyAsync(LoadCoreAsync);
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
-    public Task MoveAsync(int offset) => RunBusyAsync(async cancellationToken =>
+    public Task MoveAsync(int offset) => LoadTrackedAsync(async cancellationToken =>
     {
         if (periodKey is null) await ResolvePeriodAsync(cancellationToken);
         periodKey = new PayrollPeriodKey(periodKey!.Value.Value.AddMonths(offset));
         sessionState.PayrollPeriod = periodKey;
         SuccessMessage = string.Empty;
         await LoadCoreAsync(cancellationToken);
-    });
+    }, force: true);
 
     public Task AddAsync() => periodKey is null
         ? Task.CompletedTask
@@ -142,8 +148,11 @@ public sealed class MonthlyAllowanceViewModel : ViewModelBase
             "削除", "キャンセル", cancellationToken);
         if (!confirmed) return;
         await periods.DeleteAllowanceAsync(value.Id, cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BackupStatus);
+        var generation = CaptureTrackedDataGeneration();
         SuccessMessage = "月額手当を削除しました。";
         await LoadCoreAsync(cancellationToken);
+        AcceptDataGeneration(generation);
     });
 }
 
@@ -152,6 +161,7 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
 {
     private readonly IPayrollPeriodSettingsUseCase periods;
     private readonly ISettingsNavigator navigator;
+    private readonly IAppSessionState sessionState;
     private PayrollPeriodKey periodKey;
     private MonthlyAllowanceId? id;
     private string displayName = string.Empty;
@@ -162,10 +172,13 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
         IPayrollPeriodSettingsUseCase periods,
         ISettingsNavigator navigator,
         IUserErrorPresenter errorPresenter,
-        IConfirmationDialogService dialogs) : base(errorPresenter, dialogs)
+        IConfirmationDialogService dialogs,
+        IAppSessionState sessionState) : base(errorPresenter, dialogs)
     {
         this.periods = periods ?? throw new ArgumentNullException(nameof(periods));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+        this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        TrackDataChanges(this.sessionState, AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.ClosingRules);
         SaveCommand = new AsyncCommand(SaveAsync, PresentError);
     }
 
@@ -177,13 +190,17 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
 
     public void Initialize(PayrollPeriodKey key, MonthlyAllowanceId? allowanceId)
     {
+        InvalidateTrackedLoad();
         periodKey = key;
         id = allowanceId;
         PeriodText = $"対象給与期間: {key.Value.Year}年{key.Value.Month}月分";
         OnPropertyChanged(nameof(PageTitle));
     }
 
-    public Task LoadAsync() => RunBusyAsync(async cancellationToken =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
         if (id is { } allowanceId)
         {
@@ -193,13 +210,14 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
             AmountText = existing.Amount.Value.ToString();
         }
         MarkSaved();
-    });
+    }
 
     public Task SaveAsync() => RunBusyAsync(async cancellationToken =>
     {
         if (!long.TryParse(AmountText, out var amount) || amount < 0)
             throw new ApplicationErrorException("ALLOWANCE_AMOUNT_INVALID", "金額は0円以上の整数で入力してください。", "Amount");
         await periods.SaveAllowanceAsync(new SaveMonthlyAllowanceCommand(id, periodKey, DisplayName, new YenAmount(amount)), cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BackupStatus);
         MarkSaved();
         await navigator.GoBackAsync("月額手当を保存しました。", cancellationToken);
     });

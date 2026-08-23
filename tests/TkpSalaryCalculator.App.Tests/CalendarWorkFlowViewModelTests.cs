@@ -9,6 +9,31 @@ public sealed class CalendarWorkFlowViewModelTests
     private static readonly WorkRecordId RecordId = new(Guid.Parse("40000000-0000-0000-0000-000000000001"));
 
     [Fact]
+    public async Task PERF05_CalendarReloadsOnlyAfterDependentChangeUnlessReloadIsManual()
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, 0);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var session = new AppSessionState(TargetDate);
+        var viewModel = new CalendarViewModel(
+            query, new CalendarNavigatorStub(), session, new ClockStub(), new LocalDateStub(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+
+        await viewModel.LoadIfNeededAsync();
+        await viewModel.LoadIfNeededAsync();
+        session.NotifyDataChanged(AppDataChangeKind.MonthlyAllowances);
+        await viewModel.LoadIfNeededAsync();
+
+        Assert.Equal(1, query.CalendarScreenCalls);
+
+        session.NotifyDataChanged(AppDataChangeKind.Settings);
+        await viewModel.LoadIfNeededAsync();
+        await viewModel.LoadAsync();
+
+        Assert.Equal(3, query.CalendarScreenCalls);
+    }
+
+    [Fact]
     public async Task UI005_SelectDateStaysOnCalendarAndRefreshesSummary()
     {
         var query = new SalaryQueryStub();
@@ -67,8 +92,10 @@ public sealed class CalendarWorkFlowViewModelTests
         var dialogs = new DialogStub { Result = true };
         var navigator = new CalendarNavigatorStub();
         var work = new WorkUseCaseStub();
+        var session = new AppSessionState(TargetDate);
+        var workGeneration = session.GetDataGeneration(AppDataChangeKind.WorkRecords);
         var viewModel = new CalendarViewModel(
-            query, navigator, new AppSessionState(TargetDate), new ClockStub(), new LocalDateStub(),
+            query, navigator, session, new ClockStub(), new LocalDateStub(),
             new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, work, dialogs);
 
         await viewModel.LoadAsync();
@@ -84,6 +111,7 @@ public sealed class CalendarWorkFlowViewModelTests
         Assert.Equal(0, work.InputOptionsCalls);
         Assert.Equal(0, query.DayScreenCalls);
         Assert.Equal(2, query.CalendarScreenCalls);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.WorkRecords) > workGeneration);
     }
 
     [Fact]
@@ -141,7 +169,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var dialogs = new DialogStub { Result = false };
         var viewModel = new DayViewModel(
             query, work, new CalendarNavigatorStub(), dialogs,
-            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), new AppSessionState(TargetDate));
         viewModel.SetDate(TargetDate);
         await viewModel.LoadAsync();
 
@@ -177,7 +205,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var dialogs = new DialogStub { Result = false, SharedEvents = events };
         var viewModel = new DayViewModel(
             query, work, new CalendarNavigatorStub(), dialogs,
-            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), new AppSessionState(TargetDate));
         viewModel.SetDate(TargetDate);
         viewModel.CopySourceDate = sourceDate.ToDateTime(TimeOnly.MinValue);
 
@@ -213,7 +241,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var dialogs = new DialogStub { Result = true };
         var viewModel = new DayViewModel(
             new SalaryQueryStub(), work, new CalendarNavigatorStub(), dialogs,
-            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), new AppSessionState(TargetDate));
         viewModel.SetDate(TargetDate);
         viewModel.CopySourceDate = sourceDate.ToDateTime(TimeOnly.MinValue);
 
@@ -237,7 +265,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var dialogs = new DialogStub { Result = true };
         var viewModel = new DayViewModel(
             new SalaryQueryStub(), work, new CalendarNavigatorStub(), dialogs,
-            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), new AppSessionState(TargetDate));
         viewModel.SetDate(TargetDate);
         viewModel.CopySourceDate = sourceDate.ToDateTime(TimeOnly.MinValue);
 
@@ -261,7 +289,7 @@ public sealed class CalendarWorkFlowViewModelTests
         };
         var viewModel = new DayViewModel(
             query, work, new CalendarNavigatorStub(), new DialogStub { Result = true },
-            new JapaneseDisplayFormatter(), new UserErrorPresenter());
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), new AppSessionState(TargetDate));
         viewModel.SetDate(TargetDate);
         await viewModel.LoadAsync();
         query.DayExceptions[TargetDate] = new IOException("reload failed");
@@ -282,7 +310,8 @@ public sealed class CalendarWorkFlowViewModelTests
         work.Stored.Add(Record());
         var navigator = new CalendarNavigatorStub();
         var viewModel = new DayViewModel(
-            query, work, navigator, new DialogStub(), new JapaneseDisplayFormatter(), new UserErrorPresenter());
+            query, work, navigator, new DialogStub(), new JapaneseDisplayFormatter(), new UserErrorPresenter(),
+            new AppSessionState(TargetDate));
         viewModel.SetDate(TargetDate);
         await viewModel.LoadAsync();
 
@@ -389,7 +418,7 @@ public sealed class CalendarWorkFlowViewModelTests
             ]);
         var viewModel = new WorkEditorViewModel(
             work, new CalendarNavigatorStub(), new IssuePresenter(), new JapaneseDisplayFormatter(),
-            new UserErrorPresenter(), new DialogStub { Result = true });
+            new UserErrorPresenter(), new DialogStub { Result = true }, new AppSessionState(TargetDate));
         viewModel.Initialize(TargetDate, RecordId);
 
         await viewModel.LoadAsync();
@@ -451,7 +480,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var navigator = new CalendarNavigatorStub();
         var viewModel = new WorkEditorViewModel(
             work, navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
-            new UserErrorPresenter(), new DialogStub { Result = true });
+            new UserErrorPresenter(), new DialogStub { Result = true }, new AppSessionState(TargetDate));
         viewModel.Initialize(TargetDate, RecordId);
 
         await viewModel.LoadAsync();
@@ -586,7 +615,7 @@ public sealed class CalendarWorkFlowViewModelTests
             Work.HolidayDates = Holidays.Holidays;
             ViewModel = new WorkEditorViewModel(
                 Work, Navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
-                new UserErrorPresenter(), new DialogStub { Result = true });
+                new UserErrorPresenter(), new DialogStub { Result = true }, new AppSessionState(TargetDate));
             ViewModel.Initialize(TargetDate, null);
         }
         public WorkUseCaseStub Work { get; } = new();

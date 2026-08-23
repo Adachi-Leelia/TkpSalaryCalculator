@@ -65,18 +65,19 @@ public sealed class SettingsMenuViewModel : ViewModelBase
 
     public bool HasSuccessMessage => !string.IsNullOrWhiteSpace(SuccessMessage);
 
-    public Task LoadAsync() => RunBusyAsync(async token =>
+    public Task LoadAsync()
     {
-        await context.RefreshAsync(token);
         OnPropertyChanged(nameof(MonthHeaderText));
-    });
+        return Task.CompletedTask;
+    }
 
-    public Task MoveMonthAsync(int offset) => RunBusyAsync(async token =>
+    public Task MoveMonthAsync(int offset)
     {
-        await context.MoveAsync(offset, token);
+        context.MoveWithoutLoading(offset);
         SuccessMessage = null;
         OnPropertyChanged(nameof(MonthHeaderText));
-    });
+        return Task.CompletedTask;
+    }
 
     public Task CopyPreviousMonthAsync() => RunBusyAsync(async token =>
     {
@@ -89,7 +90,7 @@ public sealed class SettingsMenuViewModel : ViewModelBase
             "コピー", "キャンセル", token);
         if (!confirmed) return;
         var result = await settings.CopyPreviousMonthAsync(context.SelectedMonth, preview.ConfirmationToken, token);
-        context.Accept(result);
+        context.NotifySettingsChanged(result);
         SuccessMessage = $"{formatter.Month(context.SelectedMonth)}へ前月の設定をコピーしました。";
     });
 
