@@ -95,6 +95,7 @@ internal static class SettingsRouteRegistration
         Routing.RegisterRoute(NavigationRoutes.CountBonusSettings, typeof(CountBonusSettingsPage));
         Routing.RegisterRoute(NavigationRoutes.CountBonusSettingsEditor, typeof(CountBonusSettingsEditorPage));
         Routing.RegisterRoute(NavigationRoutes.PayrollPeriodSettings, typeof(PayrollPeriodSettingsPage));
+        Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances, typeof(MonthlyAllowancePage));
         Routing.RegisterRoute(NavigationRoutes.MonthlyAllowanceEditor, typeof(MonthlyAllowanceEditorPage));
         Routing.RegisterRoute(NavigationRoutes.BasicShifts, typeof(BasicShiftPage));
         Routing.RegisterRoute(NavigationRoutes.BasicShiftEditor, typeof(BasicShiftEditorPage));

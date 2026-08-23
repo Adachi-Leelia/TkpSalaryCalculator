@@ -244,7 +244,13 @@ public sealed class AppConfigurationTests
         Assert.Contains("ShellNavigationQueryParameters", navigator, StringComparison.Ordinal);
         Assert.Contains("NavigationRoutes.CalculationDetails", navigator, StringComparison.Ordinal);
         Assert.Contains("NavigationRoutes.MonthlyAllowances", navigator, StringComparison.Ordinal);
+        Assert.Contains("MonthlyAllowancePage.PayrollPeriodParameter", navigator, StringComparison.Ordinal);
         Assert.Contains("NavigationRoutes.UncalculatedDays", navigator, StringComparison.Ordinal);
+
+        var settingsRoutes = File.ReadAllText(
+            AppPath("Presentation", "Features", "Settings", "ShellSettingsNavigator.cs"));
+        Assert.Contains("Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances, typeof(MonthlyAllowancePage))", settingsRoutes, StringComparison.Ordinal);
+        Assert.DoesNotContain("Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances", navigator, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -9,10 +9,11 @@
         <Label FontAttributes="Bold" Text="{Binding PeriodText}" />
         <Label Style="{StaticResource SupportingTextStyle}" Text="勤務日や設定対象年月ではなく、この給与期間の合計へ1回だけ加算します。" />
         <Grid ColumnDefinitions="*,*" ColumnSpacing="10"><Button Command="{Binding PreviousCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="前の期間" /><Button Grid.Column="1" Command="{Binding NextCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="次の期間" /></Grid>
+        <controls:ErrorStateView IsVisible="{Binding HasError}" Message="{Binding ErrorMessage}" RetryCommand="{Binding ReloadCommand}" />
         <Label FontAttributes="Bold" Text="{Binding TotalText}" />
         <controls:EmptyStateView IsVisible="{Binding HasNoRows}" Title="月額手当はありません" Message="必要な場合だけ、この給与期間へ手当を追加できます。" />
         <VerticalStackLayout BindableLayout.ItemsSource="{Binding Rows}" Spacing="8"><BindableLayout.ItemTemplate><DataTemplate x:DataType="settings:MonthlyAllowanceRow"><Border Padding="12" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10"><Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="8"><Label FontAttributes="Bold" Text="{Binding DisplayName}" /><Label Grid.Column="1" Text="{Binding AmountText}" /><Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnDefinitions="*,*" ColumnSpacing="8"><Button Command="{Binding EditCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" /><Button Grid.Column="1" Command="{Binding DeleteCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="削除" /></Grid></Grid></Border></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
         <Button Command="{Binding AddCommand}" Text="月額手当を追加" />
-        <Label IsVisible="{Binding HasSuccessMessage}" Text="{Binding SuccessMessage}" TextColor="{StaticResource Success}" /><Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+        <Label IsVisible="{Binding HasSuccessMessage}" Text="{Binding SuccessMessage}" TextColor="{StaticResource Success}" />
     </VerticalStackLayout></ScrollView>
 </ContentPage>
