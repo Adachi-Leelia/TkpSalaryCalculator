@@ -157,7 +157,7 @@ public sealed class SetupBackupDataTransferTests
         Assert.Single(staging.LiveData);
         Assert.Equal(FakeStagingState.Discarded, staging.GetState(preview.Id));
         Assert.Equal(1, staging.ReplaceCalls);
-        Assert.Equal(1, transactions.Commits);
+        Assert.Equal(0, transactions.Commits);
         Assert.Equal(1, staging.DiscardCalls);
     }
 

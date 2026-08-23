@@ -110,13 +110,14 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
                 selected.Add(candidate.Shift);
             }
             var results = new List<SaveWorkRecordResultDto>(selected.Count);
+            var calculationSnapshot = ApplicationSupport.ForCalculationDate(snapshot, command.WorkDate, calendar);
             foreach (var shift in selected)
             {
                 var work = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), command.WorkDate, shift.ServiceId,
                     shift.TimeCategoryId, shift.InputMode, shift.WorkMinutes, shift.StartTime, shift.EndTime,
                     shift.ServicePresetId, shift.Id, null);
                 var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(work),
-                    ApplicationSupport.ForCalculationDate(snapshot, command.WorkDate, calendar), calendar));
+                    calculationSnapshot, calendar));
                 await records.UpsertAsync(work, token).ConfigureAwait(false);
                 results.Add(new(work, calculation, ApplicationSupport.CalculationIssues(calculation)));
             }
@@ -125,10 +126,11 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    private static BasicShiftPreviewDto BuildPreview(DateOnly workDate, IReadOnlyList<BasicShiftDto> source,
+    internal static BasicShiftPreviewDto BuildPreview(DateOnly workDate, IReadOnlyList<BasicShiftDto> source,
         IReadOnlyList<WorkRecordDto> existing, SettingSnapshot snapshot, HolidayCalendar calendar,
         ISalaryCalculator calculator)
     {
+        var calculationSnapshot = ApplicationSupport.ForCalculationDate(snapshot, workDate, calendar);
         var candidates = source.OrderBy(x => x.DisplayOrder.Value).ThenBy(x => x.Id.Value).Select(shift =>
         {
             var issues = new List<IssueDto>();
@@ -148,7 +150,7 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
                     shift.TimeCategoryId, shift.InputMode, shift.WorkMinutes, shift.StartTime, shift.EndTime,
                     shift.ServicePresetId, shift.Id, null);
                 var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(candidate),
-                    ApplicationSupport.ForCalculationDate(snapshot, workDate, calendar), calendar));
+                    calculationSnapshot, calendar));
                 if (calculation.Status == SalaryCalculationStatus.Uncalculated)
                 {
                     issues.Add(ApplicationSupport.Issue("SHIFT_CALCULATION_SETTINGS_REQUIRED", "給与計算に必要な単価設定が不足しているため、この基本シフトは反映できません。"));

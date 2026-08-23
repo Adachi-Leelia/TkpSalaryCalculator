@@ -1,4 +1,5 @@
 using System.Globalization;
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
@@ -47,6 +48,7 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
         this.presets = presets ?? throw new ArgumentNullException(nameof(presets));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        TrackDataChanges(context.SessionState, AppDataChangeKind.Settings);
         AddCommand = new AsyncCommand(() => navigator.OpenServiceEditorAsync(null, default), PresentError);
     }
 
@@ -62,7 +64,10 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
     public string? SuccessMessage { get => successMessage; private set { if (SetProperty(ref successMessage, value)) OnPropertyChanged(nameof(HasSuccessMessage)); } }
     public bool HasSuccessMessage => !string.IsNullOrWhiteSpace(SuccessMessage);
 
-    public Task LoadAsync() => RunBusyAsync(async token =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private async Task LoadCoreAsync(CancellationToken token)
     {
         var monthTask = context.RefreshAsync(token);
         var presetsTask = presets.GetAllAsync(token);
@@ -72,7 +77,7 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
         InputCandidateRows = BuildPresetRows(snapshot, presetsTask.Result);
         OnPropertyChanged(nameof(MonthHeaderText));
         OnPropertyChanged(nameof(MonthlySectionTitle));
-    });
+    }
 
     public Task OpenEditorAsync(ServiceSettingRow row)
     {
@@ -200,9 +205,12 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
     public string CandidateOrderText { get => candidateOrderText; set { if (SetProperty(ref candidateOrderText, value)) Changed(); } }
     public bool CandidateEnabled { get => candidateEnabled; set { if (SetProperty(ref candidateEnabled, value)) Changed(); } }
 
-    public void Initialize(Guid? id) { editorId = id; OnPropertyChanged(nameof(PageTitle)); }
+    public void Initialize(Guid? id) { editorId = id; InvalidateTrackedLoad(); OnPropertyChanged(nameof(PageTitle)); }
 
-    public Task LoadAsync() => RunBusyAsync(token => LoadEditorAsync(async snapshot =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private Task LoadCoreAsync(CancellationToken token) => LoadEditorAsync(async snapshot =>
     {
         var candidates = await presets.GetAllAsync(token);
         sourcePreset = editorId is { } presetId ? candidates.FirstOrDefault(value => value.Id.Value == presetId) : null;
@@ -233,7 +241,7 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
         candidateOrderText = (sourcePreset?.DisplayOrder.Value ?? candidates.Count).ToString(CultureInfo.InvariantCulture);
         candidateEnabled = sourcePreset?.IsEnabled ?? true;
         NotifyAll();
-    }, token));
+    }, token);
 
     public Task SaveAsync() => RunBusyAsync(async token =>
     {

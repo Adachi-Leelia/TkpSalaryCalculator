@@ -57,6 +57,7 @@ PRAGMA synchronous = FULL;
 
 - SQLiteスキーマバージョンは`PRAGMA user_version`で管理する。
 - エクスポート形式のバージョンは`app_metadata.export_format_version`とエクスポートファイルのヘッダーで管理する。
+- アプリ同梱データの適用版は`app_metadata.bundled_bootstrap_version`で管理し、端末ローカル状態としてエクスポートしない。
 - スキーマバージョンとエクスポート形式バージョンは独立して増加させる。
 
 ## 4. テーブル一覧
@@ -122,10 +123,11 @@ PRAGMA synchronous = FULL;
 | `backup_reminder_deferred_until_date` | `TEXT` | 可 | バックアップ案内を再表示しないローカル日付 |
 | `created_at_utc` | `TEXT` | 不可 | 作成日時 |
 | `updated_at_utc` | `TEXT` | 不可 | 更新日時 |
+| `bundled_bootstrap_version` | `INTEGER` | 不可 | この端末DBへ適用済みの同梱データ版。0は未適用 |
 
 `CHECK(id = 1)`を設ける。`initial_setup_status = 'Completed'`の場合、初期スナップショット、締め日および計算に必要な設定が存在することはアプリケーション層でも検証する。
 
-`last_data_changed_at_utc`は設定、基本シフト、月額手当または勤務記録を確定変更するトランザクション内で更新する。エクスポート成功と案内延期だけでは更新しない。バックアップ案内の状態は給与計算の再現に不要な端末設定であるため、エクスポート対象外としてよい。
+`last_data_changed_at_utc`は設定、基本シフト、月額手当または勤務記録を確定変更するトランザクション内で更新する。エクスポート成功と案内延期だけでは更新しない。バックアップ案内の状態と`bundled_bootstrap_version`は給与計算の再現に不要な端末設定であるため、エクスポート対象外とする。新規DBおよび`bootstrapDefaults: false`で作るインポート候補DBでは版を0（未適用）で初期化し、同梱データの投入成功と同じトランザクションで現行版へ更新する。
 
 ### 5.2 `setting_snapshot`
 
@@ -424,6 +426,7 @@ WHERE source_basic_shift_id IS NOT NULL;
 | `ix_basic_shift_weekday` | `basic_shift(weekday, is_enabled, display_order)` | 曜日別反映 |
 | `ix_work_record_date` | `work_record(work_date)` | 日別・期間集計 |
 | `ix_work_record_service_date` | `work_record(service_id, work_date)` | 対象サービス集計 |
+| `ix_work_record_source_preset` | `work_record(source_service_preset_id)`（NULLを除く部分索引） | 入力候補の全履歴使用回数集計 |
 | `ux_work_record_shift_date` | `work_record(source_basic_shift_id, work_date)` | 基本シフト二重反映防止 |
 | `ux_closing_rule_effective_month` | `closing_rule_history(effective_from_year_month)` | 適用履歴の一意性 |
 | `ix_monthly_allowance_period` | `monthly_allowance(payroll_period_year_month)` | 給与期間集計 |
@@ -467,12 +470,14 @@ WHERE source_basic_shift_id IS NOT NULL;
 ### 8.4 インポート
 
 1. ファイルをデータベース外で読み取り、形式、版、件数、値、初期スナップショットIDおよび参照整合性を検証する。大容量ファイルをオブジェクトグラフとして全件メモリへ展開しない。
-2. 利用者の確認後に書き込みトランザクションを開始する。
-3. インポート対象テーブルを外部キー順序に従って置換する。
-4. `PRAGMA foreign_key_check`と業務整合性検証を実行する。
+2. 同梱初期データを投入しない候補DBを作り、`bundled_bootstrap_version`を0としてインポート内容だけを検証する。
+3. 利用者の確認後、置換前のliveデータを復元可能な一時スナップショットとして保持して書き込みトランザクションを開始する。
+4. インポート対象テーブルを外部キー順序に従って置換し、`bundled_bootstrap_version`を0へ戻す。
 5. エクスポートに含まれる初期スナップショットIDを`app_metadata.initial_snapshot_id`へ設定して初期設定状態を`Completed`とし、最終データ変更日時と最終エクスポート日時をインポート完了時刻へ設定する。バックアップ案内の延期状態は引き継がない。
-6. 成功した場合だけコミットする。
-7. 失敗時はロールバックし、既存データを維持する。
+6. 置換をコミットした後、root画面をリセットする前に、live DBへ未適用の同梱祝日版を投入する。予約IDの衝突検証、祝日投入および版マーカー更新は同じトランザクションで行う。
+7. `PRAGMA foreign_key_check`と業務整合性検証を実行し、同梱データの投入をコミットする。
+8. 置換後の同梱データ投入または最終検証に失敗した場合は、保持したスナップショットからlive DBを復元してインポート全体を失敗扱いとする。root画面とSessionキャッシュはリセットしない。
+9. 全処理成功後にSessionと画面キャッシュを破棄し、同梱データ投入済みのDBからroot画面を再構築する。
 
 Androidの選択元ストリームを再読込できない場合は、アプリ専用キャッシュへ一時コピーしてからストリーミング検証する。一時ファイルは自動バックアップ対象外とし、取消、成功、失敗および次回起動時の残存確認で削除する。確認前に既存データベースは変更しない。
 
@@ -540,7 +545,7 @@ Start(period_key) <= work_date <= End(period_key)
 }
 ```
 
-`settingSnapshots`の各要素には、サービス種類、時間区分、単価、割増とその条件、件数加算とその条件を子要素として含める。エクスポートには初期スナップショット、年月から参照中のスナップショット、参照される論理ID、およびそれらが参照する祝日データ版に属するすべての祝日日付を含める。内部のSQLite行番号、バックアップ案内状態および再生成可能なキャッシュは含めない。将来フィールドを追加した場合に旧版で安全に拒否または無視できるよう、形式版ごとの互換規則を定義する。
+`settingSnapshots`の各要素には、サービス種類、時間区分、単価、割増とその条件、件数加算とその条件を子要素として含める。エクスポートには初期スナップショット、年月から参照中のスナップショット、参照される論理ID、およびそれらが参照する祝日データ版に属するすべての祝日日付を含める。内部のSQLite行番号、バックアップ案内状態、`bundled_bootstrap_version`および再生成可能なキャッシュは含めない。将来フィールドを追加した場合に旧版で安全に拒否または無視できるよう、形式版ごとの互換規則を定義する。
 
 エクスポートとインポートは逐次読み書きし、約21.9万件の勤務記録を全件メモリへ保持しない。
 
@@ -553,6 +558,10 @@ Start(period_key) <= work_date <= End(period_key)
 - アプリ更新後に`PRAGMA integrity_check`または同等の限定的な整合性確認を実施できる構造にする。
 - マイグレーション失敗時はアプリの通常利用を開始せず、既存データを上書きしない。
 - ダウングレードによる古いアプリでのDB利用は保証しない。
+
+スキーマバージョン2では、入力候補の全履歴使用回数集計用に`ix_work_record_source_preset`を追加する。勤務記録の内容は変換しない。
+
+スキーマバージョン3では、`app_metadata.bundled_bootstrap_version`を未適用の0で追加する。マイグレーション完了後に同梱データを検証・投入し、成功した場合だけ現行版へ更新する。既に同じ予約IDが異なる内容で使われている場合は通常利用を開始しない。
 
 ## 13. 性能方針
 

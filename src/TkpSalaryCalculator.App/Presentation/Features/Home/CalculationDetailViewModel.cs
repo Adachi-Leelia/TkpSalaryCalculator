@@ -1,3 +1,4 @@
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.Application.Contracts;
 using TkpSalaryCalculator.Application.UseCases;
@@ -33,11 +34,15 @@ public sealed class CalculationDetailViewModel : ViewModelBase
         ISalaryQueryUseCase salaryQuery,
         IPayrollPeriodSettingsUseCase payrollPeriods,
         JapaneseDisplayFormatter formatter,
-        IUserErrorPresenter errorPresenter) : base(errorPresenter)
+        IUserErrorPresenter errorPresenter,
+        IAppSessionState sessionState) : base(errorPresenter)
     {
         this.salaryQuery = salaryQuery ?? throw new ArgumentNullException(nameof(salaryQuery));
         this.payrollPeriods = payrollPeriods ?? throw new ArgumentNullException(nameof(payrollPeriods));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        TrackDataChanges(sessionState ?? throw new ArgumentNullException(nameof(sessionState)),
+            AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.ClosingRules |
+            AppDataChangeKind.MonthlyAllowances);
         ReloadCommand = new AsyncCommand(LoadAsync, PresentError);
     }
 
@@ -101,6 +106,7 @@ public sealed class CalculationDetailViewModel : ViewModelBase
         payrollPeriodKey = value;
         selectedDate = null;
         selectedWorkRecordId = null;
+        InvalidateTrackedLoad();
         OnDetailScopeChanged();
     }
 
@@ -109,10 +115,13 @@ public sealed class CalculationDetailViewModel : ViewModelBase
         selectedDate = date;
         selectedWorkRecordId = workRecordId;
         payrollPeriodKey = null;
+        InvalidateTrackedLoad();
         OnDetailScopeChanged();
     }
 
-    public Task LoadAsync() => RunBusyAsync(LoadCoreAsync);
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {

@@ -17,6 +17,6 @@ public partial class MonthlyAllowancePage : ContentPage, IQueryAttributable
         viewModel.SetPeriod(key);
         if (query.TryGetValue(SettingsPageQuery.SuccessMessageParameter, out var message)) viewModel.SetSuccessMessage(message?.ToString());
     }
-    protected override async void OnAppearing() { base.OnAppearing(); await viewModel.LoadAsync(); }
+    protected override async void OnAppearing() { base.OnAppearing(); await viewModel.LoadIfNeededAsync(); }
     protected override void OnDisappearing() { viewModel.CancelPendingOperations(); base.OnDisappearing(); }
 }

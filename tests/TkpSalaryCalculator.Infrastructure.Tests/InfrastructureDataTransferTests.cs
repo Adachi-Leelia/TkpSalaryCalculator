@@ -43,6 +43,10 @@ public sealed partial class InfrastructureResilienceTests
             .Select(node => node!["value"]!["type"]!.GetValue<string>()).ToHashSet(StringComparer.Ordinal);
         Assert.Equal(AllTransferTableTypes.Order(), sourceTypes.Order());
         AssertAllOriginIdsArePresent(sourceJson);
+        var exportedMetadata = sourceJson["data"]!.AsArray()
+            .Select(node => node!["value"]!.AsObject())
+            .Single(value => value["type"]!.GetValue<string>() == "app_metadata");
+        Assert.False(exportedMetadata.ContainsKey("bundled_bootstrap_version"));
 
         await using var destination = await TestDatabase.CreateAsync();
         var destinationUseCase = CreateTransferUseCase(destination, clock);
@@ -50,6 +54,13 @@ public sealed partial class InfrastructureResilienceTests
         var preview = await destinationUseCase.PrepareImportAsync(input, default);
         Assert.Equal(1, preview.WorkRecordCount);
         Assert.Equal(1, preview.SettingMonthCount);
+        await using (var candidate = new SqliteConnection(
+                         $"Data Source={CandidatePath(destination, preview.Id)};Pooling=False"))
+        {
+            await candidate.OpenAsync();
+            Assert.Equal(0L, await ScalarLongAsync(candidate,
+                "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
+        }
         await destinationUseCase.CommitImportAsync(preview.Id, default);
 
         var destinationJson = await ExportJsonAsync(destination, clock);
@@ -59,6 +70,9 @@ public sealed partial class InfrastructureResilienceTests
             $"Deep transfer mismatch.\nSource: {sourceJson}\nDestination: {destinationJson}");
         Assert.Equal(InitialSetupStatus.Completed,
             (await new SqliteAppMetadataRepository(destination.Database, clock).GetAsync(default)).InitialSetupStatus);
+        await using (var imported = await destination.OpenAsync())
+            Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(imported,
+                "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
 
         var afterSalary = await ReadSalaryProjectionAsync(destination, clock);
         Assert.Equal(beforeSalary, afterSalary);

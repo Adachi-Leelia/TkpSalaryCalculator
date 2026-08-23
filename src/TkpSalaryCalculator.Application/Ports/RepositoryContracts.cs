@@ -45,18 +45,19 @@ public interface IServicePresetRepository
     Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken);
 }
 
+/// <summary>勤務入力候補の全履歴統計と、直近に確定した勤務を保持します。</summary>
+public sealed record WorkInputHistory(
+    IReadOnlyDictionary<ServicePresetId, long> ServicePresetUsageCounts,
+    WorkRecordDto? MostRecent);
+
 /// <summary>ストレージ技術を公開せずに、正規化済み勤務記録を保存します。</summary>
 public interface IWorkRecordRepository
 {
     /// <summary>保存済み勤務記録が 1 件以上存在するかどうかを判定します。</summary>
     Task<bool> AnyAsync(CancellationToken cancellationToken);
 
-    /// <summary>すべての記録を読み込まず、直近で確定した勤務記録を検索します。</summary>
-    Task<WorkRecordDto?> FindMostRecentAsync(CancellationToken cancellationToken);
-
-    /// <summary>すべての記録をアプリケーション層へストリーミングせず、保存済み勤務記録の使用件数を元サービスプリセット別に取得します。</summary>
-    Task<IReadOnlyDictionary<ServicePresetId, long>> GetServicePresetUsageCountsAsync(
-        CancellationToken cancellationToken);
+    /// <summary>候補作成に必要なプリセット別使用件数と直近勤務を、1 回の読取コンテキストで取得します。</summary>
+    Task<WorkInputHistory> GetInputHistoryAsync(CancellationToken cancellationToken);
 
     /// <summary>識別子で勤務記録を 1 件検索します。</summary>
     Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken);
@@ -92,6 +93,11 @@ public interface ISettingSnapshotRepository
 
     /// <summary>月行を作成せず、有効な継承スナップショットを取得します。</summary>
     Task<SettingSnapshot> GetEffectiveForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken);
+
+    /// <summary>月行を作成せず、指定された各月の有効な継承スナップショットを有界にまとめて取得します。</summary>
+    Task<IReadOnlyDictionary<YearMonth, SettingSnapshot>> GetEffectiveForMonthsAsync(
+        IReadOnlyCollection<YearMonth> yearMonths,
+        CancellationToken cancellationToken);
 
     /// <summary>最初に必要となった時点で月参照を作成し、給与設定を引き継いで、仕様に従い検証済みの最新祝日データを選択します。</summary>
     Task<SettingSnapshot> EnsureForMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken);
@@ -154,6 +160,11 @@ public interface IBasicShiftRepository
         DayOfWeek weekday,
         CancellationToken cancellationToken);
 
+    /// <summary>指定された各曜日のシフトを表示順で有界にまとめて取得します。</summary>
+    Task<IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>> GetForWeekdaysAsync(
+        IReadOnlyCollection<DayOfWeek> weekdays,
+        CancellationToken cancellationToken);
+
     /// <summary>現在のシフトを 1 件検索します。</summary>
     Task<BasicShiftDto?> FindAsync(BasicShiftId id, CancellationToken cancellationToken);
 
@@ -170,6 +181,11 @@ public interface IHolidayCalendarRepository
     /// <summary>完全で不変の祝日カレンダーバージョンを 1 件取得します。</summary>
     Task<HolidayCalendar> GetAsync(
         HolidayCalendarVersionId versionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>完全で不変の祝日カレンダーバージョンを指定された版ごとに有界にまとめて取得します。</summary>
+    Task<IReadOnlyDictionary<HolidayCalendarVersionId, HolidayCalendar>> GetManyAsync(
+        IReadOnlyCollection<HolidayCalendarVersionId> versionIds,
         CancellationToken cancellationToken);
 
     /// <summary>情報源の基準日によって、検証済みの最新祝日バージョンを取得します。</summary>

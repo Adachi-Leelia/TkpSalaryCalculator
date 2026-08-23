@@ -3,6 +3,68 @@ namespace TkpSalaryCalculator.App.Tests;
 public sealed class HomeViewModelTests
 {
     [Fact]
+    public async Task PERF05_ReappearingWithoutDependentChangeSkipsLoadAndManualReloadAlwaysRuns()
+    {
+        var fixture = new HomeFixture();
+        fixture.Salary.Add(Summary(2026, 8, 10_000, 10_000, 0, 0, 0, 0));
+
+        await fixture.ViewModel.LoadIfNeededAsync();
+        await fixture.ViewModel.LoadIfNeededAsync();
+        fixture.Session.NotifyDataChanged(AppDataChangeKind.BasicShifts);
+        await fixture.ViewModel.LoadIfNeededAsync();
+
+        Assert.Single(fixture.Salary.RequestedKeys);
+
+        fixture.Session.NotifyDataChanged(AppDataChangeKind.WorkRecords);
+        await fixture.ViewModel.LoadIfNeededAsync();
+        await fixture.ViewModel.LoadAsync();
+
+        Assert.Equal(3, fixture.Salary.RequestedKeys.Count);
+    }
+
+    [Fact]
+    public async Task PERF05_FailedConditionalLoadIsRetriedOnNextAppearance()
+    {
+        var fixture = new HomeFixture();
+        fixture.Salary.Add(Summary(2026, 8, 10_000, 10_000, 0, 0, 0, 0));
+        fixture.Salary.FailingKey = Key(2026, 8);
+
+        await fixture.ViewModel.LoadIfNeededAsync();
+        fixture.Salary.FailingKey = null;
+        await fixture.ViewModel.LoadIfNeededAsync();
+
+        Assert.Equal(2, fixture.Salary.RequestedKeys.Count);
+        Assert.Equal("10,000円", fixture.ViewModel.TotalText);
+    }
+
+    [Fact]
+    public async Task PERF05_CancelledConditionalLoadIsRetriedOnNextAppearance()
+    {
+        var fixture = new HomeFixture();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = 0;
+        fixture.Salary.GetPayrollPeriodAsyncOverride = async (_, cancellationToken) =>
+        {
+            if (Interlocked.Increment(ref requests) == 1)
+            {
+                started.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            return Summary(2026, 8, 10_000, 10_000, 0, 0, 0, 0);
+        };
+
+        var cancelledLoad = fixture.ViewModel.LoadIfNeededAsync();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        fixture.ViewModel.CancelPendingOperations();
+        await cancelledLoad;
+        await fixture.ViewModel.LoadIfNeededAsync();
+
+        Assert.Equal(2, requests);
+        Assert.Equal("10,000円", fixture.ViewModel.TotalText);
+    }
+
+    [Fact]
     public async Task SCRHOME01_LoadsSelectedPeriodSummaryAndBackupState()
     {
         var fixture = new HomeFixture();
@@ -286,6 +348,12 @@ public sealed class HomeViewModelTests
         public PayrollPeriodKey? FailingKey { get; set; }
         public Func<PayrollPeriodKey, CancellationToken, Task<PayrollPeriodSummaryDto>>? GetPayrollPeriodAsyncOverride { get; set; }
 
+        public Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
+            YearMonth yearMonth, DateOnly selectedDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<DayScreenDto> GetDayScreenAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void Add(PayrollPeriodSummaryDto summary) => summaries.Add(summary.Period.Key, summary);
 
         public Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(
@@ -320,6 +388,8 @@ public sealed class HomeViewModelTests
             RequestedDate = localDate;
             return Task.FromResult(current);
         }
+
+        public Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(
             ReplaceClosingRuleCommand command,

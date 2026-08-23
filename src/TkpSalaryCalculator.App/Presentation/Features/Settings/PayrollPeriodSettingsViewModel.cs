@@ -1,3 +1,4 @@
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
@@ -37,6 +38,7 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
         this.dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+        TrackDataChanges(context.SessionState, AppDataChangeKind.ClosingRules);
         PreviousMonthCommand = new AsyncCommand(() => MoveMonthAsync(-1), PresentError);
         NextMonthCommand = new AsyncCommand(() => MoveMonthAsync(1), PresentError);
         SaveCommand = new AsyncCommand(SaveAsync, PresentError);
@@ -55,13 +57,16 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
     public AsyncCommand NextMonthCommand { get; }
     public AsyncCommand SaveCommand { get; }
 
-    public Task LoadAsync() => RunBusyAsync(LoadCoreAsync);
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
     public Task MoveMonthAsync(int offset) => RunBusyAsync(async token =>
     {
         if (!await CanLeaveAsync(token)) return;
-        await context.MoveAsync(offset, token);
+        context.MoveWithoutLoading(offset);
+        var generation = CaptureTrackedDataGeneration();
         await LoadCoreAsync(token);
+        AcceptDataGeneration(generation);
     });
 
     public Task SaveAsync() => RunBusyAsync(async token =>
@@ -79,6 +84,7 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
             formatter.PayrollPeriod(preview.ReplacementPeriod));
         if (!await dialogs.ConfirmAsync("締め日変更の影響を確認", message, "保存", "キャンセル", token)) return;
         await settings.ReplaceClosingRuleAsync(command, preview.ConfirmationToken, token);
+        context.SessionState.NotifyDataChanged(AppDataChangeKind.ClosingRules);
         MarkSaved();
         await navigator.GoBackAsync("給与期間設定を保存しました。", token);
     });

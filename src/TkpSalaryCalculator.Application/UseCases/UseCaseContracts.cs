@@ -33,6 +33,17 @@ public interface IServicePresetUseCase
 /// <summary>勤務記録のコマンドとクエリをプレゼンテーション層へ公開します。</summary>
 public interface IWorkRecordUseCase
 {
+    /// <summary>勤務入力画面の候補、編集対象および祝日を一度に取得します。</summary>
+    Task<WorkEditorScreenDto> GetEditorScreenAsync(
+        DateOnly workDate,
+        WorkRecordId? workRecordId,
+        CancellationToken cancellationToken);
+
+    /// <summary>候補ランキングを作成せず、指定日の名称表示と入力検証に必要な月設定だけを取得します。</summary>
+    Task<MonthSettingsDto> GetSettingsForDateAsync(
+        DateOnly workDate,
+        CancellationToken cancellationToken);
+
     /// <summary>1 勤務日分の有効な設定、最終表示順のプリセット候補、および編集可能な推奨値を取得します。</summary>
     Task<WorkInputOptionsDto> GetInputOptionsAsync(
         DateOnly workDate,
@@ -44,6 +55,12 @@ public interface IWorkRecordUseCase
     /// <summary>アプリケーションデータを保存または変更せず、入力を検証、正規化、および計算します。</summary>
     Task<WorkRecordPreviewDto> PreviewAsync(
         SaveWorkRecordCommand command,
+        CancellationToken cancellationToken);
+
+    /// <summary>画面ロード済みの設定と祝日を再利用して勤務内容をプレビューします。</summary>
+    Task<WorkRecordPreviewDto> PreviewForEditorAsync(
+        SaveWorkRecordCommand command,
+        WorkEditorScreenDto screen,
         CancellationToken cancellationToken);
 
     /// <summary>1 件の勤務記録を検証、正規化、保存、および計算します。</summary>
@@ -69,6 +86,17 @@ public interface IWorkRecordUseCase
 /// <summary>カレンダーと給与の読み取りモデルをプレゼンテーション層へ公開します。</summary>
 public interface ISalaryQueryUseCase
 {
+    /// <summary>月間セルと初期選択日のサマリーを同じ範囲読取から取得します。</summary>
+    Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
+        YearMonth yearMonth,
+        DateOnly selectedDate,
+        CancellationToken cancellationToken);
+
+    /// <summary>日別給与行と基本シフト候補を同じ読取コンテキストから取得します。</summary>
+    Task<DayScreenDto> GetDayScreenAsync(
+        DateOnly workDate,
+        CancellationToken cancellationToken);
+
     /// <summary>指定された暦月の日別概要を取得します。</summary>
     Task<IReadOnlyList<CalendarDayDto>> GetCalendarMonthAsync(
         YearMonth yearMonth,
@@ -131,6 +159,11 @@ public interface IPayrollPeriodSettingsUseCase
     /// <summary>指定した日付を含む給与算定期間を、締め日履歴から取得します。</summary>
     Task<PayrollPeriod> FindPeriodAsync(
         DateOnly localDate,
+        CancellationToken cancellationToken);
+
+    /// <summary>月額手当画面に必要な期間境界と手当を、給与計算を行わず取得します。</summary>
+    Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(
+        PayrollPeriodKey payrollPeriodKey,
         CancellationToken cancellationToken);
 
     /// <summary>締め日変更後の最初の給与期間を、副作用なく現在の期間と比較します。</summary>

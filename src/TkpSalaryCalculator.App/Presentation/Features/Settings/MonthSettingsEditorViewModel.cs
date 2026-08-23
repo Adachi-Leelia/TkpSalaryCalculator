@@ -29,6 +29,7 @@ public abstract class MonthSettingsEditorViewModel : EditableViewModelBase
         this.dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+        TrackDataChanges(context.SessionState, TkpSalaryCalculator.App.Navigation.AppDataChangeKind.Settings);
     }
 
     protected SettingsMonthContext Context { get; }
@@ -74,7 +75,7 @@ public abstract class MonthSettingsEditorViewModel : EditableViewModelBase
                 Context.SelectedMonth, replacement, preview.ConfirmationToken, cancellationToken)
             : await settings.CloneAndReplaceWithServicePresetAsync(
                 Context.SelectedMonth, replacement, preview.ConfirmationToken, presetChange, cancellationToken);
-        Context.Accept(result);
+        Context.NotifySettingsChanged(result);
         MarkSaved();
         await navigator.GoBackAsync(successMessage, cancellationToken);
         return true;

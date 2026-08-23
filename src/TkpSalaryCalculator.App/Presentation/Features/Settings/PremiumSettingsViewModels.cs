@@ -1,4 +1,5 @@
 using System.Globalization;
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
@@ -26,6 +27,7 @@ public sealed class PremiumSettingsViewModel : ViewModelBase
         this.context = context ?? throw new ArgumentNullException(nameof(context));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        TrackDataChanges(context.SessionState, AppDataChangeKind.Settings);
         AddCommand = new AsyncCommand(() => navigator.OpenPremiumEditorAsync(null, default), PresentError);
     }
 
@@ -37,13 +39,16 @@ public sealed class PremiumSettingsViewModel : ViewModelBase
     public string? SuccessMessage { get => successMessage; private set { if (SetProperty(ref successMessage, value)) OnPropertyChanged(nameof(HasSuccessMessage)); } }
     public bool HasSuccessMessage => !string.IsNullOrWhiteSpace(SuccessMessage);
 
-    public Task LoadAsync() => RunBusyAsync(async token =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private async Task LoadCoreAsync(CancellationToken token)
     {
         var snapshot = (await context.RefreshAsync(token)).Snapshot;
         Rows = [.. snapshot.Premiums.Select(value => new PremiumSettingRow(
             value.Id.Value, value.DisplayName, Calculation(value), Conditions(value, snapshot), value.IsEnabled ? "有効" : "無効"))];
         OnPropertyChanged(nameof(MonthHeaderText));
-    });
+    }
 
     public Task OpenEditorAsync(PremiumSettingRow row) => navigator.OpenPremiumEditorAsync(row.Id, default);
     public void SetSuccessMessage(string? value) => SuccessMessage = value;
@@ -137,9 +142,12 @@ public sealed class PremiumSettingsEditorViewModel : MonthSettingsEditorViewMode
         ? "曜日・祝日・個別日付・時間帯を指定していないため、対象サービスのすべての勤務に適用されます。"
         : "曜日・祝日・個別日付は、指定したもののいずれかに一致すれば対象です。時間帯を指定した場合は、さらにその時間帯と重なる勤務だけに適用されます。";
 
-    public void Initialize(Guid? premiumId) { id = premiumId; OnPropertyChanged(nameof(PageTitle)); }
+    public void Initialize(Guid? premiumId) { id = premiumId; InvalidateTrackedLoad(); OnPropertyChanged(nameof(PageTitle)); }
 
-    public Task LoadAsync() => RunBusyAsync(token => LoadEditorAsync(snapshot =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private Task LoadCoreAsync(CancellationToken token) => LoadEditorAsync(snapshot =>
     {
         source = id is { } premiumId ? snapshot.Premiums.FirstOrDefault(value => value.Id.Value == premiumId) : null;
         displayName = source?.DisplayName ?? string.Empty;
@@ -166,7 +174,7 @@ public sealed class PremiumSettingsEditorViewModel : MonthSettingsEditorViewMode
         foreach (var service in Services) service.PropertyChanged += (_, _) => { Changed(); OnPropertyChanged(nameof(ConditionExplanation)); };
         NotifyAll();
         return Task.CompletedTask;
-    }, token));
+    }, token);
 
     public Task SaveAsync() => RunBusyAsync(async token =>
     {
