@@ -33,14 +33,26 @@ public sealed class WorkRecordUseCase(
 
 
     /// <inheritdoc />
-    public async Task<WorkInputOptionsDto> GetInputOptionsAsync(DateOnly workDate, CancellationToken cancellationToken)
+    public async Task<MonthSettingsDto> GetSettingsForDateAsync(
+        DateOnly workDate,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var month = ApplicationSupport.ToYearMonth(workDate);
         var snapshot = await settings.GetEffectiveForMonthAsync(month, cancellationToken).ConfigureAwait(false);
+        return new MonthSettingsDto(month, snapshot);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkInputOptionsDto> GetInputOptionsAsync(DateOnly workDate, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var monthSettings = await GetSettingsForDateAsync(workDate, cancellationToken).ConfigureAwait(false);
+        var snapshot = monthSettings.Snapshot;
         var allPresets = await presets.GetAllAsync(cancellationToken).ConfigureAwait(false);
-        var usage = await records.GetServicePresetUsageCountsAsync(cancellationToken).ConfigureAwait(false);
-        var recent = await records.FindMostRecentAsync(cancellationToken).ConfigureAwait(false);
+        var history = await records.GetInputHistoryAsync(cancellationToken).ConfigureAwait(false);
+        var usage = history.ServicePresetUsageCounts;
+        var recent = history.MostRecent;
         var candidates = allPresets.Select(p =>
         {
             var issues = ApplicationSupport.ValidateSelection(snapshot, p.ServiceId, p.TimeCategoryId);
@@ -58,7 +70,7 @@ public sealed class WorkRecordUseCase(
             recent.InputMode == WorkInputMode.Duration ? recent.WorkMinutes : null,
             recent.StartTime, recent.InputMode == WorkInputMode.TimeRange ? recent.EndTime : null,
             recent.SourceServicePresetId, Guid.NewGuid());
-        return new(workDate, new MonthSettingsDto(month, snapshot), candidates, suggested);
+        return new(workDate, monthSettings, candidates, suggested);
     }
 
     /// <inheritdoc />

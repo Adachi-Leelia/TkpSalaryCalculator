@@ -41,7 +41,8 @@ public sealed class TimeZoneLocalDateConverter(TimeZoneInfo timeZone) : ILocalDa
 /// <summary>接続設定、スキーマ更新および Ambient トランザクションを所有します。</summary>
 public sealed class SqliteDatabase
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSettingSnapshotSchemaVersion = 1;
     public const int CurrentExportFormatVersion = 1;
 
     private readonly string connectionString;
@@ -87,16 +88,16 @@ public sealed class SqliteDatabase
                     $"Database schema version {version} is newer than supported version {CurrentSchemaVersion}.");
             }
 
-            var databaseAlreadyCurrent = version == CurrentSchemaVersion;
+            var databaseHadSchema = version > 0;
             while (version < CurrentSchemaVersion)
             {
                 version = await ApplyMigrationAsync(connection, version, bootstrapDefaults, cancellationToken)
                     .ConfigureAwait(false);
             }
 
-            // Backfill databases created by the earlier schema-v1 implementation which did not seed defaults.
-            // Fresh databases are bootstrapped in the migration transaction itself.
-            if (bootstrapDefaults && databaseAlreadyCurrent)
+            // Backfill existing databases created by an implementation which did not seed defaults.
+            // Fresh databases are bootstrapped in the version-one migration transaction itself.
+            if (bootstrapDefaults && databaseHadSchema)
                 await EnsureBootstrapAsync(connection, cancellationToken).ConfigureAwait(false);
 
             initialized = true;
@@ -232,8 +233,32 @@ public sealed class SqliteDatabase
         {
             0 => await MigrateFromZeroToOneAsync(connection, bootstrapDefaults, cancellationToken)
                 .ConfigureAwait(false),
+            1 => await MigrateFromOneToTwoAsync(connection, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"No migration from schema version {fromVersion} is available."),
         };
+    }
+
+    private static async Task<int> MigrateFromOneToTwoAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, transaction, """
+                CREATE INDEX IF NOT EXISTS ix_work_record_source_preset
+                    ON work_record(source_service_preset_id)
+                    WHERE source_service_preset_id IS NOT NULL;
+                PRAGMA user_version = 2;
+                """, cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 2;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async Task<int> MigrateFromZeroToOneAsync(SqliteConnection connection, bool bootstrapDefaults,

@@ -203,6 +203,26 @@ public sealed class SettingsViewModelTests
         Assert.Equal(15, periodSettings.LastCommand!.ClosingDay);
     }
 
+    [Fact]
+    public async Task BasicShiftList_ResolvesNamesWithoutLoadingRankedInputCandidates()
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var work = new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200)));
+        var viewModel = new BasicShiftViewModel(
+            shifts, work, new SettingsNavigatorStub(), new DialogStub(),
+            new FixedClock(), new FixedLocalDate(), new JapaneseDisplayFormatter(), new UserErrorPresenter());
+
+        await viewModel.LoadAsync();
+
+        var row = Assert.Single(Assert.Single(viewModel.Groups, group => group.HasRows).Rows);
+        Assert.Equal("身体 / 身体1", row.WorkText);
+        Assert.Equal(1, work.SettingsCalls);
+        Assert.Equal(0, work.InputOptionsCalls);
+    }
+
     private static SettingsMonthContext Context(MonthSettingsStub settings, IAppSessionState session) =>
         new(settings, session, new JapaneseDisplayFormatter());
 
@@ -279,6 +299,63 @@ public sealed class SettingsViewModelTests
         public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken) => Task.FromResult(Values);
         public Task<ServicePresetDto> SaveAsync(SaveServicePresetCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class BasicShiftStub(BasicShiftDto shift) : IBasicShiftUseCase
+    {
+        public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(
+            DayOfWeek weekday, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<BasicShiftDto>>(weekday == shift.Weekday ? [shift] : []);
+        public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(
+            ApplyBasicShiftsCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class WorkSettingsStub(MonthSettingsDto settings) : IWorkRecordUseCase
+    {
+        public int SettingsCalls { get; private set; }
+        public int InputOptionsCalls { get; private set; }
+
+        public Task<MonthSettingsDto> GetSettingsForDateAsync(DateOnly workDate, CancellationToken cancellationToken)
+        {
+            SettingsCalls++;
+            return Task.FromResult(settings);
+        }
+        public Task<WorkInputOptionsDto> GetInputOptionsAsync(DateOnly workDate, CancellationToken cancellationToken)
+        {
+            InputOptionsCalls++;
+            throw new NotSupportedException();
+        }
+        public Task<IReadOnlyList<WorkRecordDto>> GetForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<WorkRecordPreviewDto> PreviewAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task DeleteAsync(WorkRecordId id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<CopyDayPreviewDto> PreviewCopyDayAsync(
+            DateOnly sourceDate, DateOnly targetDate, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<IReadOnlyList<SaveWorkRecordResultDto>> CopyDayAsync(
+            DateOnly sourceDate, DateOnly targetDate, CopyDayConfirmationToken confirmationToken,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class FixedClock : IUtcClock
+    {
+        public DateTimeOffset UtcNow => new(2026, 8, 22, 0, 0, 0, TimeSpan.Zero);
+    }
+
+    private sealed class FixedLocalDate : ILocalDateConverter
+    {
+        public DateOnly ToLocalDate(DateTimeOffset utcDateTime) => new(2026, 8, 22);
     }
 
     private sealed class PeriodSettingsStub : IPayrollPeriodSettingsUseCase

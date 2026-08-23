@@ -33,6 +33,11 @@ public interface IServicePresetUseCase
 /// <summary>勤務記録のコマンドとクエリをプレゼンテーション層へ公開します。</summary>
 public interface IWorkRecordUseCase
 {
+    /// <summary>候補ランキングを作成せず、指定日の名称表示と入力検証に必要な月設定だけを取得します。</summary>
+    Task<MonthSettingsDto> GetSettingsForDateAsync(
+        DateOnly workDate,
+        CancellationToken cancellationToken);
+
     /// <summary>1 勤務日分の有効な設定、最終表示順のプリセット候補、および編集可能な推奨値を取得します。</summary>
     Task<WorkInputOptionsDto> GetInputOptionsAsync(
         DateOnly workDate,

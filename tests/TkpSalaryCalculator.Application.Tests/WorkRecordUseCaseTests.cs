@@ -369,8 +369,82 @@ public sealed class WorkRecordUseCaseTests
 
         var result = await context.WorkUseCase().GetInputOptionsAsync(new(2026, 8, 1), default);
 
-        Assert.Equal(recent.Id, result.PresetCandidates[0].Preset.Id);
+        Assert.Equal([recent.Id, frequent.Id], result.PresetCandidates.Select(x => x.Preset.Id));
+        Assert.Equal([1L, 2L], result.PresetCandidates.Select(x => x.UsageCount));
+        Assert.True(result.PresetCandidates[0].IsMostRecentlyUsed);
+        Assert.False(result.PresetCandidates[1].IsMostRecentlyUsed);
         Assert.NotNull(result.SuggestedValues);
         Assert.Equal(new DateOnly(2026, 8, 1), result.SuggestedValues!.WorkDate);
+        Assert.Equal(recent.Id, result.SuggestedValues.SourceServicePresetId);
+        Assert.Equal(1, context.Works.InputHistoryCalls);
+        Assert.Equal(1, context.Presets.GetAllCalls);
+    }
+
+    [Fact]
+    public async Task GetInputOptions_UsesDisplayOrderAndNameForTiesAndMarksUnavailableCandidates()
+    {
+        var context = new TestContext();
+        var enabled = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "い候補", TestData.ServiceId,
+            TestData.CategoryId, new WorkMinutes(60), new DisplayOrder(2), true);
+        var alphabetic = enabled with
+        {
+            Id = new ServicePresetId(Guid.NewGuid()),
+            DisplayName = "あ候補",
+        };
+        var firstByOrder = enabled with
+        {
+            Id = new ServicePresetId(Guid.NewGuid()),
+            DisplayName = "先頭",
+            DisplayOrder = new DisplayOrder(1),
+        };
+        var disabledPreset = enabled with
+        {
+            Id = new ServicePresetId(Guid.NewGuid()),
+            DisplayName = "無効候補",
+            DisplayOrder = new DisplayOrder(3),
+            IsEnabled = false,
+        };
+        context.Presets.Values.AddRange([enabled, disabledPreset, alphabetic, firstByOrder]);
+
+        var result = await context.WorkUseCase().GetInputOptionsAsync(new(2026, 8, 1), default);
+
+        Assert.Equal(
+            [firstByOrder.Id, alphabetic.Id, enabled.Id, disabledPreset.Id],
+            result.PresetCandidates.Select(x => x.Preset.Id));
+        Assert.True(result.PresetCandidates[0].IsAvailable);
+        Assert.False(result.PresetCandidates[^1].IsAvailable);
+        Assert.Empty(result.PresetCandidates[^1].Issues);
+    }
+
+    [Fact]
+    public async Task GetInputOptions_DisabledMonthlySettingKeepsCandidateWithReasonAndHistoryStatistics()
+    {
+        var context = new TestContext();
+        context.Settings.Fallback = TestData.Snapshot(serviceEnabled: false, categoryEnabled: false);
+        var preset = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "現在は利用不可", TestData.ServiceId,
+            TestData.CategoryId, new WorkMinutes(60), new DisplayOrder(0), true);
+        context.Presets.Values.Add(preset);
+        context.Works.Values.Add(TestData.Work(new(2026, 7, 31)) with { SourceServicePresetId = preset.Id });
+
+        var result = await context.WorkUseCase().GetInputOptionsAsync(new(2026, 8, 1), default);
+
+        var candidate = Assert.Single(result.PresetCandidates);
+        Assert.False(candidate.IsAvailable);
+        Assert.True(candidate.IsMostRecentlyUsed);
+        Assert.Equal(1, candidate.UsageCount);
+        Assert.Contains(candidate.Issues, issue => issue.Code == "WORK_SERVICE_UNAVAILABLE");
+    }
+
+    [Fact]
+    public async Task GetSettingsForDate_DoesNotLoadPresetsOrScanInputHistory()
+    {
+        var context = new TestContext();
+
+        var result = await context.WorkUseCase().GetSettingsForDateAsync(new(2026, 8, 1), default);
+
+        Assert.Equal(new YearMonth(2026, 8), result.YearMonth);
+        Assert.Equal(context.Settings.Fallback, result.Snapshot);
+        Assert.Equal(0, context.Presets.GetAllCalls);
+        Assert.Equal(0, context.Works.InputHistoryCalls);
     }
 }

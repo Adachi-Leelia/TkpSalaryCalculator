@@ -424,6 +424,7 @@ WHERE source_basic_shift_id IS NOT NULL;
 | `ix_basic_shift_weekday` | `basic_shift(weekday, is_enabled, display_order)` | 曜日別反映 |
 | `ix_work_record_date` | `work_record(work_date)` | 日別・期間集計 |
 | `ix_work_record_service_date` | `work_record(service_id, work_date)` | 対象サービス集計 |
+| `ix_work_record_source_preset` | `work_record(source_service_preset_id)`（NULLを除く部分索引） | 入力候補の全履歴使用回数集計 |
 | `ux_work_record_shift_date` | `work_record(source_basic_shift_id, work_date)` | 基本シフト二重反映防止 |
 | `ux_closing_rule_effective_month` | `closing_rule_history(effective_from_year_month)` | 適用履歴の一意性 |
 | `ix_monthly_allowance_period` | `monthly_allowance(payroll_period_year_month)` | 給与期間集計 |
@@ -553,6 +554,8 @@ Start(period_key) <= work_date <= End(period_key)
 - アプリ更新後に`PRAGMA integrity_check`または同等の限定的な整合性確認を実施できる構造にする。
 - マイグレーション失敗時はアプリの通常利用を開始せず、既存データを上書きしない。
 - ダウングレードによる古いアプリでのDB利用は保証しない。
+
+スキーマバージョン2では、入力候補の全履歴使用回数集計用に`ix_work_record_source_preset`を追加する。勤務記録の内容は変換しない。
 
 ## 13. 性能方針
 

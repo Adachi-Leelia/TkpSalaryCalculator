@@ -645,11 +645,11 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         {
             versions.Transaction = transaction;
             versions.CommandText = "SELECT COUNT(*) FROM setting_snapshot WHERE schema_version <> $supported;";
-            versions.Parameters.AddWithValue("$supported", SqliteDatabase.CurrentSchemaVersion);
+            versions.Parameters.AddWithValue("$supported", SqliteDatabase.CurrentSettingSnapshotSchemaVersion);
             if (Convert.ToInt64(await versions.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
                     CultureInfo.InvariantCulture) != 0)
                 throw new InvalidDataException(
-                    $"A setting snapshot uses an unsupported schema version. Supported version: {SqliteDatabase.CurrentSchemaVersion}.");
+                    $"A setting snapshot uses an unsupported schema version. Supported version: {SqliteDatabase.CurrentSettingSnapshotSchemaVersion}.");
         }
 
         // Constructing domain objects catches cross-row business invariants beyond SQLite checks.

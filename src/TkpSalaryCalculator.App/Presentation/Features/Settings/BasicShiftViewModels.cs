@@ -94,9 +94,9 @@ public sealed class BasicShiftViewModel : ViewModelBase
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
         var today = localDates.ToLocalDate(clock.UtcNow);
-        var options = await workRecords.GetInputOptionsAsync(today, cancellationToken);
-        var services = options.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
-        var categories = options.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+        var monthSettings = await workRecords.GetSettingsForDateAsync(today, cancellationToken);
+        var services = monthSettings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+        var categories = monthSettings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
         var values = new List<BasicShiftGroup>();
         foreach (var weekday in OrderedWeekdays)
         {
@@ -110,10 +110,10 @@ public sealed class BasicShiftViewModel : ViewModelBase
                     : formatter.Duration(shift.WorkMinutes);
                 var warnings = new List<string>();
                 if (!shift.IsEnabled) warnings.Add("この基本シフトは無効になっています。");
-                if (!options.Settings.Snapshot.Services.Any(x => x.Id == shift.ServiceId && x.IsEnabled))
+                if (!monthSettings.Snapshot.Services.Any(x => x.Id == shift.ServiceId && x.IsEnabled))
                     warnings.Add("現在の設定でサービスを利用できません。");
                 if (shift.TimeCategoryId is { } timeCategoryId &&
-                    !options.Settings.Snapshot.TimeCategories.Any(x => x.Id == timeCategoryId && x.ServiceId == shift.ServiceId && x.IsEnabled))
+                    !monthSettings.Snapshot.TimeCategories.Any(x => x.Id == timeCategoryId && x.ServiceId == shift.ServiceId && x.IsEnabled))
                     warnings.Add("現在の設定で時間区分を利用できません。");
                 if (shift.InputMode == WorkInputMode.TimeRange && (shift.StartTime is null || shift.EndTime is null))
                     warnings.Add("開始時刻と終了時刻を設定してください。");
@@ -247,10 +247,10 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         try
         {
             var today = localDates.ToLocalDate(clock.UtcNow);
-            var options = await workRecords.GetInputOptionsAsync(today, cancellationToken);
-            allCategories = options.Settings.Snapshot.TimeCategories;
-            premiums = options.Settings.Snapshot.Premiums;
-            Services = options.Settings.Snapshot.Services.OrderBy(x => x.DisplayOrder.Value)
+            var monthSettings = await workRecords.GetSettingsForDateAsync(today, cancellationToken);
+            allCategories = monthSettings.Snapshot.TimeCategories;
+            premiums = monthSettings.Snapshot.Premiums;
+            Services = monthSettings.Snapshot.Services.OrderBy(x => x.DisplayOrder.Value)
                 .Select(x => new ServiceOptionViewModel(x.Id, x.DisplayName, x.IsEnabled)).ToArray();
             BasicShiftDto? existing = null;
             if (id is { } shiftId)

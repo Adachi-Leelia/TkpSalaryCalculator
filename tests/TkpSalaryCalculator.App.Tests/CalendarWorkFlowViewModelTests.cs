@@ -66,18 +66,22 @@ public sealed class CalendarWorkFlowViewModelTests
         };
         var dialogs = new DialogStub { Result = true };
         var navigator = new CalendarNavigatorStub();
+        var work = new WorkUseCaseStub();
         var viewModel = new CalendarViewModel(
             query, navigator, new AppSessionState(TargetDate), new ClockStub(), new LocalDateStub(),
-            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, new WorkUseCaseStub(), dialogs);
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, work, dialogs);
 
         await viewModel.LoadAsync();
         await viewModel.ConfirmShiftCandidatesAsync();
 
         Assert.Equal("基本シフトを反映", dialogs.LastTitle);
         Assert.Contains("追加する勤務記録: 1件", dialogs.LastMessage);
+        Assert.Contains("訪問 / 通常", dialogs.LastMessage);
         Assert.Equal(TargetDate, basicShifts.Applied?.WorkDate);
         Assert.Equal([shift.Id], basicShifts.Applied?.BasicShiftIds);
         Assert.Null(navigator.OpenedDay);
+        Assert.Equal(1, work.SettingsForDateCalls);
+        Assert.Equal(0, work.InputOptionsCalls);
     }
 
     [Fact]
@@ -138,6 +142,10 @@ public sealed class CalendarWorkFlowViewModelTests
             new JapaneseDisplayFormatter(), new UserErrorPresenter());
         viewModel.SetDate(TargetDate);
         await viewModel.LoadAsync();
+
+        Assert.Equal("訪問 / 通常", Assert.Single(viewModel.Records).DisplayName);
+        Assert.Equal(1, work.SettingsForDateCalls);
+        Assert.Equal(0, work.InputOptionsCalls);
 
         await viewModel.DeleteRecordAsync(RecordId, "訪問 / 通常");
         Assert.Empty(work.Deleted);
@@ -605,6 +613,8 @@ public sealed class CalendarWorkFlowViewModelTests
         public CopyDayPreviewDto? CopyPreview { get; set; }
         public int CopyCalls { get; private set; }
         public int CopyPreviewCalls { get; private set; }
+        public int InputOptionsCalls { get; private set; }
+        public int SettingsForDateCalls { get; private set; }
         public DateOnly? LastCopySourceDate { get; private set; }
         public DateOnly? LastCopyTargetDate { get; private set; }
         public CopyDayConfirmationToken? LastCopyConfirmationToken { get; private set; }
@@ -614,12 +624,20 @@ public sealed class CalendarWorkFlowViewModelTests
             command.WorkMinutes ?? new WorkMinutes(60), command.StartTime, command.EndTime,
             Calculated(command.Id ?? RecordId, 1_200), true, []);
 
-        public Task<WorkInputOptionsDto> GetInputOptionsAsync(DateOnly workDate, CancellationToken cancellationToken) =>
-            Task.FromResult(InputOptions with
+        public Task<MonthSettingsDto> GetSettingsForDateAsync(DateOnly workDate, CancellationToken cancellationToken)
+        {
+            SettingsForDateCalls++;
+            return Task.FromResult(InputOptions.Settings with { YearMonth = new YearMonth(workDate.Year, workDate.Month) });
+        }
+        public Task<WorkInputOptionsDto> GetInputOptionsAsync(DateOnly workDate, CancellationToken cancellationToken)
+        {
+            InputOptionsCalls++;
+            return Task.FromResult(InputOptions with
             {
                 WorkDate = workDate,
                 Settings = InputOptions.Settings with { YearMonth = new YearMonth(workDate.Year, workDate.Month) },
             });
+        }
         public Task<IReadOnlyList<WorkRecordDto>> GetForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<WorkRecordDto>>(Stored.Where(x => x.WorkDate == workDate).ToArray());
         public Task<WorkRecordPreviewDto> PreviewAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken)

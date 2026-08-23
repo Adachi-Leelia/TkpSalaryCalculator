@@ -171,20 +171,20 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
     public int? UpsertFailureAtCall { get; set; }
     public TaskCompletionSource? UpsertGate { get; set; }
     public int UpsertCalls { get; private set; }
+    public int InputHistoryCalls { get; private set; }
     public Task<bool> AnyAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult(Values.Count != 0);
     }
 
-    public Task<WorkRecordDto?> FindMostRecentAsync(CancellationToken cancellationToken)
+    public Task<WorkInputHistory> GetInputHistoryAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult(Values.LastOrDefault());
-    }
-
-    public Task<IReadOnlyDictionary<ServicePresetId, long>> GetServicePresetUsageCountsAsync(CancellationToken cancellationToken)
-    {
-        return Task.FromResult<IReadOnlyDictionary<ServicePresetId, long>>(Values.Where(x => x.SourceServicePresetId is not null)
-                .GroupBy(x => x.SourceServicePresetId!.Value).ToDictionary(x => x.Key, x => (long)x.Count()));
+        InputHistoryCalls++;
+        IReadOnlyDictionary<ServicePresetId, long> usageCounts = Values
+            .Where(x => x.SourceServicePresetId is not null)
+            .GroupBy(x => x.SourceServicePresetId!.Value)
+            .ToDictionary(x => x.Key, x => (long)x.Count());
+        return Task.FromResult(new WorkInputHistory(usageCounts, Values.LastOrDefault()));
     }
 
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken)
@@ -369,8 +369,10 @@ internal sealed class FakeHolidayRepository : IHolidayCalendarRepository
 internal sealed class FakePresetRepository : IServicePresetRepository, ITransactionalFakeState
 {
     public List<ServicePresetDto> Values { get; } = [];
+    public int GetAllCalls { get; private set; }
     public Task<IReadOnlyList<ServicePresetDto>> GetAllAsync(CancellationToken cancellationToken)
     {
+        GetAllCalls++;
         return Task.FromResult<IReadOnlyList<ServicePresetDto>>([.. Values]);
     }
 

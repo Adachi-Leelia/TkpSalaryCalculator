@@ -181,7 +181,7 @@ public sealed class SqliteSettingSnapshotRepository(SqliteDatabase database, IUt
 
             var snapshot = new SettingSnapshot(
                 new SettingSnapshotId(Guid.NewGuid()), expectedCurrentSnapshotId, holidayCalendarVersionId,
-                new SchemaVersion(SqliteDatabase.CurrentSchemaVersion), createdAtUtc.ToUniversalTime(),
+                new SchemaVersion(SqliteDatabase.CurrentSettingSnapshotSchemaVersion), createdAtUtc.ToUniversalTime(),
                 replacement.Services, replacement.TimeCategories, replacement.Rates,
                 replacement.Premiums, replacement.CountBonuses);
             await InsertSnapshotAsync(connection, transaction, snapshot, token).ConfigureAwait(false);

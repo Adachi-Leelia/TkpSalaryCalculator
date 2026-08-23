@@ -194,9 +194,9 @@ public sealed class CalendarViewModel : ViewModelBase
         var categoryNames = new Dictionary<TimeCategoryId, string>();
         if (workRecords is not null)
         {
-            var options = await workRecords.GetInputOptionsAsync(date, cancellationToken);
-            serviceNames = options.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
-            categoryNames = options.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+            var monthSettings = await workRecords.GetSettingsForDateAsync(date, cancellationToken);
+            serviceNames = monthSettings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+            categoryNames = monthSettings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
         }
 
         var message = BuildShiftPreviewMessage(preview, selected, serviceNames, categoryNames);

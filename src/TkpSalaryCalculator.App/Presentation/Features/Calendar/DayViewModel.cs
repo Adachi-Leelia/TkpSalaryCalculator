@@ -124,16 +124,16 @@ public sealed class DayViewModel : ViewModelBase
     {
         var salaryTask = salaryQuery.GetDayAsync(Date, cancellationToken);
         var recordsTask = workRecords.GetForDateAsync(Date, cancellationToken);
-        var optionsTask = workRecords.GetInputOptionsAsync(Date, cancellationToken);
+        var settingsTask = workRecords.GetSettingsForDateAsync(Date, cancellationToken);
         var shiftTask = basicShifts?.PreviewForDateAsync(Date, cancellationToken);
-        await Task.WhenAll(new Task[] { salaryTask, recordsTask, optionsTask }.Concat(shiftTask is null ? [] : [shiftTask]));
+        await Task.WhenAll(new Task[] { salaryTask, recordsTask, settingsTask }.Concat(shiftTask is null ? [] : [shiftTask]));
 
         var daily = await salaryTask;
         var stored = await recordsTask;
-        var options = await optionsTask;
+        var monthSettings = await settingsTask;
         var calculations = daily.Records.ToDictionary(x => x.WorkRecord.Id);
-        var serviceNames = options.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
-        var categoryNames = options.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+        var serviceNames = monthSettings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+        var categoryNames = monthSettings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
         if (shiftTask is not null)
         {
             var shiftPreview = await shiftTask;

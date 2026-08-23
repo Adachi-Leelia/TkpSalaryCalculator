@@ -45,18 +45,19 @@ public interface IServicePresetRepository
     Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken);
 }
 
+/// <summary>勤務入力候補の全履歴統計と、直近に確定した勤務を保持します。</summary>
+public sealed record WorkInputHistory(
+    IReadOnlyDictionary<ServicePresetId, long> ServicePresetUsageCounts,
+    WorkRecordDto? MostRecent);
+
 /// <summary>ストレージ技術を公開せずに、正規化済み勤務記録を保存します。</summary>
 public interface IWorkRecordRepository
 {
     /// <summary>保存済み勤務記録が 1 件以上存在するかどうかを判定します。</summary>
     Task<bool> AnyAsync(CancellationToken cancellationToken);
 
-    /// <summary>すべての記録を読み込まず、直近で確定した勤務記録を検索します。</summary>
-    Task<WorkRecordDto?> FindMostRecentAsync(CancellationToken cancellationToken);
-
-    /// <summary>すべての記録をアプリケーション層へストリーミングせず、保存済み勤務記録の使用件数を元サービスプリセット別に取得します。</summary>
-    Task<IReadOnlyDictionary<ServicePresetId, long>> GetServicePresetUsageCountsAsync(
-        CancellationToken cancellationToken);
+    /// <summary>候補作成に必要なプリセット別使用件数と直近勤務を、1 回の読取コンテキストで取得します。</summary>
+    Task<WorkInputHistory> GetInputHistoryAsync(CancellationToken cancellationToken);
 
     /// <summary>識別子で勤務記録を 1 件検索します。</summary>
     Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken);

@@ -13,7 +13,7 @@ namespace TkpSalaryCalculator.Infrastructure.Tests;
 public sealed partial class InfrastructureResilienceTests
 {
     [Fact]
-    public async Task DB007_CurrentInitialReleaseMigratesEmptyVersionZeroDatabaseToVersionOneAndSeedsIt()
+    public async Task DB007_CurrentReleaseMigratesEmptyVersionZeroDatabaseThroughVersionTwoAndSeedsIt()
     {
         // There is no earlier formally released database fixture for the initial v1 release. This test therefore
         // covers the real version-0 (empty SQLite file) bootstrap only; future release migration tests must use
@@ -31,7 +31,7 @@ public sealed partial class InfrastructureResilienceTests
         await fixture.Database.InitializeAsync();
 
         await using var after = await fixture.OpenAsync();
-        Assert.Equal(1L, await ScalarLongAsync(after, "PRAGMA user_version;"));
+        Assert.Equal(SqliteDatabase.CurrentSchemaVersion, await ScalarLongAsync(after, "PRAGMA user_version;"));
         Assert.Equal("preserve-me", await ScalarStringAsync(after, "SELECT value FROM pre_migration_marker;"));
         Assert.Equal(1L, await ScalarLongAsync(after,
             "SELECT COUNT(*) FROM app_metadata WHERE id = 1 AND initial_snapshot_id IS NOT NULL;"));
