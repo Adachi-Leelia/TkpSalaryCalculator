@@ -139,14 +139,12 @@ internal static class ApplicationSupport
     }
 
 
-    public static async Task<WorkSalaryCalculation> CalculateAsync(
+    public static WorkSalaryCalculation Calculate(
         WorkRecordDto record,
         SettingSnapshot snapshot,
-        IHolidayCalendarRepository holidays,
-        ISalaryCalculator calculator,
-        CancellationToken cancellationToken)
+        HolidayCalendar calendar,
+        ISalaryCalculator calculator)
     {
-        var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
         return calculator.Calculate(new WorkSalaryCalculationRequest(ToDomain(record), ForCalculationDate(snapshot, record.WorkDate, calendar), calendar));
     }
 

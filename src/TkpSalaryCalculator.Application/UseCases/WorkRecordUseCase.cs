@@ -31,16 +31,62 @@ public sealed class WorkRecordUseCase(
     private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
     private readonly ConcurrentDictionary<Guid, PendingSave> pendingSaves = new();
 
+    /// <inheritdoc />
+    public async Task<WorkEditorScreenDto> GetEditorScreenAsync(
+        DateOnly workDate,
+        WorkRecordId? workRecordId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (workRecordId is { } id) ApplicationSupport.ValidateId(id.Value, nameof(workRecordId));
+
+        var month = ApplicationSupport.ToYearMonth(workDate);
+        var snapshot = await settings.GetEffectiveForMonthAsync(month, cancellationToken).ConfigureAwait(false);
+        var allPresets = await presets.GetAllAsync(cancellationToken).ConfigureAwait(false);
+        var history = await records.GetInputHistoryAsync(cancellationToken).ConfigureAwait(false);
+        var existing = workRecordId is null
+            ? null
+            : await records.FindAsync(workRecordId.Value, cancellationToken).ConfigureAwait(false);
+        var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
+
+        return new(
+            BuildInputOptions(workDate, snapshot, allPresets, history),
+            existing,
+            calendar);
+    }
+
+
+    /// <inheritdoc />
+    public async Task<MonthSettingsDto> GetSettingsForDateAsync(
+        DateOnly workDate,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var month = ApplicationSupport.ToYearMonth(workDate);
+        var snapshot = await settings.GetEffectiveForMonthAsync(month, cancellationToken).ConfigureAwait(false);
+        return new MonthSettingsDto(month, snapshot);
+    }
 
     /// <inheritdoc />
     public async Task<WorkInputOptionsDto> GetInputOptionsAsync(DateOnly workDate, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var month = ApplicationSupport.ToYearMonth(workDate);
-        var snapshot = await settings.GetEffectiveForMonthAsync(month, cancellationToken).ConfigureAwait(false);
+        var snapshot = await settings.GetEffectiveForMonthAsync(ApplicationSupport.ToYearMonth(workDate), cancellationToken)
+            .ConfigureAwait(false);
         var allPresets = await presets.GetAllAsync(cancellationToken).ConfigureAwait(false);
-        var usage = await records.GetServicePresetUsageCountsAsync(cancellationToken).ConfigureAwait(false);
-        var recent = await records.FindMostRecentAsync(cancellationToken).ConfigureAwait(false);
+        var history = await records.GetInputHistoryAsync(cancellationToken).ConfigureAwait(false);
+        return BuildInputOptions(workDate, snapshot, allPresets, history);
+    }
+
+    private static WorkInputOptionsDto BuildInputOptions(
+        DateOnly workDate,
+        SettingSnapshot snapshot,
+        IReadOnlyList<ServicePresetDto> allPresets,
+        WorkInputHistory history)
+    {
+        var monthSettings = new MonthSettingsDto(ApplicationSupport.ToYearMonth(workDate), snapshot);
+        var usage = history.ServicePresetUsageCounts;
+        var recent = history.MostRecent;
         var candidates = allPresets.Select(p =>
         {
             var issues = ApplicationSupport.ValidateSelection(snapshot, p.ServiceId, p.TimeCategoryId);
@@ -58,7 +104,7 @@ public sealed class WorkRecordUseCase(
             recent.InputMode == WorkInputMode.Duration ? recent.WorkMinutes : null,
             recent.StartTime, recent.InputMode == WorkInputMode.TimeRange ? recent.EndTime : null,
             recent.SourceServicePresetId, Guid.NewGuid());
-        return new(workDate, new MonthSettingsDto(month, snapshot), candidates, suggested);
+        return new(workDate, monthSettings, candidates, suggested);
     }
 
     /// <inheritdoc />
@@ -81,7 +127,30 @@ public sealed class WorkRecordUseCase(
         if (command.Id is not null && existing is null)
             return new(null, null, null, null, false,
                 [ApplicationSupport.Issue("WORK_NOT_FOUND", "更新する勤務記録が見つかりませんでした。")]);
-        return await PreviewCoreAsync(command, snapshot, existing, cancellationToken).ConfigureAwait(false);
+        var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
+        return PreviewCore(command, snapshot, existing, calendar);
+    }
+
+    /// <inheritdoc />
+    public Task<WorkRecordPreviewDto> PreviewForEditorAsync(
+        SaveWorkRecordCommand command,
+        WorkEditorScreenDto screen,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(screen);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (command.WorkDate != screen.InputOptions.WorkDate)
+            throw new ArgumentException("画面データと同じ勤務日を指定してください。", nameof(command));
+        if (command.Id is not null && screen.ExistingRecord?.Id != command.Id)
+            return Task.FromResult(new WorkRecordPreviewDto(null, null, null, null, false,
+                [ApplicationSupport.Issue("WORK_NOT_FOUND", "更新する勤務記録が見つかりませんでした。")]));
+
+        return Task.FromResult(PreviewCore(
+            command,
+            screen.InputOptions.Settings.Snapshot,
+            screen.ExistingRecord,
+            screen.HolidayCalendar));
     }
 
     /// <inheritdoc />
@@ -116,7 +185,8 @@ public sealed class WorkRecordUseCase(
             var existing = command.Id is null ? null : await records.FindAsync(command.Id.Value, token).ConfigureAwait(false);
             if (command.Id is not null && existing is null)
                 throw new ApplicationErrorException("WORK_NOT_FOUND", "更新する勤務記録が見つかりませんでした。");
-            var preview = await PreviewCoreAsync(normalizedCommand, snapshot, existing, token).ConfigureAwait(false);
+            var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, token).ConfigureAwait(false);
+            var preview = PreviewCore(normalizedCommand, snapshot, existing, calendar);
             if (!preview.CanSave || preview.Calculation is null || preview.NormalizedWorkMinutes is null)
                 throw new ApplicationErrorException("WORK_INPUT_INVALID", "入力内容を修正してから保存してください。");
             var dto = new WorkRecordDto(
@@ -128,12 +198,12 @@ public sealed class WorkRecordUseCase(
             {
                 var operationId = command.OperationId!.Value;
                 var alreadySaved = await records.FindBySaveOperationIdAsync(operationId, token).ConfigureAwait(false);
-                if (alreadySaved is not null) return await DuplicateResultAsync(alreadySaved, dto, snapshot, token).ConfigureAwait(false);
+                if (alreadySaved is not null) return DuplicateResult(alreadySaved, dto, snapshot, calendar);
                 if (!await records.TryInsertAsync(dto, operationId, token).ConfigureAwait(false))
                 {
                     alreadySaved = await records.FindBySaveOperationIdAsync(operationId, token).ConfigureAwait(false)
                         ?? throw new ApplicationErrorException("WORK_SAVE_CONFLICT", "勤務の保存状態を確認できませんでした。日別一覧を再読み込みしてください。");
-                    return await DuplicateResultAsync(alreadySaved, dto, snapshot, token).ConfigureAwait(false);
+                    return DuplicateResult(alreadySaved, dto, snapshot, calendar);
                 }
             }
             else
@@ -146,12 +216,15 @@ public sealed class WorkRecordUseCase(
     }
 
 
-    private async Task<SaveWorkRecordResultDto> DuplicateResultAsync(WorkRecordDto saved, WorkRecordDto requested,
-        SettingSnapshot snapshot, CancellationToken cancellationToken)
+    private SaveWorkRecordResultDto DuplicateResult(
+        WorkRecordDto saved,
+        WorkRecordDto requested,
+        SettingSnapshot snapshot,
+        HolidayCalendar calendar)
     {
         if (!SameInput(saved, requested))
             throw new ApplicationErrorException("WORK_OPERATION_CONFLICT", "同じ保存操作識別子が別の勤務内容に使用されています。画面を再読み込みしてください。");
-        var calculation = await ApplicationSupport.CalculateAsync(saved, snapshot, holidays, calculator, cancellationToken).ConfigureAwait(false);
+        var calculation = ApplicationSupport.Calculate(saved, snapshot, calendar, calculator);
         return new(saved, calculation, ApplicationSupport.CalculationIssues(calculation));
     }
 
@@ -281,16 +354,15 @@ public sealed class WorkRecordUseCase(
     private static ApplicationErrorException CopyDayPreviewChanged() =>
         new("COPY_DAY_PREVIEW_STALE", "複製前の設定が変更されました。内容を確認してからもう一度複製してください。");
 
-    private async Task<WorkRecordPreviewDto> PreviewCoreAsync(
+    private WorkRecordPreviewDto PreviewCore(
         SaveWorkRecordCommand command,
         SettingSnapshot snapshot,
         WorkRecordDto? existing,
-        CancellationToken cancellationToken)
+        HolidayCalendar calendar)
     {
         var keepsExistingSelection = existing is not null && existing.ServiceId == command.ServiceId &&
             existing.TimeCategoryId == command.TimeCategoryId;
         var selectionIssues = ApplicationSupport.ValidateSelection(snapshot, command.ServiceId, command.TimeCategoryId, keepsExistingSelection);
-        var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
         var (Minutes, Start, End, Issues) = ApplicationSupport.Normalize(command.InputMode, command.WorkMinutes, command.StartTime, command.EndTime,
             ApplicationSupport.RequiresStartTime(snapshot, command.ServiceId, command.WorkDate, calendar));
         var errors = selectionIssues.Concat(Issues).ToList();
@@ -299,7 +371,7 @@ public sealed class WorkRecordUseCase(
         var dto = new WorkRecordDto(
             command.Id ?? new WorkRecordId(Guid.NewGuid()), command.WorkDate, command.ServiceId, command.TimeCategoryId,
             command.InputMode, Minutes.Value, Start, End, command.SourceServicePresetId, null, null);
-        var calculation = await ApplicationSupport.CalculateAsync(dto, snapshot, holidays, calculator, cancellationToken).ConfigureAwait(false);
+        var calculation = ApplicationSupport.Calculate(dto, snapshot, calendar, calculator);
         errors.AddRange(ApplicationSupport.CalculationIssues(calculation));
         return new(Minutes, Start, End, calculation, true, errors);
     }

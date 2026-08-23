@@ -1,4 +1,5 @@
 using System.Globalization;
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
@@ -26,6 +27,7 @@ public sealed class CountBonusSettingsViewModel : ViewModelBase
         this.context = context ?? throw new ArgumentNullException(nameof(context));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        TrackDataChanges(context.SessionState, AppDataChangeKind.Settings);
         AddCommand = new AsyncCommand(() => navigator.OpenCountBonusEditorAsync(null, default), PresentError);
     }
 
@@ -37,7 +39,10 @@ public sealed class CountBonusSettingsViewModel : ViewModelBase
     public string? SuccessMessage { get => successMessage; private set { if (SetProperty(ref successMessage, value)) OnPropertyChanged(nameof(HasSuccessMessage)); } }
     public bool HasSuccessMessage => !string.IsNullOrWhiteSpace(SuccessMessage);
 
-    public Task LoadAsync() => RunBusyAsync(async token =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private async Task LoadCoreAsync(CancellationToken token)
     {
         var snapshot = (await context.RefreshAsync(token)).Snapshot;
         Rows = [.. snapshot.CountBonuses.Select(value => new CountBonusSettingRow(
@@ -46,7 +51,7 @@ public sealed class CountBonusSettingsViewModel : ViewModelBase
                 snapshot.Services.FirstOrDefault(service => service.Id == id)?.DisplayName ?? "不明なサービス")),
             value.IsEnabled ? "有効" : "無効"))];
         OnPropertyChanged(nameof(MonthHeaderText));
-    });
+    }
 
     public Task OpenEditorAsync(CountBonusSettingRow row) => navigator.OpenCountBonusEditorAsync(row.Id, default);
     public void SetSuccessMessage(string? value) => SuccessMessage = value;
@@ -80,9 +85,12 @@ public sealed class CountBonusSettingsEditorViewModel : MonthSettingsEditorViewM
     public IReadOnlyList<SelectableServiceViewModel> Services { get => services; private set => SetProperty(ref services, value); }
     public string TargetExplanation => AppliesToAllServices ? "対象サービスを指定していないため、全サービスへ適用します。" : "選択したサービスだけへ適用します。";
 
-    public void Initialize(Guid? countBonusId) { id = countBonusId; OnPropertyChanged(nameof(PageTitle)); }
+    public void Initialize(Guid? countBonusId) { id = countBonusId; InvalidateTrackedLoad(); OnPropertyChanged(nameof(PageTitle)); }
 
-    public Task LoadAsync() => RunBusyAsync(token => LoadEditorAsync(snapshot =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private Task LoadCoreAsync(CancellationToken token) => LoadEditorAsync(snapshot =>
     {
         source = id is { } bonusId ? snapshot.CountBonuses.FirstOrDefault(value => value.Id.Value == bonusId) : null;
         displayName = source?.DisplayName ?? string.Empty;
@@ -95,7 +103,7 @@ public sealed class CountBonusSettingsEditorViewModel : MonthSettingsEditorViewM
         foreach (var name in new[] { nameof(DisplayName), nameof(AmountText), nameof(AppliesToAllServices), nameof(ShowServiceSelection), nameof(IsEnabled), nameof(TargetExplanation) })
             OnPropertyChanged(name);
         return Task.CompletedTask;
-    }, token));
+    }, token);
 
     public Task SaveAsync() => RunBusyAsync(async token =>
     {

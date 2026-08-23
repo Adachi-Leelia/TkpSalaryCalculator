@@ -1,3 +1,4 @@
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Features.Calendar;
 using TkpSalaryCalculator.App.Presentation.Services;
@@ -44,6 +45,7 @@ public sealed class BasicShiftViewModel : ViewModelBase
     private readonly IUtcClock clock;
     private readonly ILocalDateConverter localDates;
     private readonly JapaneseDisplayFormatter formatter;
+    private readonly IAppSessionState sessionState;
     private IReadOnlyList<BasicShiftGroup> groups = [];
     private string successMessage = string.Empty;
 
@@ -55,7 +57,8 @@ public sealed class BasicShiftViewModel : ViewModelBase
         IUtcClock clock,
         ILocalDateConverter localDates,
         JapaneseDisplayFormatter formatter,
-        IUserErrorPresenter errorPresenter) : base(errorPresenter)
+        IUserErrorPresenter errorPresenter,
+        IAppSessionState sessionState) : base(errorPresenter)
     {
         this.shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
         this.workRecords = workRecords ?? throw new ArgumentNullException(nameof(workRecords));
@@ -64,6 +67,8 @@ public sealed class BasicShiftViewModel : ViewModelBase
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        TrackDataChanges(this.sessionState, AppDataChangeKind.BasicShifts | AppDataChangeKind.Settings);
         AddCommand = new AsyncCommand(() => navigator.OpenBasicShiftEditorAsync(null, CancellationToken.None), PresentError);
     }
 
@@ -89,14 +94,15 @@ public sealed class BasicShiftViewModel : ViewModelBase
     public bool HasSuccessMessage => !string.IsNullOrWhiteSpace(SuccessMessage);
     public AsyncCommand AddCommand { get; }
     public void SetSuccessMessage(string? value) => SuccessMessage = value ?? string.Empty;
-    public Task LoadAsync() => RunBusyAsync(LoadCoreAsync);
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
         var today = localDates.ToLocalDate(clock.UtcNow);
-        var options = await workRecords.GetInputOptionsAsync(today, cancellationToken);
-        var services = options.Settings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
-        var categories = options.Settings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
+        var monthSettings = await workRecords.GetSettingsForDateAsync(today, cancellationToken);
+        var services = monthSettings.Snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+        var categories = monthSettings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
         var values = new List<BasicShiftGroup>();
         foreach (var weekday in OrderedWeekdays)
         {
@@ -110,10 +116,10 @@ public sealed class BasicShiftViewModel : ViewModelBase
                     : formatter.Duration(shift.WorkMinutes);
                 var warnings = new List<string>();
                 if (!shift.IsEnabled) warnings.Add("この基本シフトは無効になっています。");
-                if (!options.Settings.Snapshot.Services.Any(x => x.Id == shift.ServiceId && x.IsEnabled))
+                if (!monthSettings.Snapshot.Services.Any(x => x.Id == shift.ServiceId && x.IsEnabled))
                     warnings.Add("現在の設定でサービスを利用できません。");
                 if (shift.TimeCategoryId is { } timeCategoryId &&
-                    !options.Settings.Snapshot.TimeCategories.Any(x => x.Id == timeCategoryId && x.ServiceId == shift.ServiceId && x.IsEnabled))
+                    !monthSettings.Snapshot.TimeCategories.Any(x => x.Id == timeCategoryId && x.ServiceId == shift.ServiceId && x.IsEnabled))
                     warnings.Add("現在の設定で時間区分を利用できません。");
                 if (shift.InputMode == WorkInputMode.TimeRange && (shift.StartTime is null || shift.EndTime is null))
                     warnings.Add("開始時刻と終了時刻を設定してください。");
@@ -136,8 +142,11 @@ public sealed class BasicShiftViewModel : ViewModelBase
             "削除", "キャンセル", cancellationToken);
         if (!confirmed) return;
         await shifts.DeleteAsync(shift.Id, cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts);
+        var generation = CaptureTrackedDataGeneration();
         SuccessMessage = "基本シフトを削除しました。反映済みの勤務記録は維持されています。";
         await LoadCoreAsync(cancellationToken);
+        AcceptDataGeneration(generation);
     });
 
     internal static DayOfWeek[] OrderedWeekdays { get; } =
@@ -157,6 +166,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
     private readonly ISettingsNavigator navigator;
     private readonly IUtcClock clock;
     private readonly ILocalDateConverter localDates;
+    private readonly IAppSessionState sessionState;
     private BasicShiftId? id;
     private bool initializing;
     private IReadOnlyList<ServiceOptionViewModel> services = [];
@@ -180,13 +190,16 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         IUtcClock clock,
         ILocalDateConverter localDates,
         IUserErrorPresenter errorPresenter,
-        IConfirmationDialogService dialogs) : base(errorPresenter, dialogs)
+        IConfirmationDialogService dialogs,
+        IAppSessionState sessionState) : base(errorPresenter, dialogs)
     {
         this.shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
         this.workRecords = workRecords ?? throw new ArgumentNullException(nameof(workRecords));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
+        this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        TrackDataChanges(this.sessionState, AppDataChangeKind.BasicShifts | AppDataChangeKind.Settings);
         Weekdays = BasicShiftViewModel.OrderedWeekdays.Select(x => new WeekdayOption(x, BasicShiftViewModel.WeekdayName(x))).ToArray();
         selectedWeekday = Weekdays[0];
         InputModes = [WorkInputModeOption.Duration, WorkInputModeOption.TimeRange];
@@ -239,18 +252,21 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
     public bool IsEnabled { get => isEnabled; set { if (SetProperty(ref isEnabled, value)) Changed(); } }
     public AsyncCommand SaveCommand { get; }
 
-    public void Initialize(BasicShiftId? value) { id = value; OnPropertyChanged(nameof(PageTitle)); }
+    public void Initialize(BasicShiftId? value) { id = value; InvalidateTrackedLoad(); OnPropertyChanged(nameof(PageTitle)); }
 
-    public Task LoadAsync() => RunBusyAsync(async cancellationToken =>
+    public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
+    public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
+
+    private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
         initializing = true;
         try
         {
             var today = localDates.ToLocalDate(clock.UtcNow);
-            var options = await workRecords.GetInputOptionsAsync(today, cancellationToken);
-            allCategories = options.Settings.Snapshot.TimeCategories;
-            premiums = options.Settings.Snapshot.Premiums;
-            Services = options.Settings.Snapshot.Services.OrderBy(x => x.DisplayOrder.Value)
+            var monthSettings = await workRecords.GetSettingsForDateAsync(today, cancellationToken);
+            allCategories = monthSettings.Snapshot.TimeCategories;
+            premiums = monthSettings.Snapshot.Premiums;
+            Services = monthSettings.Snapshot.Services.OrderBy(x => x.DisplayOrder.Value)
                 .Select(x => new ServiceOptionViewModel(x.Id, x.DisplayName, x.IsEnabled)).ToArray();
             BasicShiftDto? existing = null;
             if (id is { } shiftId)
@@ -266,7 +282,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         }
         finally { initializing = false; }
         MarkSaved();
-    });
+    }
 
     public Task SaveAsync() => RunBusyAsync(async cancellationToken =>
     {
@@ -290,6 +306,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         await shifts.SaveAsync(new SaveBasicShiftCommand(
             id, SelectedWeekday.Value, null, SelectedService.Id, SelectedTimeCategory?.Id,
             SelectedInputMode.Value, minutes, start, end, new DisplayOrder(order), IsEnabled), cancellationToken);
+        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts);
         MarkSaved();
         await navigator.GoBackAsync("基本シフトを保存しました。反映済みの勤務記録は変更されません。", cancellationToken);
     });

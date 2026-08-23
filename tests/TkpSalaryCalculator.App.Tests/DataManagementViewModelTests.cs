@@ -10,27 +10,69 @@ public sealed class DataManagementViewModelTests
         var transfers = new TransferStub();
         var root = new RootNavigatorStub();
         var notifications = new NotificationStub();
+        var session = new AppSessionState(new DateOnly(2026, 8, 21))
+        {
+            InitialSetupState = new InitialSetupStateDto(InitialSetupStatus.Completed, null, []),
+        };
+        var generationBefore = session.GetDataGeneration(AppDataChangeKind.All);
         var viewModel = new DataManagementViewModel(
             transfers, new BackupReminderStub(), new DocumentStub(), new AppInformationStub(), new DialogStub(),
-            notifications, root, new AppSessionState(new DateOnly(2026, 8, 21)), new ClockStub(), new LocalDateStub(),
+            notifications, root, session, new ClockStub(), new LocalDateStub(),
             new UserErrorPresenter());
         root.OnSetRoot = viewModel.CancelPendingOperations;
 
         await viewModel.ImportAsync();
 
         Assert.True(transfers.Committed);
+        Assert.Equal(1, root.SetRootCalls);
         Assert.Equal("インポート完了", notifications.Title);
         Assert.True(notifications.UsedLifetimeIndependentToken);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.All) > generationBefore);
+        Assert.Equal(NavigationRoutes.Home, session.SelectedRootRoute);
+        Assert.Null(session.InitialSetupState);
+    }
+
+    [Fact]
+    public async Task ImportFailureBeforeCompletionDoesNotResetSessionOrRoot()
+    {
+        var transfers = new TransferStub { CommitFailure = new IOException("bootstrap") };
+        var root = new RootNavigatorStub();
+        var session = new AppSessionState(new DateOnly(2026, 8, 21))
+        {
+            InitialSetupState = new InitialSetupStateDto(InitialSetupStatus.Completed, null, []),
+            SelectedRootRoute = NavigationRoutes.Calendar,
+            PayrollPeriod = new PayrollPeriodKey(new YearMonth(2026, 8)),
+        };
+        var generationBefore = session.GetDataGeneration(AppDataChangeKind.All);
+        var viewModel = new DataManagementViewModel(
+            transfers, new BackupReminderStub(), new DocumentStub(), new AppInformationStub(), new DialogStub(),
+            new NotificationStub(), root, session, new ClockStub(), new LocalDateStub(),
+            new UserErrorPresenter());
+
+        await viewModel.ImportAsync();
+
+        Assert.Equal(0, root.SetRootCalls);
+        Assert.Equal(generationBefore, session.GetDataGeneration(AppDataChangeKind.All));
+        Assert.Equal(NavigationRoutes.Calendar, session.SelectedRootRoute);
+        Assert.NotNull(session.PayrollPeriod);
+        Assert.NotNull(session.InitialSetupState);
+        Assert.True(viewModel.HasError);
     }
 
     private sealed class TransferStub : IDataTransferUseCase
     {
         public bool Committed { get; private set; }
+        public Exception? CommitFailure { get; init; }
         public Task<DataTransferFormatDto> GetFormatAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task ExportAsync(Stream destination, string appVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ImportPreviewDto> PrepareImportAsync(Stream source, CancellationToken cancellationToken) => Task.FromResult(new ImportPreviewDto(
             new PreparedImportId(Guid.NewGuid()), 1, DateTimeOffset.UtcNow, 1, 0, 0, 0, null, null, null, null, []));
-        public Task CommitImportAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken) { Committed = true; return Task.CompletedTask; }
+        public Task CommitImportAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken)
+        {
+            if (CommitFailure is not null) return Task.FromException(CommitFailure);
+            Committed = true;
+            return Task.CompletedTask;
+        }
         public Task DiscardImportAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
@@ -76,8 +118,10 @@ public sealed class DataManagementViewModelTests
     private sealed class RootNavigatorStub : IAppRootNavigator
     {
         public Action? OnSetRoot { get; set; }
+        public int SetRootCalls { get; private set; }
         public Task SetRootAsync(AppRootNavigationRequest request, CancellationToken cancellationToken)
         {
+            SetRootCalls++;
             OnSetRoot?.Invoke();
             return Task.CompletedTask;
         }

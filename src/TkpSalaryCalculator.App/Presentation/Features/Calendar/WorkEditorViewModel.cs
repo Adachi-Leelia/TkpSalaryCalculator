@@ -1,7 +1,7 @@
+using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
-using TkpSalaryCalculator.Application.Ports;
 using TkpSalaryCalculator.Application.UseCases;
 using TkpSalaryCalculator.Domain.Contracts;
 using TkpSalaryCalculator.Domain.Models;
@@ -13,10 +13,10 @@ namespace TkpSalaryCalculator.App.Presentation.Features.Calendar;
 public sealed class WorkEditorViewModel : EditableViewModelBase
 {
     private readonly IWorkRecordUseCase workRecords;
-    private readonly IHolidayCalendarRepository holidays;
     private readonly ICalendarNavigator navigator;
     private readonly IssuePresenter issuePresenter;
     private readonly JapaneseDisplayFormatter formatter;
+    private readonly IAppSessionState sessionState;
     private readonly Guid operationId = Guid.NewGuid();
     private bool isInitializing;
     private bool hasSaved;
@@ -43,21 +43,24 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     private string normalizedTimeText = string.Empty;
     private string unavailableCandidatesText = string.Empty;
     private string? firstInvalidField;
+    private WorkEditorScreenDto? editorScreen;
+    private SaveWorkRecordCommand? previewedCommand;
 
     public WorkEditorViewModel(
         IWorkRecordUseCase workRecords,
-        IHolidayCalendarRepository holidays,
         ICalendarNavigator navigator,
         IssuePresenter issuePresenter,
         JapaneseDisplayFormatter formatter,
         IUserErrorPresenter errorPresenter,
-        IConfirmationDialogService dialogs) : base(errorPresenter, dialogs)
+        IConfirmationDialogService dialogs,
+        IAppSessionState sessionState) : base(errorPresenter, dialogs)
     {
         this.workRecords = workRecords ?? throw new ArgumentNullException(nameof(workRecords));
-        this.holidays = holidays ?? throw new ArgumentNullException(nameof(holidays));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.issuePresenter = issuePresenter ?? throw new ArgumentNullException(nameof(issuePresenter));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        TrackDataChanges(this.sessionState, AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings);
         InputModes = [WorkInputModeOption.Duration, WorkInputModeOption.TimeRange];
         ReloadCommand = new AsyncCommand(LoadAsync, PresentError);
         PreviewCommand = new AsyncCommand(PreviewAsync, PresentError, () => SelectedService is not null);
@@ -244,7 +247,10 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
 
     public void Initialize(DateOnly date, WorkRecordId? id)
     {
+        InvalidateTrackedLoad();
         hasSaved = false;
+        editorScreen = null;
+        previewedCommand = null;
         originalServiceId = null;
         originalTimeCategoryId = null;
         originalSourceServicePresetId = null;
@@ -256,7 +262,13 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
 
     public async Task LoadAsync()
     {
-        await RunBusyAsync(LoadCoreAsync);
+        await LoadTrackedAsync(LoadCoreAsync, force: true);
+        NotifyCommands();
+    }
+
+    public async Task LoadIfNeededAsync()
+    {
+        await LoadTrackedAsync(LoadCoreAsync, force: false);
         NotifyCommands();
     }
 
@@ -270,8 +282,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     {
         await RunBusyAsync(async cancellationToken =>
         {
-            var preview = await PreviewCoreAsync(cancellationToken);
-            if (preview is null || !preview.CanSave) return;
             var command = BuildCommand(out var localIssues);
             if (command is null)
             {
@@ -279,7 +289,14 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
                 return;
             }
 
+            if (!CanSave || previewedCommand != command)
+            {
+                var preview = await PreviewCoreAsync(cancellationToken);
+                if (preview is null || !preview.CanSave) return;
+            }
+
             var result = await workRecords.SaveAsync(command, cancellationToken);
+            sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
             ApplyNormalized(result.WorkRecord.WorkMinutes, result.WorkRecord.StartTime, result.WorkRecord.EndTime);
             hasSaved = true;
             MarkSaved();
@@ -294,20 +311,14 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         try
         {
             var date = DateOnly.FromDateTime(WorkDate);
-            var optionsTask = workRecords.GetInputOptionsAsync(date, cancellationToken);
-            Task<IReadOnlyList<WorkRecordDto>>? recordsTask = WorkRecordId is null
-                ? null
-                : workRecords.GetForDateAsync(date, cancellationToken);
-            var options = await optionsTask;
-            WorkRecordDto? existing = null;
-            if (recordsTask is not null)
-                existing = (await recordsTask).FirstOrDefault(x => x.Id == WorkRecordId);
+            editorScreen = await workRecords.GetEditorScreenAsync(date, WorkRecordId, cancellationToken);
+            var options = editorScreen.InputOptions;
+            var existing = editorScreen.ExistingRecord;
             if (WorkRecordId is not null && existing is null)
                 throw new InvalidOperationException("編集する勤務記録が見つかりませんでした。");
 
             if (existing is not null) RememberOriginalSelection(existing);
-            var holidayCalendar = await holidays.GetAsync(options.Settings.Snapshot.HolidayCalendarVersionId, cancellationToken);
-            PopulateOptions(options, holidayCalendar);
+            PopulateOptions(options, editorScreen.HolidayCalendar);
             if (existing is not null)
                 ApplyExisting(existing);
             else if (options.SuggestedValues is { } suggested && IsAvailableForNewRecord(suggested.ServiceId, suggested.TimeCategoryId))
@@ -342,7 +353,9 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             return null;
         }
 
-        var preview = await workRecords.PreviewAsync(command, cancellationToken);
+        var screen = editorScreen ?? throw new InvalidOperationException("勤務入力画面のデータを読み込んでください。");
+        var preview = await workRecords.PreviewForEditorAsync(command, screen, cancellationToken);
+        previewedCommand = preview.CanSave ? command : null;
         ApplyPreview(preview);
         return preview;
     }
@@ -356,9 +369,9 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         isInitializing = true;
         try
         {
-            var options = await workRecords.GetInputOptionsAsync(selectedDate, cancellationToken);
-            var holidayCalendar = await holidays.GetAsync(options.Settings.Snapshot.HolidayCalendarVersionId, cancellationToken);
-            PopulateOptions(options, holidayCalendar);
+            editorScreen = await workRecords.GetEditorScreenAsync(selectedDate, WorkRecordId, cancellationToken);
+            var options = editorScreen.InputOptions;
+            PopulateOptions(options, editorScreen.HolidayCalendar);
             selectedPreset = PresetCandidates.FirstOrDefault(x => x.Id == selectedPreset?.Id && x.IsAvailable);
             OnPropertyChanged(nameof(SelectedPreset));
             SelectedService = Services.FirstOrDefault(x => x.Id == serviceId) ?? Services.FirstOrDefault(x => x.IsEnabled);
@@ -558,6 +571,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     private void InputChanged()
     {
         if (isInitializing) return;
+        previewedCommand = null;
         MarkDirty();
         CanSave = false;
         PreviewText = "入力内容が変わりました。給与を再プレビューしてください。";

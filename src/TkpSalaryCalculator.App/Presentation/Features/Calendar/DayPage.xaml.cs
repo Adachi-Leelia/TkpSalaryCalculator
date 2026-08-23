@@ -25,7 +25,7 @@ public partial class DayPage : ContentPage, IQueryAttributable
     protected override async void OnAppearing()
     {
         base.OnAppearing();
-        await viewModel.LoadAsync();
+        await viewModel.LoadIfNeededAsync();
     }
 
     protected override void OnDisappearing()

@@ -180,6 +180,13 @@ public sealed record CopyDayPreviewDto(
 /// <param name="Amount">円単位の金額。</param>
 public sealed record MonthlyAllowanceDto(MonthlyAllowanceId Id, string DisplayName, YenAmount Amount);
 
+/// <summary>月額手当画面に必要な給与期間境界と手当だけを保持します。</summary>
+/// <param name="Period">両端の日付を含む給与期間。</param>
+/// <param name="Allowances">期間に 1 回適用される手当。</param>
+public sealed record MonthlyAllowancePeriodDto(
+    PayrollPeriod Period,
+    IReadOnlyList<MonthlyAllowanceDto> Allowances);
+
 /// <summary>プレゼンテーション層向けの完全な給与期間読み取りモデルを保持します。</summary>
 /// <param name="Period">両端の日付を含む給与期間。</param>
 /// <param name="Days">期間内の計算済み日別結果。</param>
