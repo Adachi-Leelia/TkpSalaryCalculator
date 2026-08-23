@@ -337,7 +337,7 @@ public sealed class SettingsAndSalaryUseCaseTests
 
         Assert.Equal(new DateOnly(2026, 7, 21), result.Period.StartDate);
         Assert.Equal(new DateOnly(2026, 8, 20), result.Period.EndDate);
-        Assert.Equal(new YearMonth(1, 1), context.Closing.Values[0].EffectiveFrom.Value);
+        Assert.Equal(new YearMonth(1000, 1), context.Closing.Values[0].EffectiveFrom.Value);
     }
 
     [Fact]

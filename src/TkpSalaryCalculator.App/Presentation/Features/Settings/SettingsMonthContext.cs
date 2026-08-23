@@ -39,10 +39,12 @@ public sealed class SettingsMonthContext(
     {
         var target = SelectedMonth.AddMonths(monthOffset);
         var loaded = await settings.GetAsync(target, cancellationToken);
+
         sessionState.SettingsMonth = target;
         Accept(loaded);
         OnPropertyChanged(nameof(SelectedMonth));
         OnPropertyChanged(nameof(HeaderText));
+
         return loaded;
     }
 
