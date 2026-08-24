@@ -240,8 +240,8 @@ public interface IDataTransferUseCase
     /// <summary>現在のデータ転送形式識別子と、独立してバージョン管理される形式番号を取得します。</summary>
     Task<DataTransferFormatDto> GetFormatAsync(CancellationToken cancellationToken);
 
-    /// <summary>呼び出し元が所有するストリームへエクスポート文書を逐次書き込みします。</summary>
-    /// <param name="destination">呼び出し元が所有する書き込み可能なストリーム。このメソッドでは破棄または閉じてはいけません。</param>
+    /// <summary>ストリームへエクスポート文書を逐次書き込み、正常に閉じた後で完了日時を記録します。</summary>
+    /// <param name="destination">所有権を移譲する書き込み可能なストリーム。このメソッドが破棄します。</param>
     /// <param name="appVersion">エクスポートヘッダーへ書き込むアプリケーションバージョン。</param>
     /// <param name="cancellationToken">非同期入出力を中止します。</param>
     Task ExportAsync(Stream destination, string appVersion, CancellationToken cancellationToken);

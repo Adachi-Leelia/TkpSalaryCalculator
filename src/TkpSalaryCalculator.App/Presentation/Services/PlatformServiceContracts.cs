@@ -3,6 +3,7 @@ namespace TkpSalaryCalculator.App.Presentation.Services;
 /// <summary>Android のファイル選択結果をストリームとして Presentation 層へ渡します。</summary>
 public interface IPlatformDocumentService
 {
+    /// <summary>選択した保存先のストリームを返します。呼び出し元が所有し、転送先へ所有権を渡します。</summary>
     Task<Stream?> CreateExportAsync(string suggestedFileName, CancellationToken cancellationToken);
 
     Task<Stream?> OpenImportAsync(CancellationToken cancellationToken);

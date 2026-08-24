@@ -555,8 +555,8 @@ public sealed class InfrastructureIntegrationTests
 
         await using var destination = await DatabaseFixture.CreateAsync();
         var destinationTransfer = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
-        stream.Position = 0;
-        var preview = await destinationTransfer.PrepareImportAsync(stream, default);
+        await using var input = new MemoryStream(stream.ToArray());
+        var preview = await destinationTransfer.PrepareImportAsync(input, default);
         Assert.Equal(1, preview.WorkRecordCount);
         Assert.Equal(2, preview.SettingMonthCount);
         await destinationTransfer.CommitImportAsync(preview.Id, default);
@@ -591,8 +591,8 @@ public sealed class InfrastructureIntegrationTests
 
         await using var destination = await DatabaseFixture.CreateAsync();
         var useCase = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
-        exported.Position = 0;
-        var preview = await useCase.PrepareImportAsync(exported, default);
+        await using var input = new MemoryStream(exported.ToArray());
+        var preview = await useCase.PrepareImportAsync(input, default);
         await useCase.CommitImportAsync(preview.Id, default);
 
         await using var imported = await destination.OpenRawAsync();
@@ -730,8 +730,8 @@ public sealed class InfrastructureIntegrationTests
             null, null, null);
         await liveRecords.UpsertAsync(existing, default);
         var useCase = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
-        exported.Position = 0;
-        var preview = await useCase.PrepareImportAsync(exported, default);
+        await using var input = new MemoryStream(exported.ToArray());
+        var preview = await useCase.PrepareImportAsync(input, default);
 
         var candidatePath = Path.Combine(destination.StagingPath,
             $"tkp-import-{preview.Id.Value:N}.candidate.db");

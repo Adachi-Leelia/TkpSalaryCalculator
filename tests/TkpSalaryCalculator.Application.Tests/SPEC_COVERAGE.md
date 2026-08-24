@@ -93,5 +93,6 @@ or orchestration coverage that complements the end-to-end specification case.
 | `DataTransfer_CancelledPrepareDeletesTemporaryData_AndNextPrepareCleansAbandoned` | DATA-006, DATA-012 |
 | `Export_StreamsRecordsAndOnlyUpdatesExportTimestamp` | DATA-001 |
 | `DataTransfer_FormatAndPublicArgumentValidation_AreStable` | DATA-004, DATA-008, APP-VALIDATION |
-| `Export_UsesFixedSnapshot_WritesNonSeekableStream_AndLeavesCallerStreamOpen` | DATA-001, DATA-008 |
+| `Export_UsesFixedSnapshot_WritesNonSeekableStream_AndClosesOwnedDestination` | DATA-001, DATA-008 |
+| `Export_DestinationCloseFailureDoesNotRecordSuccessfulExport` | DATA-001, FR-MSG-01 |
 | `Export_FailureAndCancellation_DisposeSnapshotWithoutUpdatingTimestamp` | DATA-001, DATA-008, APP-CANCEL |
