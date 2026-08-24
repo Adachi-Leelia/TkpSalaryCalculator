@@ -2,6 +2,7 @@ using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
+using TkpSalaryCalculator.Application.Errors;
 using TkpSalaryCalculator.Application.Ports;
 using TkpSalaryCalculator.Application.UseCases;
 using TkpSalaryCalculator.Domain.ValueObjects;
