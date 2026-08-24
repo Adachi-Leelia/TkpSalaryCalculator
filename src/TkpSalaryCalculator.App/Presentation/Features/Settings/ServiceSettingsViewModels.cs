@@ -16,7 +16,8 @@ public sealed record ServiceSettingRow(
     string TimeCategoryName,
     string StandardTimeText,
     string RateText,
-    string StatusText);
+    string StatusText,
+    bool CanAddTimeCategory);
 
 public sealed record ServicePresetRow(
     Guid EditorId,
@@ -49,7 +50,8 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         TrackDataChanges(context.SessionState, AppDataChangeKind.Settings);
-        AddCommand = new AsyncCommand(() => navigator.OpenServiceEditorAsync(null, default), PresentError);
+        AddServiceCommand = new AsyncCommand(
+            () => navigator.OpenServiceEditorAsync(ServiceSettingsEditorMode.AddService, null, default), PresentError);
     }
 
     public string MonthHeaderText => context.HeaderText;
@@ -60,7 +62,7 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
     public bool HasNoMonthlyRows => !HasMonthlyRows;
     public bool HasInputCandidates => InputCandidateRows.Count != 0;
     public bool HasNoInputCandidates => !HasInputCandidates;
-    public AsyncCommand AddCommand { get; }
+    public AsyncCommand AddServiceCommand { get; }
     public string? SuccessMessage { get => successMessage; private set { if (SetProperty(ref successMessage, value)) OnPropertyChanged(nameof(HasSuccessMessage)); } }
     public bool HasSuccessMessage => !string.IsNullOrWhiteSpace(SuccessMessage);
 
@@ -82,13 +84,20 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
     public Task OpenEditorAsync(ServiceSettingRow row)
     {
         ArgumentNullException.ThrowIfNull(row);
-        return navigator.OpenServiceEditorAsync(row.EditorId, default);
+        return navigator.OpenServiceEditorAsync(ServiceSettingsEditorMode.EditMonthlySetting, row.EditorId, default);
     }
 
     public Task OpenCandidateEditorAsync(ServicePresetRow row)
     {
         ArgumentNullException.ThrowIfNull(row);
-        return navigator.OpenServiceEditorAsync(row.EditorId, default);
+        return navigator.OpenServiceEditorAsync(ServiceSettingsEditorMode.EditInputCandidate, row.EditorId, default);
+    }
+
+    public Task AddTimeCategoryAsync(ServiceSettingRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        if (!row.CanAddTimeCategory) throw new ArgumentException("時間区分の追加先としてサービス種類を指定してください。", nameof(row));
+        return navigator.OpenServiceEditorAsync(ServiceSettingsEditorMode.AddTimeCategory, row.EditorId, default);
     }
 
     public void SetSuccessMessage(string? value) => SuccessMessage = value;
@@ -104,13 +113,13 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
             {
                 var serviceRate = snapshot.Rates.FirstOrDefault(value => value.ServiceId == service.Id && value.TimeCategoryId is null);
                 rows.Add(new(service.Id.Value, service.DisplayName, "任意時間", "サービス種類単位",
-                    RateText(serviceRate), service.IsEnabled ? "有効" : "この年月では無効"));
+                    RateText(serviceRate), service.IsEnabled ? "有効" : "この年月では無効", true));
             }
             if (categories.Length == 0)
             {
                 var rate = snapshot.Rates.FirstOrDefault(value => value.ServiceId == service.Id && value.TimeCategoryId is null);
                 rows.Add(new(service.Id.Value, service.DisplayName, "任意時間", "勤務時に入力",
-                    RateText(rate), service.IsEnabled ? "有効" : "この年月では無効"));
+                    RateText(rate), service.IsEnabled ? "有効" : "この年月では無効", true));
                 continue;
             }
             foreach (var category in categories)
@@ -119,7 +128,7 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
                     ?? snapshot.Rates.FirstOrDefault(value => value.ServiceId == service.Id && value.TimeCategoryId is null);
                 rows.Add(new(category.Id.Value, service.DisplayName, category.DisplayName,
                     formatter.Duration(category.StandardMinutes), RateText(rate),
-                    service.IsEnabled && category.IsEnabled ? "有効" : "この年月では無効"));
+                    service.IsEnabled && category.IsEnabled ? "有効" : "この年月では無効", false));
             }
         }
         return rows;
@@ -145,6 +154,7 @@ public sealed class ServiceSettingsViewModel : ViewModelBase
 public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewModel
 {
     private readonly IServicePresetUseCase presets;
+    private ServiceSettingsEditorMode mode = ServiceSettingsEditorMode.AddService;
     private Guid? editorId;
     private SnapshotService? sourceService;
     private SnapshotTimeCategory? sourceCategory;
@@ -152,8 +162,9 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
     private ServicePresetDto? sourcePreset;
     private string serviceName = string.Empty;
     private string categoryName = string.Empty;
-    private string standardMinutesText = "60";
-    private string displayOrderText = "0";
+    private string categoryStandardMinutesText = "60";
+    private string serviceDisplayOrderText = "0";
+    private string categoryDisplayOrderText = "0";
     private bool useTimeCategory = true;
     private bool serviceIsEnabled = true;
     private bool timeCategoryIsEnabled = true;
@@ -161,6 +172,7 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
     private string amountText = string.Empty;
     private bool saveInputCandidate = true;
     private string candidateName = string.Empty;
+    private string candidateDefaultMinutesText = "60";
     private string candidateOrderText = "0";
     private bool candidateEnabled = true;
 
@@ -177,13 +189,20 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
         SaveCommand = new AsyncCommand(SaveAsync, PresentError);
     }
 
-    public string PageTitle => editorId is null ? "サービス・単価を追加" : "サービス・単価を編集";
+    public string PageTitle => mode switch
+    {
+        ServiceSettingsEditorMode.AddService => "サービス種類を追加",
+        ServiceSettingsEditorMode.AddTimeCategory => "時間区分を追加",
+        ServiceSettingsEditorMode.EditInputCandidate => "入力候補を編集",
+        _ => "サービス・単価を編集",
+    };
     public IReadOnlyList<RateTypeOption> RateTypes => RateTypeOption.All;
     public AsyncCommand SaveCommand { get; }
     public string ServiceName { get => serviceName; set { if (SetProperty(ref serviceName, value)) Changed(); } }
     public string CategoryName { get => categoryName; set { if (SetProperty(ref categoryName, value)) Changed(); } }
-    public string StandardMinutesText { get => standardMinutesText; set { if (SetProperty(ref standardMinutesText, value)) Changed(); } }
-    public string DisplayOrderText { get => displayOrderText; set { if (SetProperty(ref displayOrderText, value)) Changed(); } }
+    public string CategoryStandardMinutesText { get => categoryStandardMinutesText; set { if (SetProperty(ref categoryStandardMinutesText, value)) Changed(); } }
+    public string ServiceDisplayOrderText { get => serviceDisplayOrderText; set { if (SetProperty(ref serviceDisplayOrderText, value)) Changed(); } }
+    public string CategoryDisplayOrderText { get => categoryDisplayOrderText; set { if (SetProperty(ref categoryDisplayOrderText, value)) Changed(); } }
     public bool UseTimeCategory
     {
         get => useTimeCategory;
@@ -194,7 +213,9 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
             OnPropertyChanged(nameof(ShowTimeCategoryFields));
         }
     }
-    public bool CanChooseTimeCategory => editorId is null;
+    public bool CanChooseTimeCategory => mode == ServiceSettingsEditorMode.AddService;
+    public bool IsServiceReadOnly => mode == ServiceSettingsEditorMode.AddTimeCategory;
+    public bool CanEditService => !IsServiceReadOnly;
     public bool ShowTimeCategoryFields => UseTimeCategory;
     public bool ServiceIsEnabled { get => serviceIsEnabled; set { if (SetProperty(ref serviceIsEnabled, value)) Changed(); } }
     public bool TimeCategoryIsEnabled { get => timeCategoryIsEnabled; set { if (SetProperty(ref timeCategoryIsEnabled, value)) Changed(); } }
@@ -202,10 +223,22 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
     public string AmountText { get => amountText; set { if (SetProperty(ref amountText, value)) Changed(); } }
     public bool SaveInputCandidate { get => saveInputCandidate; set { if (SetProperty(ref saveInputCandidate, value)) Changed(); } }
     public string CandidateName { get => candidateName; set { if (SetProperty(ref candidateName, value)) Changed(); } }
+    public string CandidateDefaultMinutesText { get => candidateDefaultMinutesText; set { if (SetProperty(ref candidateDefaultMinutesText, value)) Changed(); } }
     public string CandidateOrderText { get => candidateOrderText; set { if (SetProperty(ref candidateOrderText, value)) Changed(); } }
     public bool CandidateEnabled { get => candidateEnabled; set { if (SetProperty(ref candidateEnabled, value)) Changed(); } }
 
-    public void Initialize(Guid? id) { editorId = id; InvalidateTrackedLoad(); OnPropertyChanged(nameof(PageTitle)); }
+    public void Initialize(ServiceSettingsEditorMode editorMode, Guid? id)
+    {
+        if (editorMode != ServiceSettingsEditorMode.AddService && id is null)
+            throw new ArgumentException("編集対象IDが必要です。", nameof(id));
+        mode = editorMode;
+        editorId = id;
+        InvalidateTrackedLoad();
+        OnPropertyChanged(nameof(PageTitle));
+        OnPropertyChanged(nameof(CanChooseTimeCategory));
+        OnPropertyChanged(nameof(IsServiceReadOnly));
+        OnPropertyChanged(nameof(CanEditService));
+    }
 
     public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
     public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
@@ -213,31 +246,54 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
     private Task LoadCoreAsync(CancellationToken token) => LoadEditorAsync(async snapshot =>
     {
         var candidates = await presets.GetAllAsync(token);
-        sourcePreset = editorId is { } presetId ? candidates.FirstOrDefault(value => value.Id.Value == presetId) : null;
-        sourceCategory = sourcePreset?.TimeCategoryId is { } presetCategoryId
-            ? snapshot.TimeCategories.FirstOrDefault(value => value.Id == presetCategoryId)
-            : editorId is { } id ? snapshot.TimeCategories.FirstOrDefault(value => value.Id.Value == id) : null;
-        sourceService = sourcePreset is not null
-            ? snapshot.Services.FirstOrDefault(value => value.Id == sourcePreset.ServiceId)
-            : editorId is { } serviceOrCategoryId
-                ? snapshot.Services.FirstOrDefault(value => value.Id.Value == serviceOrCategoryId || value.Id == sourceCategory?.ServiceId)
-                : null;
+        sourcePreset = mode == ServiceSettingsEditorMode.EditInputCandidate && editorId is { } presetId
+            ? candidates.FirstOrDefault(value => value.Id.Value == presetId)
+            : null;
+        sourceCategory = mode switch
+        {
+            ServiceSettingsEditorMode.EditInputCandidate when sourcePreset?.TimeCategoryId is { } presetCategoryId =>
+                snapshot.TimeCategories.FirstOrDefault(value => value.Id == presetCategoryId),
+            ServiceSettingsEditorMode.EditMonthlySetting when editorId is { } id =>
+                snapshot.TimeCategories.FirstOrDefault(value => value.Id.Value == id),
+            _ => null,
+        };
+        if (mode == ServiceSettingsEditorMode.EditInputCandidate && sourcePreset is null)
+            throw new ApplicationErrorException("SERVICE_PRESET_NOT_FOUND", "編集対象の入力候補が見つかりません。設定一覧から開き直してください。");
+        if (mode == ServiceSettingsEditorMode.EditInputCandidate && sourcePreset?.TimeCategoryId is not null && sourceCategory is null)
+            throw new ApplicationErrorException("SERVICE_PRESET_UNAVAILABLE_FOR_MONTH",
+                "入力候補の時間区分は選択中の設定対象年月にありません。対象年月を変更してから開き直してください。");
+        sourceService = mode switch
+        {
+            ServiceSettingsEditorMode.EditInputCandidate when sourcePreset is not null =>
+                snapshot.Services.FirstOrDefault(value => value.Id == sourcePreset.ServiceId),
+            ServiceSettingsEditorMode.AddTimeCategory when editorId is { } serviceId =>
+                snapshot.Services.FirstOrDefault(value => value.Id.Value == serviceId),
+            ServiceSettingsEditorMode.EditMonthlySetting when editorId is { } serviceOrCategoryId =>
+                snapshot.Services.FirstOrDefault(value => value.Id.Value == serviceOrCategoryId || value.Id == sourceCategory?.ServiceId),
+            _ => null,
+        };
+        if (mode is ServiceSettingsEditorMode.AddTimeCategory or ServiceSettingsEditorMode.EditMonthlySetting or ServiceSettingsEditorMode.EditInputCandidate &&
+            sourceService is null)
+            throw new ApplicationErrorException("SERVICE_SETTING_NOT_FOUND", "編集対象のサービス設定が見つかりません。設定一覧から開き直してください。");
         sourceRate = sourceService is null ? null : snapshot.Rates.FirstOrDefault(value =>
-            value.ServiceId == sourceService.Id && value.TimeCategoryId == sourceCategory?.Id);
-        sourcePreset ??= sourceService is null ? null : candidates.FirstOrDefault(value =>
             value.ServiceId == sourceService.Id && value.TimeCategoryId == sourceCategory?.Id);
 
         serviceName = sourceService?.DisplayName ?? string.Empty;
         categoryName = sourceCategory?.DisplayName ?? string.Empty;
-        standardMinutesText = (sourceCategory?.StandardMinutes.Value ?? 60).ToString(CultureInfo.InvariantCulture);
-        displayOrderText = (sourceService?.DisplayOrder.Value ?? snapshot.Services.Count).ToString(CultureInfo.InvariantCulture);
-        useTimeCategory = sourceCategory is not null || editorId is null;
+        categoryStandardMinutesText = (sourceCategory?.StandardMinutes.Value ?? 60).ToString(CultureInfo.InvariantCulture);
+        serviceDisplayOrderText = (sourceService?.DisplayOrder.Value ?? snapshot.Services.Count).ToString(CultureInfo.InvariantCulture);
+        categoryDisplayOrderText = (sourceCategory?.DisplayOrder.Value ??
+            (sourceService is null ? 0 : snapshot.TimeCategories.Count(value => value.ServiceId == sourceService.Id)))
+            .ToString(CultureInfo.InvariantCulture);
+        useTimeCategory = mode is ServiceSettingsEditorMode.AddService or ServiceSettingsEditorMode.AddTimeCategory || sourceCategory is not null;
         serviceIsEnabled = sourceService?.IsEnabled ?? true;
         timeCategoryIsEnabled = sourceCategory?.IsEnabled ?? true;
         selectedRateType = RateTypeOption.All.Single(value => value.Value == (sourceRate?.RateType ?? RateType.Hourly));
         amountText = sourceRate?.Amount.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-        saveInputCandidate = sourcePreset is not null || editorId is null;
+        saveInputCandidate = sourcePreset is not null || mode is ServiceSettingsEditorMode.AddService or ServiceSettingsEditorMode.AddTimeCategory;
         candidateName = sourcePreset?.DisplayName ?? (sourceService?.DisplayName ?? string.Empty);
+        candidateDefaultMinutesText = (sourcePreset?.DefaultWorkMinutes.Value ?? sourceCategory?.StandardMinutes.Value ?? 60)
+            .ToString(CultureInfo.InvariantCulture);
         candidateOrderText = (sourcePreset?.DisplayOrder.Value ?? candidates.Count).ToString(CultureInfo.InvariantCulture);
         candidateEnabled = sourcePreset?.IsEnabled ?? true;
         NotifyAll();
@@ -245,6 +301,7 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
 
     public Task SaveAsync() => RunBusyAsync(async token =>
     {
+        ResetFirstInvalidField();
         var built = BuildReplacement();
         await ConfirmAndSaveAsync(
             built.Replacement,
@@ -261,18 +318,23 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
         var category = CategoryName?.Trim();
         if (!UseTimeCategory) category = "任意時間";
         if (string.IsNullOrWhiteSpace(category)) throw new ApplicationErrorException("CATEGORY_NAME_REQUIRED", "時間区分名を入力してください。", nameof(CategoryName));
-        var minutes = UseTimeCategory ? ParseMinutes(StandardMinutesText) : 60;
-        var order = ParseNonNegative(DisplayOrderText, nameof(DisplayOrderText), "表示順");
+        var categoryMinutes = UseTimeCategory
+            ? ParseMinutes(CategoryStandardMinutesText, nameof(CategoryStandardMinutesText), "時間区分の標準時間")
+            : 60;
+        var serviceOrder = ParseNonNegative(ServiceDisplayOrderText, nameof(ServiceDisplayOrderText), "サービス種類の表示順");
+        var categoryOrder = UseTimeCategory
+            ? ParseNonNegative(CategoryDisplayOrderText, nameof(CategoryDisplayOrderText), "時間区分の表示順")
+            : 0;
         if (!long.TryParse(AmountText?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var amount) || amount < 0)
             throw new ApplicationErrorException("RATE_AMOUNT_INVALID", "基本単価を0円以上の整数で入力してください。", nameof(AmountText));
 
         var serviceId = sourceService?.Id ?? new ServiceId(Guid.NewGuid());
         TimeCategoryId? categoryId = sourceCategory?.Id ?? (UseTimeCategory ? new TimeCategoryId(Guid.NewGuid()) : null);
         var services = Snapshot.Services.Where(value => value.Id != serviceId).ToList();
-        services.Add(new SnapshotService(serviceId, name, new DisplayOrder(order), ServiceIsEnabled));
+        services.Add(new SnapshotService(serviceId, name, new DisplayOrder(serviceOrder), ServiceIsEnabled));
         var categories = Snapshot.TimeCategories.Where(value => value.Id != categoryId).ToList();
         if (categoryId is { } id)
-            categories.Add(new SnapshotTimeCategory(id, serviceId, category!, new WorkMinutes(minutes), new DisplayOrder(order), TimeCategoryIsEnabled));
+            categories.Add(new SnapshotTimeCategory(id, serviceId, category!, new WorkMinutes(categoryMinutes), new DisplayOrder(categoryOrder), TimeCategoryIsEnabled));
         var rates = Snapshot.Rates.Where(value => !(value.ServiceId == serviceId && value.TimeCategoryId == categoryId)).ToList();
         rates.Add(new SnapshotRate(serviceId, categoryId, SelectedRateType.Value, new YenAmount(amount)));
         return (new SettingSnapshotReplacementDto(services, categories, rates, Snapshot.Premiums, Snapshot.CountBonuses), serviceId, categoryId);
@@ -288,15 +350,15 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
         if (string.IsNullOrWhiteSpace(name))
             throw new ApplicationErrorException("PRESET_NAME_REQUIRED", "入力候補名を入力してください。", nameof(CandidateName));
         var order = ParseNonNegative(CandidateOrderText, nameof(CandidateOrderText), "入力候補の表示順");
-        var minutes = ParseMinutes(StandardMinutesText);
+        var minutes = ParseMinutes(CandidateDefaultMinutesText, nameof(CandidateDefaultMinutesText), "入力候補の標準勤務時間");
         return new(new SaveServicePresetCommand(sourcePreset?.Id, name, built.ServiceId, built.CategoryId,
             new WorkMinutes(minutes), new DisplayOrder(order), CandidateEnabled), null);
     }
 
-    private static int ParseMinutes(string text)
+    private static int ParseMinutes(string text, string field, string label)
     {
         if (!int.TryParse(text?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var value) || value is < 1 or > 1440)
-            throw new ApplicationErrorException("STANDARD_MINUTES_INVALID", "標準勤務時間を1分から1,440分で入力してください。", nameof(StandardMinutesText));
+            throw new ApplicationErrorException("STANDARD_MINUTES_INVALID", $"{label}を1分から1,440分で入力してください。", field);
         return value;
     }
 
@@ -309,10 +371,11 @@ public sealed class ServiceSettingsEditorViewModel : MonthSettingsEditorViewMode
 
     private void NotifyAll()
     {
-        foreach (var name in new[] { nameof(ServiceName), nameof(CategoryName), nameof(StandardMinutesText), nameof(DisplayOrderText),
-                     nameof(UseTimeCategory), nameof(CanChooseTimeCategory), nameof(ShowTimeCategoryFields), nameof(ServiceIsEnabled), nameof(TimeCategoryIsEnabled),
+        foreach (var name in new[] { nameof(ServiceName), nameof(CategoryName), nameof(CategoryStandardMinutesText),
+                     nameof(ServiceDisplayOrderText), nameof(CategoryDisplayOrderText), nameof(UseTimeCategory), nameof(CanChooseTimeCategory),
+                     nameof(IsServiceReadOnly), nameof(CanEditService), nameof(ShowTimeCategoryFields), nameof(ServiceIsEnabled), nameof(TimeCategoryIsEnabled),
                      nameof(SelectedRateType), nameof(AmountText), nameof(SaveInputCandidate), nameof(CandidateName),
-                     nameof(CandidateOrderText), nameof(CandidateEnabled) })
+                     nameof(CandidateDefaultMinutesText), nameof(CandidateOrderText), nameof(CandidateEnabled) })
             OnPropertyChanged(name);
     }
 }

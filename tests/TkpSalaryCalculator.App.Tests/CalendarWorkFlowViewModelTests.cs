@@ -326,6 +326,7 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
         var previewCalls = fixture.Work.PreviewCalls;
 
         fixture.ViewModel.WorkMinutesText = "0";
@@ -338,10 +339,19 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
-    public async Task WORK001And002_PresetFillsStandardValuesAndArbitraryTimeOmitsCategory()
+    public async Task WORK001_WORK002_WORK011_NewRecordStartsBlankAndPresetFillsStandardValues()
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+
+        Assert.Null(fixture.ViewModel.SelectedPreset);
+        Assert.Null(fixture.ViewModel.SelectedService);
+        Assert.Null(fixture.ViewModel.SelectedTimeCategory);
+        Assert.Empty(fixture.ViewModel.WorkMinutesText);
+        Assert.False(fixture.ViewModel.CanSave);
+        Assert.Equal(0, fixture.Work.PreviewCalls);
+
+        fixture.SelectDefaultPreset();
 
         Assert.Equal(Preset, fixture.ViewModel.SelectedPreset?.Id);
         Assert.Equal(Service, fixture.ViewModel.SelectedService?.Id);
@@ -357,7 +367,7 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
-    public async Task WorkEditor_NewRecordFiltersUnavailableCandidatesAndSkipsUnavailableSuggestion()
+    public async Task WorkEditor_NewRecordFiltersUnavailableCandidatesWithoutSelectingFallback()
     {
         var disabledService = new ServiceId(Guid.Parse("10000000-0000-0000-0000-000000000002"));
         var disabledCategory = new TimeCategoryId(Guid.Parse("20000000-0000-0000-0000-000000000002"));
@@ -374,9 +384,6 @@ public sealed class CalendarWorkFlowViewModelTests
                 new SnapshotTimeCategory(Category, Service, "通常", new WorkMinutes(60), new DisplayOrder(0), true),
                 new SnapshotTimeCategory(disabledCategory, Service, "廃止区分", new WorkMinutes(30), new DisplayOrder(1), false),
             ],
-            suggestedValues: new SaveWorkRecordCommand(
-                null, TargetDate, disabledService, null, WorkInputMode.Duration, new WorkMinutes(60),
-                null, null, null, Guid.NewGuid()),
             presetCandidates:
             [
                 new ServicePresetCandidateDto(
@@ -389,12 +396,15 @@ public sealed class CalendarWorkFlowViewModelTests
 
         await fixture.ViewModel.LoadAsync();
 
-        Assert.Equal(Service, fixture.ViewModel.SelectedService?.Id);
+        Assert.Null(fixture.ViewModel.SelectedPreset);
+        Assert.Null(fixture.ViewModel.SelectedService);
+        Assert.Null(fixture.ViewModel.SelectedTimeCategory);
+        Assert.Empty(fixture.ViewModel.WorkMinutesText);
         Assert.DoesNotContain(fixture.ViewModel.Services, x => x.Id == disabledService);
         Assert.DoesNotContain(fixture.ViewModel.TimeCategories, x => x.Id == disabledCategory);
         Assert.DoesNotContain(fixture.ViewModel.PresetCandidates, x => x.Id == unavailablePreset);
         Assert.Contains("利用できない候補", fixture.ViewModel.UnavailableCandidatesText);
-        Assert.True(fixture.ViewModel.CanSave);
+        Assert.False(fixture.ViewModel.CanSave);
     }
 
     [Fact]
@@ -439,6 +449,8 @@ public sealed class CalendarWorkFlowViewModelTests
         var fixture = new EditorFixture();
         fixture.Work.PreviewFactory = command => UncalculatedPreview(command);
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        await fixture.ViewModel.PreviewAsync();
         var previewCalls = fixture.Work.PreviewCalls;
 
         Assert.True(fixture.ViewModel.CanSave);
@@ -459,6 +471,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var fixture = new EditorFixture();
         fixture.Work.SaveGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
         var workGeneration = fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords);
         var backupGeneration = fixture.Session.GetDataGeneration(AppDataChangeKind.BackupStatus);
 
@@ -488,6 +501,7 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
         fixture.ViewModel.SelectedInputMode = WorkInputModeOption.TimeRange;
         fixture.ViewModel.StartTime = new TimeSpan(23, 0, 0);
         fixture.ViewModel.EndTime = new TimeSpan(1, 0, 0);
@@ -533,6 +547,7 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
         fixture.ViewModel.WorkMinutesText = "75";
         fixture.Work.SaveException = new IOException("database internal path");
 
@@ -556,12 +571,17 @@ public sealed class CalendarWorkFlowViewModelTests
         ]);
 
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        await fixture.ViewModel.PreviewAsync();
 
         Assert.False(fixture.ViewModel.ShowStartTime);
         Assert.Null(fixture.Work.LastPreviewCommand?.StartTime);
 
         fixture.Holidays.Holidays[TargetDate] = "テスト祝日";
+        fixture.ViewModel.Initialize(TargetDate, null);
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        await fixture.ViewModel.PreviewAsync();
 
         Assert.True(fixture.ViewModel.ShowStartTime);
         Assert.NotNull(fixture.Work.LastPreviewCommand?.StartTime);
@@ -622,7 +642,6 @@ public sealed class CalendarWorkFlowViewModelTests
         IReadOnlyList<SnapshotPremium>? premiums = null,
         IReadOnlyList<SnapshotService>? services = null,
         IReadOnlyList<SnapshotTimeCategory>? timeCategories = null,
-        SaveWorkRecordCommand? suggestedValues = null,
         IReadOnlyList<ServicePresetCandidateDto>? presetCandidates = null)
     {
         var snapshot = new SettingSnapshot(
@@ -635,7 +654,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var preset = new ServicePresetDto(Preset, "訪問・通常", Service, Category, new WorkMinutes(60), new DisplayOrder(0), true);
         return new WorkInputOptionsDto(
             TargetDate, new MonthSettingsDto(new YearMonth(2026, 8), snapshot),
-            presetCandidates ?? [new ServicePresetCandidateDto(preset, true, 3, true, [])], suggestedValues);
+            presetCandidates ?? [new ServicePresetCandidateDto(preset, true, 3, true, [])]);
     }
 
     private sealed class EditorFixture
@@ -654,6 +673,9 @@ public sealed class CalendarWorkFlowViewModelTests
         public CalendarNavigatorStub Navigator { get; } = new();
         public AppSessionState Session { get; }
         public WorkEditorViewModel ViewModel { get; }
+
+        public void SelectDefaultPreset() =>
+            ViewModel.SelectedPreset = Assert.Single(ViewModel.PresetCandidates);
     }
 
     private sealed class SalaryQueryStub : ISalaryQueryUseCase

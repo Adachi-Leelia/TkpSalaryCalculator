@@ -3,10 +3,10 @@
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings" xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
     x:DataType="settings:CountBonusSettingsEditorViewModel" Title="{Binding PageTitle}">
-    <Grid RowDefinitions="*,Auto" SafeAreaEdges="All"><ScrollView><VerticalStackLayout Padding="20" Spacing="10">
+    <Grid RowDefinitions="*,Auto" SafeAreaEdges="All"><ScrollView x:Name="EditorScroll"><VerticalStackLayout Padding="20" Spacing="10">
         <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" /><Label FontAttributes="Bold" Text="{Binding MonthHeaderText}" />
-        <Label Text="表示名（必須）" /><Entry Text="{Binding DisplayName}" /><Label Text="1件当たり加算額（円、必須）" /><Entry Keyboard="Numeric" Text="{Binding AmountText}" />
-        <Label Style="{StaticResource SectionTitleStyle}" Text="対象サービス種類" /><HorizontalStackLayout><Switch IsToggled="{Binding AppliesToAllServices}" /><Label VerticalOptions="Center" Text="全サービス対象" /></HorizontalStackLayout><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding TargetExplanation}" />
+        <Label Text="表示名（必須）" /><Entry x:Name="DisplayNameEntry" Text="{Binding DisplayName}" /><Label Text="1件当たり加算額（円、必須）" /><Entry x:Name="AmountEntry" Keyboard="Numeric" Text="{Binding AmountText}" />
+        <Label Style="{StaticResource SectionTitleStyle}" Text="対象サービス種類" /><HorizontalStackLayout><Switch x:Name="AllServicesSwitch" IsToggled="{Binding AppliesToAllServices}" /><Label VerticalOptions="Center" Text="全サービス対象" /></HorizontalStackLayout><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding TargetExplanation}" />
         <VerticalStackLayout BindableLayout.ItemsSource="{Binding Services}" IsVisible="{Binding ShowServiceSelection}"><BindableLayout.ItemTemplate><DataTemplate x:DataType="settings:SelectableServiceViewModel"><HorizontalStackLayout><CheckBox IsChecked="{Binding IsSelected}" /><Label VerticalOptions="Center" Text="{Binding DisplayName}" /></HorizontalStackLayout></DataTemplate></BindableLayout.ItemTemplate></VerticalStackLayout>
         <HorizontalStackLayout><Switch IsToggled="{Binding IsEnabled}" /><Label VerticalOptions="Center" Text="この年月で有効" /></HorizontalStackLayout><Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
     </VerticalStackLayout></ScrollView><controls:FixedSaveBar Grid.Row="1" IsSaving="{Binding IsBusy}" SaveCommand="{Binding SaveCommand}" SaveText="影響を確認して保存" /></Grid>

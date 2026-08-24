@@ -178,6 +178,7 @@ public sealed class PremiumSettingsEditorViewModel : MonthSettingsEditorViewMode
 
     public Task SaveAsync() => RunBusyAsync(async token =>
     {
+        ResetFirstInvalidField();
         var replacement = BuildReplacement();
         await ConfirmAndSaveAsync(replacement, "割増の変更を確認",
             "割増の変更は選択中の設定対象年月だけに適用します。他の年月の給与設定は変更しません。",

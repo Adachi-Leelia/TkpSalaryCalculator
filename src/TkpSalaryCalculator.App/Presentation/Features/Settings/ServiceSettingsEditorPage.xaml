@@ -10,16 +10,17 @@
                 <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" />
                 <Label FontAttributes="Bold" Text="{Binding MonthHeaderText}" />
                 <Label Style="{StaticResource SectionTitleStyle}" Text="選択中年月の給与設定" />
-                <Label Text="サービス種類名（必須）" /><Entry x:Name="ServiceNameEntry" Text="{Binding ServiceName}" />
+                <Label Text="サービス種類名（必須）" /><Entry x:Name="ServiceNameEntry" IsReadOnly="{Binding IsServiceReadOnly}" Text="{Binding ServiceName}" />
                 <HorizontalStackLayout IsVisible="{Binding CanChooseTimeCategory}"><Switch IsToggled="{Binding UseTimeCategory}" /><Label VerticalOptions="Center" Text="時間区分を設定する" /></HorizontalStackLayout>
                 <VerticalStackLayout IsVisible="{Binding ShowTimeCategoryFields}" Spacing="8">
                     <Label Text="時間区分名（必須）" /><Entry x:Name="CategoryNameEntry" Text="{Binding CategoryName}" />
-                    <Label Text="標準勤務時間（分、必須）" /><Entry x:Name="StandardMinutesEntry" Keyboard="Numeric" Text="{Binding StandardMinutesText}" />
+                    <Label Text="時間区分の標準時間（分、必須）" /><Entry x:Name="CategoryStandardMinutesEntry" Keyboard="Numeric" Text="{Binding CategoryStandardMinutesText}" />
+                    <Label Text="時間区分の表示順" /><Entry x:Name="CategoryDisplayOrderEntry" Keyboard="Numeric" Text="{Binding CategoryDisplayOrderText}" />
                 </VerticalStackLayout>
-                <Label Text="表示順" /><Entry x:Name="DisplayOrderEntry" Keyboard="Numeric" Text="{Binding DisplayOrderText}" />
+                <Label Text="サービス種類の表示順" /><Entry x:Name="ServiceDisplayOrderEntry" IsReadOnly="{Binding IsServiceReadOnly}" Keyboard="Numeric" Text="{Binding ServiceDisplayOrderText}" />
                 <Label Text="単価方式" /><Picker ItemDisplayBinding="{Binding DisplayName}" ItemsSource="{Binding RateTypes}" SelectedItem="{Binding SelectedRateType}" />
                 <Label Text="基本単価（円、必須）" /><Entry x:Name="AmountEntry" Keyboard="Numeric" Text="{Binding AmountText}" />
-                <HorizontalStackLayout><Switch IsToggled="{Binding ServiceIsEnabled}" /><Label VerticalOptions="Center" Text="サービス種類をこの年月で有効にする" /></HorizontalStackLayout>
+                <HorizontalStackLayout><Switch IsEnabled="{Binding CanEditService}" IsToggled="{Binding ServiceIsEnabled}" /><Label VerticalOptions="Center" Text="サービス種類をこの年月で有効にする" /></HorizontalStackLayout>
                 <VerticalStackLayout IsVisible="{Binding ShowTimeCategoryFields}" Spacing="8">
                     <HorizontalStackLayout><Switch IsToggled="{Binding TimeCategoryIsEnabled}" /><Label VerticalOptions="Center" Text="時間区分をこの年月で有効にする" /></HorizontalStackLayout>
                 </VerticalStackLayout>
@@ -28,6 +29,7 @@
                 <HorizontalStackLayout><Switch IsToggled="{Binding SaveInputCandidate}" /><Label VerticalOptions="Center" Text="入力候補として登録" /></HorizontalStackLayout>
                 <VerticalStackLayout IsVisible="{Binding SaveInputCandidate}" Spacing="8">
                     <Label Text="入力候補名（必須）" /><Entry x:Name="CandidateNameEntry" Text="{Binding CandidateName}" />
+                    <Label Text="候補の標準勤務時間（分、必須）" /><Entry x:Name="CandidateDefaultMinutesEntry" Keyboard="Numeric" Text="{Binding CandidateDefaultMinutesText}" />
                     <Label Text="候補の表示順" /><Entry x:Name="CandidateOrderEntry" Keyboard="Numeric" Text="{Binding CandidateOrderText}" />
                     <HorizontalStackLayout><Switch IsToggled="{Binding CandidateEnabled}" /><Label VerticalOptions="Center" Text="候補として有効" /></HorizontalStackLayout>
                 </VerticalStackLayout>
