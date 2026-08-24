@@ -400,67 +400,75 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             await candidate.InitializeAsync(cancellationToken).ConfigureAwait(false);
             await using var source = await candidate.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await using var live = await liveDatabase.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-            await using (var replacement = live.BeginTransaction(deferred: false))
-            {
-                try
-                {
-                    await CreateLiveBackupAsync(live, replacement, cancellationToken).ConfigureAwait(false);
-                    await SqliteDatabase.ExecuteNonQueryAsync(live, replacement, "PRAGMA defer_foreign_keys = ON;",
-                        cancellationToken).ConfigureAwait(false);
-                    foreach (var table in DeleteOrder)
-                        await SqliteDatabase.ExecuteNonQueryAsync(live, replacement, $"DELETE FROM {table};",
-                            cancellationToken).ConfigureAwait(false);
-                    foreach (var table in InsertOrder)
-                        await CopyTableAsync(source, live, replacement, table, cancellationToken).ConfigureAwait(false);
-                    await CopyImportedMetadataAsync(source, live, replacement, importedAtUtc, cancellationToken)
-                        .ConfigureAwait(false);
-                    await replacement.CommitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch
-                {
-                    await RollbackBestEffortAsync(replacement).ConfigureAwait(false);
-                    throw;
-                }
-            }
-
+            var backupSuffix = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
             try
             {
-                // Once replacement is committed, ignore caller cancellation until the database is either
-                // bootstrapped successfully or restored to the pre-import snapshot.
-                await using var bootstrap = live.BeginTransaction(deferred: false);
+                await using (var replacement = live.BeginTransaction(deferred: false))
+                {
+                    try
+                    {
+                        await CreateLiveBackupAsync(live, replacement, backupSuffix, cancellationToken)
+                            .ConfigureAwait(false);
+                        await SqliteDatabase.ExecuteNonQueryAsync(live, replacement, "PRAGMA defer_foreign_keys = ON;",
+                            cancellationToken).ConfigureAwait(false);
+                        foreach (var table in DeleteOrder)
+                            await SqliteDatabase.ExecuteNonQueryAsync(live, replacement, $"DELETE FROM {table};",
+                                cancellationToken).ConfigureAwait(false);
+                        foreach (var table in InsertOrder)
+                            await CopyTableAsync(source, live, replacement, table, cancellationToken).ConfigureAwait(false);
+                        await CopyImportedMetadataAsync(source, live, replacement, importedAtUtc, cancellationToken)
+                            .ConfigureAwait(false);
+                        await replacement.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        await RollbackBestEffortAsync(replacement).ConfigureAwait(false);
+                        throw;
+                    }
+                }
+
                 try
                 {
-                    await SqliteDatabase.BootstrapVersionOneAsync(live, bootstrap, SqliteValue.Utc(importedAtUtc),
-                        CancellationToken.None).ConfigureAwait(false);
-                    await ValidateCandidateAsync(live, bootstrap, FormatVersion, CancellationToken.None)
-                        .ConfigureAwait(false);
-                    await bootstrap.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                    // Once replacement is committed, ignore caller cancellation until the database is either
+                    // bootstrapped successfully or restored to the pre-import snapshot.
+                    await using var bootstrap = live.BeginTransaction(deferred: false);
+                    try
+                    {
+                        await SqliteDatabase.BootstrapVersionOneAsync(live, bootstrap, SqliteValue.Utc(importedAtUtc),
+                            CancellationToken.None).ConfigureAwait(false);
+                        await ValidateCandidateAsync(live, bootstrap, FormatVersion, CancellationToken.None)
+                            .ConfigureAwait(false);
+                        await bootstrap.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        await RollbackBestEffortAsync(bootstrap).ConfigureAwait(false);
+                        throw;
+                    }
                 }
-                catch
+                catch (Exception bootstrapFailure)
                 {
-                    await RollbackBestEffortAsync(bootstrap).ConfigureAwait(false);
+                    try
+                    {
+                        await RestoreLiveBackupAsync(live, backupSuffix, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception restoreFailure)
+                    {
+                        throw new AggregateException(
+                            "Bundled bootstrap failed after import and the pre-import database could not be restored.",
+                            bootstrapFailure, restoreFailure);
+                    }
                     throw;
                 }
-            }
-            catch (Exception bootstrapFailure)
-            {
-                try
-                {
-                    await RestoreLiveBackupAsync(live, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception restoreFailure)
-                {
-                    throw new AggregateException(
-                        "Bundled bootstrap failed after import and the pre-import database could not be restored.",
-                        bootstrapFailure, restoreFailure);
-                }
-                throw;
-            }
 
-            active.TryUpdate(preparedImportId.Value, PreparedImportState.Consumed,
-                PreparedImportState.Consuming);
-            return true;
+                active.TryUpdate(preparedImportId.Value, PreparedImportState.Consumed,
+                    PreparedImportState.Consuming);
+                return true;
+            }
+            finally
+            {
+                await DropLiveBackupBestEffortAsync(live, backupSuffix).ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -471,20 +479,21 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     }
 
     private static async Task CreateLiveBackupAsync(SqliteConnection live, SqliteTransaction transaction,
-        CancellationToken cancellationToken)
+        string backupSuffix, CancellationToken cancellationToken)
     {
         foreach (var table in InsertOrder)
         {
             await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
-                $"CREATE TEMP TABLE import_backup_{table.Name} AS SELECT {string.Join(", ", table.Columns)} FROM {table.Name};",
+                $"CREATE TEMP TABLE {BackupTableName(backupSuffix, table.Name)} AS SELECT {string.Join(", ", table.Columns)} FROM {table.Name};",
                 cancellationToken).ConfigureAwait(false);
         }
         await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
-            $"CREATE TEMP TABLE import_backup_app_metadata AS SELECT {string.Join(", ", MetadataColumns)} FROM app_metadata;",
+            $"CREATE TEMP TABLE {BackupTableName(backupSuffix, "app_metadata")} AS SELECT {string.Join(", ", MetadataColumns)} FROM app_metadata;",
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task RestoreLiveBackupAsync(SqliteConnection live, CancellationToken cancellationToken)
+    private static async Task RestoreLiveBackupAsync(SqliteConnection live, string backupSuffix,
+        CancellationToken cancellationToken)
     {
         await using var transaction = live.BeginTransaction(deferred: false);
         try
@@ -500,12 +509,12 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             {
                 var columns = string.Join(", ", table.Columns);
                 await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
-                    $"INSERT INTO {table.Name}({columns}) SELECT {columns} FROM import_backup_{table.Name};",
+                    $"INSERT INTO {table.Name}({columns}) SELECT {columns} FROM {BackupTableName(backupSuffix, table.Name)};",
                     cancellationToken).ConfigureAwait(false);
             }
             var metadataColumns = string.Join(", ", MetadataColumns);
             await SqliteDatabase.ExecuteNonQueryAsync(live, transaction,
-                $"INSERT INTO app_metadata({metadataColumns}) SELECT {metadataColumns} FROM import_backup_app_metadata;",
+                $"INSERT INTO app_metadata({metadataColumns}) SELECT {metadataColumns} FROM {BackupTableName(backupSuffix, "app_metadata")};",
                 cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -515,6 +524,26 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             throw;
         }
     }
+
+    private static async Task DropLiveBackupBestEffortAsync(SqliteConnection live, string backupSuffix)
+    {
+        foreach (var tableName in InsertOrder.Select(table => table.Name).Append("app_metadata"))
+        {
+            try
+            {
+                await SqliteDatabase.ExecuteNonQueryAsync(live, null,
+                    $"DROP TABLE IF EXISTS {BackupTableName(backupSuffix, tableName)};", CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Unique names prevent a cleanup failure from blocking a later import on a pooled connection.
+            }
+        }
+    }
+
+    private static string BackupTableName(string backupSuffix, string tableName) =>
+        $"import_backup_{backupSuffix}_{tableName}";
 
     private static async Task RollbackBestEffortAsync(SqliteTransaction transaction)
     {

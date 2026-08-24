@@ -1,6 +1,5 @@
 using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
-using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
 using TkpSalaryCalculator.Application.Ports;
 using TkpSalaryCalculator.Application.UseCases;
@@ -20,16 +19,19 @@ public sealed class CalendarViewModel : ViewModelBase
     private readonly JapaneseDisplayFormatter formatter;
     private readonly IBasicShiftUseCase? basicShifts;
     private readonly IWorkRecordUseCase? workRecords;
-    private readonly IConfirmationDialogService? dialogs;
     private IReadOnlyList<CalendarDayCellViewModel> days = [];
     private IReadOnlyList<CalendarWorkSummaryRow> selectedWorkRows = [];
+    private IReadOnlyList<ShiftCandidateRowViewModel> shiftCandidates = [];
     private YearMonth displayedMonth;
     private DateOnly? selectedDate;
+    private DateOnly? shiftPreviewDate;
     private string selectedDateText = string.Empty;
     private string selectedTotalText = "0円";
     private string selectedRecordCountText = "勤務記録はありません";
     private string selectedUncalculatedText = string.Empty;
+    private string shiftExistingWorkText = string.Empty;
     private int selectedShiftCandidateCount;
+    private bool isShiftConfirmationVisible;
 
     public CalendarViewModel(
         ISalaryQueryUseCase salaryQuery,
@@ -40,8 +42,7 @@ public sealed class CalendarViewModel : ViewModelBase
         JapaneseDisplayFormatter formatter,
         IUserErrorPresenter errorPresenter,
         IBasicShiftUseCase? basicShifts = null,
-        IWorkRecordUseCase? workRecords = null,
-        IConfirmationDialogService? dialogs = null) : base(errorPresenter)
+        IWorkRecordUseCase? workRecords = null) : base(errorPresenter)
     {
         this.salaryQuery = salaryQuery ?? throw new ArgumentNullException(nameof(salaryQuery));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
@@ -51,7 +52,6 @@ public sealed class CalendarViewModel : ViewModelBase
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         this.basicShifts = basicShifts;
         this.workRecords = workRecords;
-        this.dialogs = dialogs;
         displayedMonth = sessionState.CalendarMonth;
         TrackDataChanges(sessionState,
             AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.BasicShifts);
@@ -63,7 +63,14 @@ public sealed class CalendarViewModel : ViewModelBase
         OpenDayCommand = new AsyncCommand(OpenSelectedDayAsync, PresentError, () => SelectedDate is not null);
         AddWorkCommand = new AsyncCommand(AddWorkAsync, PresentError, () => SelectedDate is not null);
         ConfirmShiftCandidatesCommand = new AsyncCommand(ConfirmShiftCandidatesAsync, PresentError,
-            () => SelectedDate is not null && HasShiftCandidates && basicShifts is not null && dialogs is not null);
+            () => SelectedDate is not null && HasShiftCandidates && basicShifts is not null);
+        ApplySelectedShiftsCommand = new AsyncCommand(ApplySelectedShiftsAsync, PresentError,
+            () => IsShiftConfirmationVisible && ShiftCandidates.Any(x => x.CanChoose && x.IsSelected));
+        CancelShiftConfirmationCommand = new AsyncCommand(() =>
+        {
+            CancelShiftConfirmation();
+            return Task.CompletedTask;
+        }, PresentError);
     }
 
     public IReadOnlyList<CalendarDayCellViewModel> Days
@@ -83,6 +90,32 @@ public sealed class CalendarViewModel : ViewModelBase
     }
 
     public bool HasSelectedWorkRows => SelectedWorkRows.Count != 0;
+
+    public IReadOnlyList<ShiftCandidateRowViewModel> ShiftCandidates
+    {
+        get => shiftCandidates;
+        private set
+        {
+            if (!SetProperty(ref shiftCandidates, value)) return;
+            ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    public bool IsShiftConfirmationVisible
+    {
+        get => isShiftConfirmationVisible;
+        private set
+        {
+            if (!SetProperty(ref isShiftConfirmationVisible, value)) return;
+            ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    public string ShiftExistingWorkText
+    {
+        get => shiftExistingWorkText;
+        private set => SetProperty(ref shiftExistingWorkText, value);
+    }
 
     public YearMonth DisplayedMonth
     {
@@ -161,6 +194,8 @@ public sealed class CalendarViewModel : ViewModelBase
     public AsyncCommand OpenDayCommand { get; }
     public AsyncCommand AddWorkCommand { get; }
     public AsyncCommand ConfirmShiftCandidatesCommand { get; }
+    public AsyncCommand ApplySelectedShiftsCommand { get; }
+    public AsyncCommand CancelShiftConfirmationCommand { get; }
 
     public Task LoadAsync() => LoadTrackedAsync(token => LoadMonthCoreAsync(sessionState.CalendarMonth, token), force: true);
 
@@ -187,15 +222,12 @@ public sealed class CalendarViewModel : ViewModelBase
         ? navigator.OpenWorkEditorAsync(date, null, CancellationToken.None)
         : Task.CompletedTask;
 
-    /// <summary>DLG-SHIFT-01 をカレンダーから直接開き、確認済みの候補だけを反映します。</summary>
+    /// <summary>DLG-SHIFT-01 をカレンダー上に開き、候補ごとの選択を保存せずに準備します。</summary>
     public Task ConfirmShiftCandidatesAsync() => RunBusyAsync(async cancellationToken =>
     {
-        if (SelectedDate is not { } date || basicShifts is null || dialogs is null) return;
+        if (SelectedDate is not { } date || basicShifts is null) return;
 
         var preview = await basicShifts.PreviewForDateAsync(date, cancellationToken);
-        var selected = preview.Candidates
-            .Where(x => x.CanApply && !x.HasSimilarManualRecord)
-            .ToArray();
         var serviceNames = new Dictionary<ServiceId, string>();
         var categoryNames = new Dictionary<TimeCategoryId, string>();
         if (workRecords is not null)
@@ -205,22 +237,52 @@ public sealed class CalendarViewModel : ViewModelBase
             categoryNames = monthSettings.Snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
         }
 
-        var message = BuildShiftPreviewMessage(preview, selected, serviceNames, categoryNames);
-        if (selected.Length == 0)
+        ShiftCandidates = preview.Candidates.Select(candidate =>
         {
-            await dialogs.ConfirmAsync("基本シフトを追加できません", message, "閉じる", "キャンセル", cancellationToken);
-            return;
-        }
+            var shift = candidate.Shift;
+            var service = serviceNames.GetValueOrDefault(shift.ServiceId, "現在の設定にないサービス");
+            var category = shift.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
+            var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
+            var time = shift.InputMode == WorkInputMode.TimeRange && shift.StartTime is { } start && shift.EndTime is { } end
+                ? $"{formatter.Time(start)}～{formatter.Time(end)} / {formatter.Duration(shift.WorkMinutes)}"
+                : formatter.Duration(shift.WorkMinutes);
+            var row = new ShiftCandidateRowViewModel(
+                shift.Id, name, time, candidate.CanApply,
+                candidate.CanApply && !candidate.HasSimilarManualRecord,
+                string.Join(Environment.NewLine, candidate.Issues.Select(x => x.Message)));
+            row.SelectionChanged += (_, _) => ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
+            return row;
+        }).ToArray();
+        ShiftExistingWorkText = preview.ExistingWorkRecordCount == 0
+            ? "既存の勤務記録はありません。"
+            : $"既存の勤務記録 {preview.ExistingWorkRecordCount}件";
+        shiftPreviewDate = preview.WorkDate;
+        IsShiftConfirmationVisible = true;
+    });
 
-        var confirmed = await dialogs.ConfirmAsync("基本シフトを反映", message, "確定して追加", "キャンセル", cancellationToken);
-        if (!confirmed) return;
+    public Task ApplySelectedShiftsAsync() => RunBusyAsync(async cancellationToken =>
+    {
+        if (basicShifts is null || shiftPreviewDate is not { } date || date != SelectedDate) return;
+        var selectedIds = ShiftCandidates
+            .Where(x => x.CanChoose && x.IsSelected)
+            .Select(x => x.Id)
+            .ToArray();
+        if (selectedIds.Length == 0) return;
 
-        await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(date, selected.Select(x => x.Shift.Id).ToArray()), cancellationToken);
+        await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(date, selectedIds), cancellationToken);
         sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
         var generation = CaptureTrackedDataGeneration();
+        CloseShiftConfirmation();
         await LoadMonthCoreAsync(DisplayedMonth, cancellationToken, date);
         AcceptDataGeneration(generation);
     });
+
+    public bool CancelShiftConfirmation()
+    {
+        if (!IsShiftConfirmationVisible) return false;
+        CloseShiftConfirmation();
+        return true;
+    }
 
     private async Task LoadMonthCoreAsync(
         YearMonth month,
@@ -256,6 +318,7 @@ public sealed class CalendarViewModel : ViewModelBase
         DailySalaryDto daily,
         IReadOnlyList<CalendarDayDto> monthValues)
     {
+        CloseShiftConfirmation();
         SelectedDate = date;
         sessionState.SelectedCalendarDate = date;
         SelectedDateText = formatter.Date(date);
@@ -299,33 +362,12 @@ public sealed class CalendarViewModel : ViewModelBase
         Days = result;
     }
 
-    private string BuildShiftPreviewMessage(
-        BasicShiftPreviewDto preview,
-        IReadOnlyList<BasicShiftCandidateDto> selected,
-        IReadOnlyDictionary<ServiceId, string> serviceNames,
-        IReadOnlyDictionary<TimeCategoryId, string> categoryNames)
+    private void CloseShiftConfirmation()
     {
-        var lines = new List<string>
-        {
-            $"対象日: {formatter.Date(preview.WorkDate)}",
-            $"追加する勤務記録: {selected.Count}件",
-            $"既存の勤務記録: {preview.ExistingWorkRecordCount}件",
-        };
-        lines.AddRange(preview.Candidates.Select(candidate =>
-        {
-            var shift = candidate.Shift;
-            var service = serviceNames.GetValueOrDefault(shift.ServiceId, "サービス");
-            var category = shift.TimeCategoryId is { } id ? categoryNames.GetValueOrDefault(id) : null;
-            var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
-            var time = shift.InputMode == WorkInputMode.TimeRange && shift.StartTime is { } start && shift.EndTime is { } end
-                ? $"{formatter.Time(start)}～{formatter.Time(end)}"
-                : formatter.Duration(shift.WorkMinutes);
-            var issues = candidate.Issues.Count == 0 ? string.Empty : $"（{string.Join("、", candidate.Issues.Select(x => x.Message))}）";
-            var included = selected.Any(x => x.Shift.Id == shift.Id) ? "追加予定" : "追加しません";
-            return $"・{name} / {time} — {included}{issues}";
-        }));
-        lines.Add("確定するまで給与には含まれません。");
-        return string.Join(Environment.NewLine, lines);
+        IsShiftConfirmationVisible = false;
+        ShiftCandidates = [];
+        ShiftExistingWorkText = string.Empty;
+        shiftPreviewDate = null;
     }
 }
 

@@ -78,13 +78,11 @@ public sealed record ServicePresetCandidateDto(
 /// <summary>1 日分の勤務入力を開くために必要な設定と順序付け済み候補をすべて保持します。</summary>
 /// <param name="WorkDate">選択された現地勤務日。</param>
 /// <param name="Settings">入力と計算に使用する有効な月設定。</param>
-/// <param name="PresetCandidates">アプリケーション層が利用可能な高頻度・直近使用プリセットを優先し、プレゼンテーション層での最終表示順に並べた候補。</param>
-/// <param name="SuggestedValues">直近で確定した値を選択日に合わせて調整した、編集可能な初期候補。利用できない場合があります。</param>
+/// <param name="PresetCandidates">利用者が設定した表示順で並べた入力候補。</param>
 public sealed record WorkInputOptionsDto(
     DateOnly WorkDate,
     MonthSettingsDto Settings,
-    IReadOnlyList<ServicePresetCandidateDto> PresetCandidates,
-    SaveWorkRecordCommand? SuggestedValues);
+    IReadOnlyList<ServicePresetCandidateDto> PresetCandidates);
 
 /// <summary>保存を伴わない検証、正規化、および給与プレビューを保持します。</summary>
 /// <param name="NormalizedWorkMinutes">正規化に成功した場合の、算出または検証済み勤務時間。</param>

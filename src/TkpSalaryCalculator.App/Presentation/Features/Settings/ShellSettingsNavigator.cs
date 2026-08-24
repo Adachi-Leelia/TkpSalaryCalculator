@@ -11,8 +11,15 @@ public sealed class ShellSettingsNavigator : ISettingsNavigator
     public Task OpenServicesAsync(CancellationToken cancellationToken) =>
         NavigateAsync(NavigationRoutes.ServiceSettings, null, cancellationToken);
 
-    public Task OpenServiceEditorAsync(Guid? serviceId, CancellationToken cancellationToken) =>
-        NavigateEditorAsync(NavigationRoutes.ServiceSettingsEditor, ServiceSettingsEditorPage.IdParameter, serviceId, cancellationToken);
+    public Task OpenServiceEditorAsync(ServiceSettingsEditorMode mode, Guid? id, CancellationToken cancellationToken)
+    {
+        var parameters = new ShellNavigationQueryParameters
+        {
+            [ServiceSettingsEditorPage.ModeParameter] = mode.ToString(),
+        };
+        if (id is { } value) parameters[ServiceSettingsEditorPage.IdParameter] = value.ToString("D");
+        return NavigateAsync(NavigationRoutes.ServiceSettingsEditor, parameters, cancellationToken);
+    }
 
     public Task OpenPremiumsAsync(CancellationToken cancellationToken) =>
         NavigateAsync(NavigationRoutes.PremiumSettings, null, cancellationToken);

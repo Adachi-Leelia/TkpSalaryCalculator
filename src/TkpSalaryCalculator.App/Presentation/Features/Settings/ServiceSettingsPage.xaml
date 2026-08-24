@@ -24,11 +24,11 @@
             <VerticalStackLayout BindableLayout.ItemsSource="{Binding MonthlyRows}" Spacing="8">
                 <BindableLayout.ItemTemplate><DataTemplate x:DataType="settings:ServiceSettingRow">
                     <Border Padding="12" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
-                        <VerticalStackLayout Spacing="4"><Label FontAttributes="Bold" Text="{Binding ServiceName}" /><Label Text="{Binding TimeCategoryName}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StandardTimeText}" /><Label Text="{Binding RateText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StatusText}" /><Button Clicked="OnEditClicked" CommandParameter="{Binding .}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" /></VerticalStackLayout>
+                        <VerticalStackLayout Spacing="4"><Label FontAttributes="Bold" Text="{Binding ServiceName}" /><Label Text="{Binding TimeCategoryName}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StandardTimeText}" /><Label Text="{Binding RateText}" /><Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StatusText}" /><Button Clicked="OnEditClicked" CommandParameter="{Binding .}" Style="{StaticResource SecondaryButtonStyle}" Text="編集" /><Button Clicked="OnAddTimeCategoryClicked" CommandParameter="{Binding .}" IsVisible="{Binding CanAddTimeCategory}" Style="{StaticResource SecondaryButtonStyle}" Text="このサービス種類に時間区分を追加" /></VerticalStackLayout>
                     </Border>
                 </DataTemplate></BindableLayout.ItemTemplate>
             </VerticalStackLayout>
-            <Button Command="{Binding AddCommand}" Text="サービス種類・時間区分を追加" />
+            <Button Command="{Binding AddServiceCommand}" Text="サービス種類を追加" />
             <Label IsVisible="{Binding HasSuccessMessage}" Text="{Binding SuccessMessage}" TextColor="{StaticResource Success}" />
             <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
         </VerticalStackLayout>

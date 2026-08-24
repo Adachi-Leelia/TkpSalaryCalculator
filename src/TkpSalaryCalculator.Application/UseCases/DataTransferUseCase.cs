@@ -38,14 +38,16 @@ public sealed class DataTransferUseCase(IJsonExportStream exportStream, IJsonImp
     {
         ArgumentNullException.ThrowIfNull(destination);
         if (!destination.CanWrite) throw new ArgumentException("書き込み可能な出力先を指定してください。", nameof(destination));
-        if (string.IsNullOrWhiteSpace(appVersion)) throw new ArgumentException("アプリバージョンを指定してください。", nameof(appVersion));
-        cancellationToken.ThrowIfCancellationRequested();
         var now = clock.UtcNow.ToUniversalTime();
-        await using (var session = await exportData.OpenReadSessionAsync(cancellationToken).ConfigureAwait(false))
+        await using (destination.ConfigureAwait(false))
         {
+            if (string.IsNullOrWhiteSpace(appVersion)) throw new ArgumentException("アプリバージョンを指定してください。", nameof(appVersion));
+            cancellationToken.ThrowIfCancellationRequested();
+            await using var session = await exportData.OpenReadSessionAsync(cancellationToken).ConfigureAwait(false);
             await exportStream.WriteAsync(destination,
-                new ExportDocumentHeader(FormatName, CurrentFormatVersion, now, appVersion.Trim()),
-                session.StreamAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+                    new ExportDocumentHeader(FormatName, CurrentFormatVersion, now, appVersion.Trim()),
+                    session.StreamAsync(cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
         }
         await transactions.ExecuteAsync(token => metadata.SetLastExportedAtUtcAsync(now, token), cancellationToken).ConfigureAwait(false);
     }

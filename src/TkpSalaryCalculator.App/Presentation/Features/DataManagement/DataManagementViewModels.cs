@@ -2,6 +2,7 @@ using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
 using TkpSalaryCalculator.Application.Contracts;
+using TkpSalaryCalculator.Application.Errors;
 using TkpSalaryCalculator.Application.Ports;
 using TkpSalaryCalculator.Application.UseCases;
 using TkpSalaryCalculator.Domain.ValueObjects;
@@ -84,7 +85,7 @@ public sealed class DataManagementViewModel : ViewModelBase
         if (!confirmed) return;
 
         var fileName = $"tkp-salary-{localDates.ToLocalDate(clock.UtcNow):yyyyMMdd}.tkpsalary";
-        await using var destination = await documents.CreateExportAsync(fileName, cancellationToken);
+        var destination = await documents.CreateExportAsync(fileName, cancellationToken);
         if (destination is null) return;
         await transfers.ExportAsync(destination, appInformation.DisplayVersion, cancellationToken);
         sessionState.NotifyDataChanged(AppDataChangeKind.BackupStatus);
@@ -114,11 +115,30 @@ public sealed class DataManagementViewModel : ViewModelBase
             await transfers.CommitImportAsync(preview.Id, cancellationToken);
             committed = true;
             ResetSession();
-            await rootNavigator.SetRootAsync(new AppRootNavigationRequest(AppRootKind.Main, null), cancellationToken);
-            await notifications.ShowAsync(
-                "インポート完了",
-                "データを置き換え、すべての画面を最新の内容で読み直しました。",
-                CancellationToken.None);
+            try
+            {
+                await rootNavigator.SetRootAsync(
+                    new AppRootNavigationRequest(AppRootKind.Main, null), CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                throw new ApplicationErrorException(
+                    "IMPORT_RELOAD_FAILED",
+                    "インポートは完了しましたが、画面を最新の状態へ更新できませんでした。アプリを再起動してください。",
+                    innerException: exception);
+            }
+
+            try
+            {
+                await notifications.ShowAsync(
+                    "インポート完了",
+                    "データを置き換え、すべての画面を最新の内容で読み直しました。",
+                    CancellationToken.None);
+            }
+            catch
+            {
+                // DB の置換と root 再構築は完了済みなので、通知失敗をインポート失敗として扱わない。
+            }
         }
         finally
         {

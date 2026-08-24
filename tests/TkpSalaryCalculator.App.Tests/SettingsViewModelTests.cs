@@ -122,6 +122,30 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task UI008_RepeatedValidationRequestsFocusForTheSameFirstInvalidFieldEachTime()
+    {
+        var settings = new MonthSettingsStub();
+        settings.Values[August] = Snapshot(1_200);
+        var viewModel = new CountBonusSettingsEditorViewModel(
+            Context(settings, new AppSessionState(new DateOnly(2026, 8, 22))), settings,
+            new DialogStub(), new JapaneseDisplayFormatter(), new SettingsNavigatorStub(), new UserErrorPresenter());
+        viewModel.Initialize(null);
+        await viewModel.LoadAsync();
+        var focusRequests = 0;
+        viewModel.PropertyChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.PropertyName == nameof(CountBonusSettingsEditorViewModel.FirstInvalidField) &&
+                viewModel.FirstInvalidField == nameof(CountBonusSettingsEditorViewModel.DisplayName))
+                focusRequests++;
+        };
+
+        await viewModel.SaveAsync();
+        await viewModel.SaveAsync();
+
+        Assert.Equal(2, focusRequests);
+    }
+
+    [Fact]
     public async Task UX006_ServiceListSeparatesGlobalCandidatesFromSelectedMonthSettings()
     {
         var settings = new MonthSettingsStub();
@@ -153,7 +177,7 @@ public sealed class SettingsViewModelTests
         var viewModel = new ServiceSettingsEditorViewModel(Context(settings, new AppSessionState(new DateOnly(2026, 8, 22))),
             settings, new PresetStub(), new DialogStub { Result = true }, new JapaneseDisplayFormatter(),
             new SettingsNavigatorStub(), new UserErrorPresenter());
-        viewModel.Initialize(null);
+        viewModel.Initialize(ServiceSettingsEditorMode.AddService, null);
         await viewModel.LoadAsync();
         viewModel.UseTimeCategory = false;
         viewModel.ServiceName = "任意時間サービス";
@@ -175,7 +199,7 @@ public sealed class SettingsViewModelTests
         var viewModel = new ServiceSettingsEditorViewModel(Context(settings, new AppSessionState(new DateOnly(2026, 8, 22))),
             settings, new PresetStub(), new DialogStub { Result = true }, new JapaneseDisplayFormatter(),
             new SettingsNavigatorStub(), new UserErrorPresenter());
-        viewModel.Initialize(Category.Value);
+        viewModel.Initialize(ServiceSettingsEditorMode.EditMonthlySetting, Category.Value);
         await viewModel.LoadAsync();
         viewModel.TimeCategoryIsEnabled = false;
 
@@ -183,6 +207,61 @@ public sealed class SettingsViewModelTests
 
         Assert.True(Assert.Single(settings.LastReplacement!.Services).IsEnabled);
         Assert.False(Assert.Single(settings.LastReplacement.TimeCategories).IsEnabled);
+    }
+
+    [Fact]
+    public async Task ServiceEditor_AddsTimeCategoryToExistingServiceWithoutCreatingAnotherService()
+    {
+        var settings = new MonthSettingsStub();
+        settings.Values[August] = Snapshot(1_200);
+        var viewModel = new ServiceSettingsEditorViewModel(Context(settings, new AppSessionState(new DateOnly(2026, 8, 22))),
+            settings, new PresetStub(), new DialogStub { Result = true }, new JapaneseDisplayFormatter(),
+            new SettingsNavigatorStub(), new UserErrorPresenter());
+        viewModel.Initialize(ServiceSettingsEditorMode.AddTimeCategory, Service.Value);
+        await viewModel.LoadAsync();
+        viewModel.CategoryName = "身体2";
+        viewModel.CategoryStandardMinutesText = "60";
+        viewModel.CategoryDisplayOrderText = "1";
+        viewModel.AmountText = "1800";
+        viewModel.SaveInputCandidate = false;
+
+        await viewModel.SaveAsync();
+
+        var replacement = Assert.IsType<SettingSnapshotReplacementDto>(settings.LastReplacement);
+        Assert.Equal(Service, Assert.Single(replacement.Services).Id);
+        Assert.Equal(2, replacement.TimeCategories.Count);
+        var added = Assert.Single(replacement.TimeCategories, value => value.Id != Category);
+        Assert.Equal(Service, added.ServiceId);
+        Assert.Equal("身体2", added.DisplayName);
+        Assert.Equal(60, added.StandardMinutes.Value);
+        Assert.Equal(1, added.DisplayOrder.Value);
+    }
+
+    [Fact]
+    public async Task ServiceEditor_PreservesInputCandidateDefaultMinutesIndependentFromCategoryStandardTime()
+    {
+        var presetId = new ServicePresetId(Guid.NewGuid());
+        var settings = new MonthSettingsStub();
+        settings.Values[August] = Snapshot(1_200);
+        var presets = new PresetStub
+        {
+            Values = [new ServicePresetDto(presetId, "45分候補", Service, Category,
+                new WorkMinutes(45), new DisplayOrder(0), true)],
+        };
+        var viewModel = new ServiceSettingsEditorViewModel(Context(settings, new AppSessionState(new DateOnly(2026, 8, 22))),
+            settings, presets, new DialogStub { Result = true }, new JapaneseDisplayFormatter(),
+            new SettingsNavigatorStub(), new UserErrorPresenter());
+        viewModel.Initialize(ServiceSettingsEditorMode.EditInputCandidate, presetId.Value);
+
+        await viewModel.LoadAsync();
+
+        Assert.Equal("30", viewModel.CategoryStandardMinutesText);
+        Assert.Equal("45", viewModel.CandidateDefaultMinutesText);
+        viewModel.CandidateName = "更新した候補";
+        await viewModel.SaveAsync();
+
+        Assert.Equal(30, Assert.Single(settings.LastReplacement!.TimeCategories).StandardMinutes.Value);
+        Assert.Equal(45, settings.LastPresetChange!.Save!.DefaultWorkMinutes.Value);
     }
 
     [Fact]
@@ -224,6 +303,23 @@ public sealed class SettingsViewModelTests
         Assert.Contains("給与算定終了日: 2026年8月15日", dialogs.LastMessage);
         Assert.Contains("それより前の給与期間は変更しません", dialogs.LastMessage);
         Assert.Equal(15, periodSettings.LastCommand!.ClosingDay);
+    }
+
+    [Fact]
+    public async Task PayrollPeriodEditor_MovesEffectivePeriodWithoutChangingSettingsTargetMonth()
+    {
+        var monthSettings = new MonthSettingsStub();
+        monthSettings.Values[August] = Snapshot(1_200);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var viewModel = new PayrollPeriodSettingsViewModel(Context(monthSettings, session), new PeriodSettingsStub(),
+            new DialogStub { Result = true }, new JapaneseDisplayFormatter(), new SettingsNavigatorStub(),
+            new UserErrorPresenter());
+        await viewModel.LoadAsync();
+
+        await viewModel.MoveMonthAsync(1);
+
+        Assert.Equal(August, session.SettingsMonth);
+        Assert.Equal("適用開始給与期間年月: 2026年9月", viewModel.EffectiveMonthText);
     }
 
     [Fact]
@@ -279,11 +375,14 @@ public sealed class SettingsViewModelTests
     {
         var key = new PayrollPeriodKey(August);
         var periodSettings = new PeriodSettingsStub();
+        periodSettings.AllowancePeriods[key] = new MonthlyAllowancePeriodDto(
+            new PayrollPeriod(key, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)), []);
         var navigator = new SettingsNavigatorStub();
         var session = new AppSessionState(new DateOnly(2026, 8, 22));
         var generationBefore = session.GetDataGeneration(AppDataChangeKind.MonthlyAllowances);
         var viewModel = new MonthlyAllowanceEditorViewModel(periodSettings, navigator,
-            new UserErrorPresenter(), new DialogStub(), session);
+            new UserErrorPresenter(), new IssuePresenter(), new DialogStub(), session,
+            new JapaneseDisplayFormatter());
         viewModel.Initialize(key, null);
         await viewModel.LoadAsync();
         viewModel.DisplayName = "資格手当";
@@ -293,9 +392,36 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal("資格手当", periodSettings.LastAllowanceCommand!.DisplayName);
         Assert.Equal(5_000, periodSettings.LastAllowanceCommand.Amount.Value);
+        Assert.Equal("対象給与期間: 2026年8月分（2026年7月21日～2026年8月20日）", viewModel.PeriodText);
         Assert.Equal("月額手当を保存しました。", navigator.SuccessMessage);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.MonthlyAllowances) > generationBefore);
         Assert.False(viewModel.IsDirty);
+    }
+
+    [Fact]
+    public async Task UI008_MonthlyAllowanceEditorShowsAndClearsFirstFieldError()
+    {
+        var key = new PayrollPeriodKey(August);
+        var periodSettings = new PeriodSettingsStub();
+        periodSettings.AllowancePeriods[key] = new MonthlyAllowancePeriodDto(
+            new PayrollPeriod(key, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)), []);
+        var viewModel = new MonthlyAllowanceEditorViewModel(
+            periodSettings, new SettingsNavigatorStub(), new UserErrorPresenter(), new IssuePresenter(),
+            new DialogStub(), new AppSessionState(new DateOnly(2026, 8, 22)), new JapaneseDisplayFormatter());
+        viewModel.Initialize(key, null);
+        await viewModel.LoadAsync();
+        viewModel.DisplayName = "資格手当";
+        viewModel.AmountText = "-1";
+
+        await viewModel.SaveAsync();
+
+        Assert.Equal("Amount", viewModel.FirstInvalidField);
+        Assert.Equal("金額は0円以上の整数で入力してください。", viewModel.AmountError);
+        Assert.Null(periodSettings.LastAllowanceCommand);
+
+        viewModel.AmountText = "5000";
+        Assert.Null(viewModel.FirstInvalidField);
+        Assert.Empty(viewModel.AmountError);
     }
 
     [Fact]
@@ -319,6 +445,75 @@ public sealed class SettingsViewModelTests
         Assert.Equal(0, work.InputOptionsCalls);
     }
 
+    [Fact]
+    public async Task BasicShiftDelete_NotifiesShiftAndBackupGenerations()
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var viewModel = new BasicShiftViewModel(
+            shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new DialogStub { Result = true }, new FixedClock(),
+            new FixedLocalDate(), new JapaneseDisplayFormatter(), new UserErrorPresenter(), session);
+        await viewModel.LoadAsync();
+        var shiftGeneration = session.GetDataGeneration(AppDataChangeKind.BasicShifts);
+        var backupGeneration = session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+
+        await Assert.Single(Assert.Single(viewModel.Groups, group => group.HasRows).Rows).Delete();
+
+        Assert.Equal(shift.Id, shifts.DeletedId);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BasicShifts) > shiftGeneration);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupGeneration);
+    }
+
+    [Fact]
+    public async Task BasicShiftSave_NotifiesShiftAndBackupGenerations()
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var session = new AppSessionState(new DateOnly(2026, 8, 22));
+        var viewModel = new BasicShiftEditorViewModel(
+            shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new FixedClock(), new FixedLocalDate(), new UserErrorPresenter(),
+            new IssuePresenter(), new DialogStub { Result = true }, session);
+        viewModel.Initialize(null);
+        await viewModel.LoadAsync();
+        var shiftGeneration = session.GetDataGeneration(AppDataChangeKind.BasicShifts);
+        var backupGeneration = session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+
+        await viewModel.SaveAsync();
+
+        Assert.NotNull(shifts.SavedCommand);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BasicShifts) > shiftGeneration);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupGeneration);
+    }
+
+    [Fact]
+    public async Task UI008_BasicShiftEditorIdentifiesDisplayOrderAsFirstInvalidField()
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var viewModel = new BasicShiftEditorViewModel(
+            shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new FixedClock(), new FixedLocalDate(), new UserErrorPresenter(),
+            new IssuePresenter(), new DialogStub(), new AppSessionState(new DateOnly(2026, 8, 22)));
+        viewModel.Initialize(null);
+        await viewModel.LoadAsync();
+        viewModel.DisplayOrderText = "-1";
+
+        await viewModel.SaveAsync();
+
+        Assert.Equal("DisplayOrder", viewModel.FirstInvalidField);
+        Assert.Equal("表示順は0以上の整数で入力してください。", viewModel.DisplayOrderError);
+        Assert.Null(shifts.SavedCommand);
+    }
+
     private static SettingsMonthContext Context(MonthSettingsStub settings, IAppSessionState session) =>
         new(settings, session, new JapaneseDisplayFormatter());
 
@@ -336,6 +531,7 @@ public sealed class SettingsViewModelTests
         public List<string>? SharedEvents { get; init; }
         public int CopyCalls { get; private set; }
         public SettingSnapshotReplacementDto? LastReplacement { get; private set; }
+        public ServicePresetChangeCommand? LastPresetChange { get; private set; }
 
         public Task<MonthSettingsDto> GetAsync(YearMonth yearMonth, CancellationToken cancellationToken)
         {
@@ -368,6 +564,7 @@ public sealed class SettingsViewModelTests
             ServicePresetChangeCommand presetChange, CancellationToken cancellationToken)
         {
             SharedEvents?.Add("replace-with-preset");
+            LastPresetChange = presetChange;
             return CloneAndReplaceAsync(yearMonth, replacement, confirmationToken, cancellationToken);
         }
 
@@ -399,13 +596,26 @@ public sealed class SettingsViewModelTests
 
     private sealed class BasicShiftStub(BasicShiftDto shift) : IBasicShiftUseCase
     {
+        public SaveBasicShiftCommand? SavedCommand { get; private set; }
+        public BasicShiftId? DeletedId { get; private set; }
+
         public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(
             DayOfWeek weekday, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<BasicShiftDto>>(weekday == shift.Weekday ? [shift] : []);
-        public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
-        public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken)
+        {
+            SavedCommand = command;
+            return Task.FromResult(new BasicShiftDto(
+                command.Id ?? new BasicShiftId(Guid.NewGuid()), command.Weekday, command.ServicePresetId,
+                command.ServiceId, command.TimeCategoryId, command.InputMode,
+                command.WorkMinutes ?? shift.WorkMinutes, command.StartTime, command.EndTime,
+                command.DisplayOrder, command.IsEnabled));
+        }
+        public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken)
+        {
+            DeletedId = id;
+            return Task.CompletedTask;
+        }
         public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(
@@ -513,7 +723,7 @@ public sealed class SettingsViewModelTests
         public string? SuccessMessage { get; private set; }
         public Task GoBackAsync(string? successMessage, CancellationToken cancellationToken) { SuccessMessage = successMessage; return Task.CompletedTask; }
         public Task OpenServicesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task OpenServiceEditorAsync(Guid? serviceId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenServiceEditorAsync(ServiceSettingsEditorMode mode, Guid? id, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenPremiumsAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenPremiumEditorAsync(Guid? premiumId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenCountBonusesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

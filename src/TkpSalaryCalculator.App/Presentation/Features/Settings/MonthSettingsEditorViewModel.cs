@@ -83,6 +83,8 @@ public abstract class MonthSettingsEditorViewModel : EditableViewModelBase
 
     protected void Changed() => MarkDirty();
 
+    protected void ResetFirstInvalidField() => FirstInvalidField = null;
+
     protected override void OnErrorPresented(Exception exception)
     {
         FirstInvalidField = exception is ApplicationErrorException applicationError

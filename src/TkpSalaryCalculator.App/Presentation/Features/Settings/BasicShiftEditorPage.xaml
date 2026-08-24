@@ -4,15 +4,18 @@
     xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings" xmlns:calendar="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Calendar"
     xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
     x:DataType="settings:BasicShiftEditorViewModel" Title="{Binding PageTitle}">
-    <Grid RowDefinitions="*,Auto"><ScrollView><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="10">
+    <Grid RowDefinitions="*,Auto"><ScrollView x:Name="EditorScroll"><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="10">
         <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" />
         <Label Text="曜日" /><Picker ItemsSource="{Binding Weekdays}" ItemDisplayBinding="{Binding DisplayName}" SelectedItem="{Binding SelectedWeekday}" />
-        <Label Text="サービス" /><Picker ItemsSource="{Binding Services}" ItemDisplayBinding="{Binding PickerText}" SelectedItem="{Binding SelectedService}" />
-        <Label Text="時間区分" /><Picker ItemsSource="{Binding TimeCategories}" ItemDisplayBinding="{Binding PickerText}" SelectedItem="{Binding SelectedTimeCategory}" />
+        <Label Text="サービス" /><Picker x:Name="ServicePicker" ItemsSource="{Binding Services}" ItemDisplayBinding="{Binding PickerText}" SelectedItem="{Binding SelectedService}" />
+        <Label Text="{Binding ServiceError}" TextColor="{StaticResource Error}" />
+        <Label Text="時間区分" /><Picker x:Name="TimeCategoryPicker" ItemsSource="{Binding TimeCategories}" ItemDisplayBinding="{Binding PickerText}" SelectedItem="{Binding SelectedTimeCategory}" />
+        <Label Text="{Binding TimeCategoryError}" TextColor="{StaticResource Error}" />
         <Label Text="入力方式" /><Picker ItemsSource="{Binding InputModes}" ItemDisplayBinding="{Binding DisplayName}" SelectedItem="{Binding SelectedInputMode}" />
-        <VerticalStackLayout IsVisible="{Binding ShowDuration}" Spacing="6"><Label Text="勤務時間（分）" /><Entry Keyboard="Numeric" Text="{Binding WorkMinutesText}" /><VerticalStackLayout IsVisible="{Binding ShowStartTime}" Spacing="6"><Label Text="開始時刻（時刻条件付き割増がある場合）" /><TimePicker Time="{Binding StartTime}" /></VerticalStackLayout></VerticalStackLayout>
-        <Grid IsVisible="{Binding ShowTimeRange}" ColumnDefinitions="*,*" ColumnSpacing="10"><VerticalStackLayout><Label Text="開始時刻" /><TimePicker Time="{Binding StartTime}" /></VerticalStackLayout><VerticalStackLayout Grid.Column="1"><Label Text="終了時刻" /><TimePicker Time="{Binding EndTime}" /></VerticalStackLayout></Grid>
-        <Label Text="同じ曜日内の表示順" /><Entry Keyboard="Numeric" Text="{Binding DisplayOrderText}" />
+        <VerticalStackLayout IsVisible="{Binding ShowDuration}" Spacing="6"><Label Text="勤務時間（分）" /><Entry x:Name="WorkMinutesEntry" Keyboard="Numeric" Text="{Binding WorkMinutesText}" /><Label Text="{Binding WorkMinutesError}" TextColor="{StaticResource Error}" /><VerticalStackLayout IsVisible="{Binding ShowStartTime}" Spacing="6"><Label Text="開始時刻（時刻条件付き割増がある場合）" /><TimePicker x:Name="DurationStartTimePicker" Time="{Binding StartTime}" /><Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" /></VerticalStackLayout></VerticalStackLayout>
+        <Grid IsVisible="{Binding ShowTimeRange}" ColumnDefinitions="*,*" ColumnSpacing="10"><VerticalStackLayout><Label Text="開始時刻" /><TimePicker x:Name="TimeRangeStartTimePicker" Time="{Binding StartTime}" /><Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" /></VerticalStackLayout><VerticalStackLayout Grid.Column="1"><Label Text="終了時刻" /><TimePicker x:Name="EndTimePicker" Time="{Binding EndTime}" /><Label Text="{Binding EndTimeError}" TextColor="{StaticResource Error}" /></VerticalStackLayout></Grid>
+        <Label Text="同じ曜日内の表示順" /><Entry x:Name="DisplayOrderEntry" Keyboard="Numeric" Text="{Binding DisplayOrderText}" />
+        <Label Text="{Binding DisplayOrderError}" TextColor="{StaticResource Error}" />
         <HorizontalStackLayout Spacing="10"><Switch IsToggled="{Binding IsEnabled}" /><Label VerticalOptions="Center" Text="反映候補として使用する" /></HorizontalStackLayout>
         <Label Style="{StaticResource SupportingTextStyle}" Text="保存後にシフトを変更しても、すでに反映した勤務記録は変わりません。" /><Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
     </VerticalStackLayout></ScrollView>

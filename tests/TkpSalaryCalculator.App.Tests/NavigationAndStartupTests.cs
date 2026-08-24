@@ -95,6 +95,7 @@ public sealed class NavigationAndStartupTests
         var navigator = new RootNavigatorStub(log);
         var coordinator = new AppStartupCoordinator(
             new DatabaseInitializerStub(log),
+            new ImportStagingStub(log),
             new InitialSetupStub(log, new InitialSetupStateDto(status, step, [])),
             payroll,
             new ClockStub(new DateTimeOffset(2026, 8, 21, 1, 0, 0, TimeSpan.Zero)),
@@ -104,7 +105,7 @@ public sealed class NavigationAndStartupTests
 
         await coordinator.StartAsync(default);
 
-        Assert.Equal(["database", "initial-setup", "navigate"], log);
+        Assert.Equal(["database", "import-cleanup", "initial-setup", "navigate"], log);
         Assert.Equal(AppRootKind.InitialSetup, navigator.Request!.RootKind);
         Assert.Equal(step, navigator.Request.SetupStep);
         Assert.Equal(0, payroll.CallCount);
@@ -120,6 +121,7 @@ public sealed class NavigationAndStartupTests
         var navigator = new RootNavigatorStub(log);
         var coordinator = new AppStartupCoordinator(
             new DatabaseInitializerStub(log),
+            new ImportStagingStub(log),
             new InitialSetupStub(log, new InitialSetupStateDto(InitialSetupStatus.Completed, null, [])),
             payroll,
             new ClockStub(new DateTimeOffset(2026, 8, 20, 16, 0, 0, TimeSpan.Zero)),
@@ -129,7 +131,7 @@ public sealed class NavigationAndStartupTests
 
         await coordinator.StartAsync(default);
 
-        Assert.Equal(["database", "initial-setup", "payroll-period", "navigate"], log);
+        Assert.Equal(["database", "import-cleanup", "initial-setup", "payroll-period", "navigate"], log);
         Assert.Equal(new DateOnly(2026, 8, 21), payroll.RequestedDate);
         Assert.Equal(new PayrollPeriodKey(new YearMonth(2026, 9)), state.PayrollPeriod);
         Assert.Equal(AppRootKind.Main, navigator.Request!.RootKind);
@@ -150,6 +152,7 @@ public sealed class NavigationAndStartupTests
         var payroll = new PayrollPeriodStub(log, PeriodForAugustTwentyFirst());
         var coordinator = new AppStartupCoordinator(
             new DatabaseInitializerStub(log),
+            new ImportStagingStub(log),
             new InitialSetupStub(log, new InitialSetupStateDto(InitialSetupStatus.Completed, null, [])),
             payroll,
             new ClockStub(DateTimeOffset.UnixEpoch),
@@ -180,6 +183,30 @@ public sealed class NavigationAndStartupTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             log.Add("database");
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ImportStagingStub(List<string> log) : IImportStagingRepository
+    {
+        public Task<PreparedImportId> CreateAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task AppendBatchAsync(PreparedImportId preparedImportId, IReadOnlyList<DataTransferRecord> records,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ImportPreviewDto> ValidateAsync(PreparedImportId preparedImportId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId,
+            DateTimeOffset importedAtUtc, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task DiscardAbandonedAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            log.Add("import-cleanup");
             return Task.CompletedTask;
         }
     }

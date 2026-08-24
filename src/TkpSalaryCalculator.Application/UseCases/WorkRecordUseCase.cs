@@ -94,17 +94,10 @@ public sealed class WorkRecordUseCase(
                 p, p.IsEnabled && issues.Count == 0,
                 usage.TryGetValue(p.Id, out var count) ? count : 0,
                 recent?.SourceServicePresetId == p.Id, issues);
-        }).OrderByDescending(x => x.IsMostRecentlyUsed)
-          .ThenByDescending(x => x.UsageCount)
-          .ThenBy(x => x.Preset.DisplayOrder.Value)
+        }).OrderBy(x => x.Preset.DisplayOrder.Value)
           .ThenBy(x => x.Preset.DisplayName, StringComparer.Ordinal)
           .ToArray();
-        SaveWorkRecordCommand? suggested = recent is null ? null : new(
-            null, workDate, recent.ServiceId, recent.TimeCategoryId, recent.InputMode,
-            recent.InputMode == WorkInputMode.Duration ? recent.WorkMinutes : null,
-            recent.StartTime, recent.InputMode == WorkInputMode.TimeRange ? recent.EndTime : null,
-            recent.SourceServicePresetId, Guid.NewGuid());
-        return new(workDate, monthSettings, candidates, suggested);
+        return new(workDate, monthSettings, candidates);
     }
 
     /// <inheritdoc />

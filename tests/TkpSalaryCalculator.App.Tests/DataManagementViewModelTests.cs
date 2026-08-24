@@ -25,6 +25,7 @@ public sealed class DataManagementViewModelTests
 
         Assert.True(transfers.Committed);
         Assert.Equal(1, root.SetRootCalls);
+        Assert.True(root.UsedLifetimeIndependentToken);
         Assert.Equal("インポート完了", notifications.Title);
         Assert.True(notifications.UsedLifetimeIndependentToken);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.All) > generationBefore);
@@ -57,6 +58,53 @@ public sealed class DataManagementViewModelTests
         Assert.NotNull(session.PayrollPeriod);
         Assert.NotNull(session.InitialSetupState);
         Assert.True(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task ImportRootReplacementFailureReportsCommittedImportAndRestartGuidance()
+    {
+        var transfers = new TransferStub();
+        var root = new RootNavigatorStub { Failure = new InvalidOperationException("root") };
+        var notifications = new NotificationStub();
+        var session = new AppSessionState(new DateOnly(2026, 8, 21))
+        {
+            InitialSetupState = new InitialSetupStateDto(InitialSetupStatus.Completed, null, []),
+            SelectedRootRoute = NavigationRoutes.Calendar,
+        };
+        var viewModel = new DataManagementViewModel(
+            transfers, new BackupReminderStub(), new DocumentStub(), new AppInformationStub(), new DialogStub(),
+            notifications, root, session, new ClockStub(), new LocalDateStub(),
+            new UserErrorPresenter());
+
+        await viewModel.ImportAsync();
+
+        Assert.True(transfers.Committed);
+        Assert.Equal(1, root.SetRootCalls);
+        Assert.Equal(NavigationRoutes.Home, session.SelectedRootRoute);
+        Assert.Null(session.InitialSetupState);
+        Assert.Equal(
+            "インポートは完了しましたが、画面を最新の状態へ更新できませんでした。アプリを再起動してください。",
+            viewModel.ErrorMessage);
+        Assert.Null(notifications.Title);
+    }
+
+    [Fact]
+    public async Task ImportCompletionNotificationFailureDoesNotRelabelCommittedImportAsFailure()
+    {
+        var transfers = new TransferStub();
+        var root = new RootNavigatorStub();
+        var notifications = new NotificationStub { Failure = new InvalidOperationException("notification") };
+        var session = new AppSessionState(new DateOnly(2026, 8, 21));
+        var viewModel = new DataManagementViewModel(
+            transfers, new BackupReminderStub(), new DocumentStub(), new AppInformationStub(), new DialogStub(),
+            notifications, root, session, new ClockStub(), new LocalDateStub(),
+            new UserErrorPresenter());
+
+        await viewModel.ImportAsync();
+
+        Assert.True(transfers.Committed);
+        Assert.Equal(1, root.SetRootCalls);
+        Assert.False(viewModel.HasError);
     }
 
     private sealed class TransferStub : IDataTransferUseCase
@@ -107,11 +155,12 @@ public sealed class DataManagementViewModelTests
     {
         public string? Title { get; private set; }
         public bool UsedLifetimeIndependentToken { get; private set; }
+        public Exception? Failure { get; init; }
         public Task ShowAsync(string title, string message, CancellationToken cancellationToken = default)
         {
             Title = title;
             UsedLifetimeIndependentToken = !cancellationToken.CanBeCanceled;
-            return Task.CompletedTask;
+            return Failure is null ? Task.CompletedTask : Task.FromException(Failure);
         }
     }
 
@@ -119,11 +168,15 @@ public sealed class DataManagementViewModelTests
     {
         public Action? OnSetRoot { get; set; }
         public int SetRootCalls { get; private set; }
+        public bool UsedLifetimeIndependentToken { get; private set; }
+        public Exception? Failure { get; init; }
         public Task SetRootAsync(AppRootNavigationRequest request, CancellationToken cancellationToken)
         {
             SetRootCalls++;
+            UsedLifetimeIndependentToken = !cancellationToken.CanBeCanceled;
             OnSetRoot?.Invoke();
-            return Task.CompletedTask;
+            cancellationToken.ThrowIfCancellationRequested();
+            return Failure is null ? Task.CompletedTask : Task.FromException(Failure);
         }
     }
 

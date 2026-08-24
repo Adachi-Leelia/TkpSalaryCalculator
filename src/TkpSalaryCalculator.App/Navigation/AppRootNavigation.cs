@@ -122,6 +122,7 @@ public sealed class AppSessionState(DateOnly localToday) : IAppSessionState
 /// <summary>DB 初期化と初期設定状態の確認を終えてから、進入可能なルートだけを公開します。</summary>
 public sealed class AppStartupCoordinator(
     IApplicationDatabaseInitializer database,
+    IImportStagingRepository importStaging,
     IInitialSetupUseCase initialSetup,
     IPayrollPeriodSettingsUseCase payrollPeriods,
     IUtcClock clock,
@@ -130,6 +131,7 @@ public sealed class AppStartupCoordinator(
     IAppRootNavigator rootNavigator)
 {
     private readonly IApplicationDatabaseInitializer database = database ?? throw new ArgumentNullException(nameof(database));
+    private readonly IImportStagingRepository importStaging = importStaging ?? throw new ArgumentNullException(nameof(importStaging));
     private readonly IInitialSetupUseCase initialSetup = initialSetup ?? throw new ArgumentNullException(nameof(initialSetup));
     private readonly IPayrollPeriodSettingsUseCase payrollPeriods = payrollPeriods ?? throw new ArgumentNullException(nameof(payrollPeriods));
     private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -140,6 +142,7 @@ public sealed class AppStartupCoordinator(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await database.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await importStaging.DiscardAbandonedAsync(cancellationToken).ConfigureAwait(false);
         var state = await initialSetup.GetStateAsync(cancellationToken).ConfigureAwait(false);
         sessionState.InitialSetupState = state;
 

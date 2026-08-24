@@ -319,7 +319,7 @@ public sealed class SetupBackupDataTransferTests
     }
 
     [Fact]
-    public async Task Export_UsesFixedSnapshot_WritesNonSeekableStream_AndLeavesCallerStreamOpen()
+    public async Task Export_UsesFixedSnapshot_WritesNonSeekableStream_AndClosesOwnedDestination()
     {
         var writer = new FakeExportStream();
         var source = new FakeExportDataSource();
@@ -331,12 +331,12 @@ public sealed class SetupBackupDataTransferTests
         var metadata = new FakeMetadataRepository();
         var useCase = new DataTransferUseCase(writer, new FakeImportStream(), source, new FakeStagingRepository(),
             metadata, new FakeTransactionRunner(), new FakeClock(DateTimeOffset.UnixEpoch));
-        using var destination = new NonSeekableWriteStream();
+        var destination = new NonSeekableWriteStream();
 
         await useCase.ExportAsync(destination, "1.0", default);
 
         Assert.Equal(2, writer.Count);
-        Assert.True(destination.CanWrite);
+        Assert.True(destination.IsDisposed);
         Assert.True(destination.WrittenLength > 0);
         Assert.Equal(1, source.OpenCalls);
         Assert.Equal(1, source.DisposeCalls);
@@ -352,11 +352,11 @@ public sealed class SetupBackupDataTransferTests
         var failedMetadata = new FakeMetadataRepository();
         var failed = new DataTransferUseCase(failedWriter, new FakeImportStream(), failedSource, new FakeStagingRepository(),
             failedMetadata, new FakeTransactionRunner(), new FakeClock(DateTimeOffset.UnixEpoch));
-        using var failedDestination = new NonSeekableWriteStream();
+        var failedDestination = new NonSeekableWriteStream();
         await Assert.ThrowsAsync<IOException>(() => failed.ExportAsync(failedDestination, "1.0", default));
         Assert.Equal(1, failedSource.DisposeCalls);
         Assert.Null(failedMetadata.Value.LastExportedAtUtc);
-        Assert.True(failedDestination.CanWrite);
+        Assert.True(failedDestination.IsDisposed);
 
         using var cancellation = new CancellationTokenSource();
         var cancelledSource = new FakeExportDataSource();
@@ -367,22 +367,41 @@ public sealed class SetupBackupDataTransferTests
         var cancelledMetadata = new FakeMetadataRepository();
         var cancelled = new DataTransferUseCase(new FakeExportStream(), new FakeImportStream(), cancelledSource,
             new FakeStagingRepository(), cancelledMetadata, new FakeTransactionRunner(), new FakeClock(DateTimeOffset.UnixEpoch));
-        using var cancelledDestination = new NonSeekableWriteStream();
+        var cancelledDestination = new NonSeekableWriteStream();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             cancelled.ExportAsync(cancelledDestination, "1.0", cancellation.Token));
         Assert.Equal(1, cancelledSource.DisposeCalls);
         Assert.Null(cancelledMetadata.Value.LastExportedAtUtc);
-        Assert.True(cancelledDestination.CanWrite);
+        Assert.True(cancelledDestination.IsDisposed);
+    }
+
+    [Fact]
+    public async Task Export_DestinationCloseFailureDoesNotRecordSuccessfulExport()
+    {
+        var source = new FakeExportDataSource();
+        source.Values.Add(new DataTransferRecord<string>(DataTransferSection.Metadata, 0, "metadata"));
+        var metadata = new FakeMetadataRepository();
+        var useCase = new DataTransferUseCase(new FakeExportStream(), new FakeImportStream(), source,
+            new FakeStagingRepository(), metadata, new FakeTransactionRunner(),
+            new FakeClock(DateTimeOffset.UnixEpoch));
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            useCase.ExportAsync(new DisposeFailingWriteStream(), "1.0", default));
+
+        Assert.Equal(1, source.DisposeCalls);
+        Assert.Null(metadata.Value.LastExportedAtUtc);
     }
 }
 
-internal sealed class NonSeekableWriteStream : Stream
+internal class NonSeekableWriteStream : Stream
 {
     private readonly MemoryStream inner = new();
-    public long WrittenLength => inner.Length;
+    private long writtenLength;
+    public bool IsDisposed { get; private set; }
+    public long WrittenLength => IsDisposed ? writtenLength : inner.Length;
     public override bool CanRead => false;
     public override bool CanSeek => false;
-    public override bool CanWrite => true;
+    public override bool CanWrite => !IsDisposed;
     public override long Length => throw new NotSupportedException();
     public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
     public override void Flush()
@@ -426,4 +445,18 @@ internal sealed class NonSeekableWriteStream : Stream
         return inner.WriteAsync(buffer, cancellationToken);
     }
 
+    public override async ValueTask DisposeAsync()
+    {
+        if (IsDisposed) return;
+        writtenLength = inner.Length;
+        IsDisposed = true;
+        await inner.DisposeAsync();
+        GC.SuppressFinalize(this);
+    }
+
+}
+
+internal sealed class DisposeFailingWriteStream : NonSeekableWriteStream
+{
+    public override ValueTask DisposeAsync() => ValueTask.FromException(new IOException("close"));
 }

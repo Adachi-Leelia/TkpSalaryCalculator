@@ -9,4 +9,5 @@ public partial class ServiceSettingsPage : ContentPage, IQueryAttributable
     protected override void OnDisappearing() { viewModel.CancelPendingOperations(); base.OnDisappearing(); }
     private async void OnEditClicked(object? sender, EventArgs eventArgs) { if (sender is Button { CommandParameter: ServiceSettingRow row }) await viewModel.OpenEditorAsync(row); }
     private async void OnCandidateEditClicked(object? sender, EventArgs eventArgs) { if (sender is Button { CommandParameter: ServicePresetRow row }) await viewModel.OpenCandidateEditorAsync(row); }
+    private async void OnAddTimeCategoryClicked(object? sender, EventArgs eventArgs) { if (sender is Button { CommandParameter: ServiceSettingRow row }) await viewModel.AddTimeCategoryAsync(row); }
 }

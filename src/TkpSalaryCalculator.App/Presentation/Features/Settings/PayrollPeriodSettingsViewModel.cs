@@ -22,6 +22,7 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
     private readonly IConfirmationDialogService dialogs;
     private readonly JapaneseDisplayFormatter formatter;
     private readonly ISettingsNavigator navigator;
+    private PayrollPeriodKey effectiveFrom;
     private ClosingDayOption selectedClosingDay = ClosingDayOption.All[0];
     private string currentRuleText = string.Empty;
 
@@ -38,6 +39,7 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
         this.dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+        effectiveFrom = new PayrollPeriodKey(context.SelectedMonth);
         TrackDataChanges(context.SessionState, AppDataChangeKind.ClosingRules);
         PreviousMonthCommand = new AsyncCommand(() => MoveMonthAsync(-1), PresentError);
         NextMonthCommand = new AsyncCommand(() => MoveMonthAsync(1), PresentError);
@@ -45,8 +47,8 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
     }
 
     public IReadOnlyList<ClosingDayOption> ClosingDays => ClosingDayOption.All;
-    public string EffectiveMonthText => $"適用開始給与期間年月: {formatter.Month(context.SelectedMonth)}";
-    public string ScopeExplanation => $"この締め日は{formatter.Month(context.SelectedMonth)}以降の給与期間へ適用し、それより前の給与期間は変更しません。";
+    public string EffectiveMonthText => $"適用開始給与期間年月: {formatter.Month(effectiveFrom.Value)}";
+    public string ScopeExplanation => $"この締め日は{formatter.Month(effectiveFrom.Value)}以降の給与期間へ適用し、それより前の給与期間は変更しません。";
     public string CurrentRuleText { get => currentRuleText; private set => SetProperty(ref currentRuleText, value); }
     public ClosingDayOption SelectedClosingDay
     {
@@ -63,7 +65,7 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
     public Task MoveMonthAsync(int offset) => RunBusyAsync(async token =>
     {
         if (!await CanLeaveAsync(token)) return;
-        context.MoveWithoutLoading(offset);
+        effectiveFrom = new PayrollPeriodKey(effectiveFrom.Value.AddMonths(offset));
         var generation = CaptureTrackedDataGeneration();
         await LoadCoreAsync(token);
         AcceptDataGeneration(generation);
@@ -71,7 +73,7 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
 
     public Task SaveAsync() => RunBusyAsync(async token =>
     {
-        var command = new ReplaceClosingRuleCommand(new PayrollPeriodKey(context.SelectedMonth), SelectedClosingDay.Value);
+        var command = new ReplaceClosingRuleCommand(effectiveFrom, SelectedClosingDay.Value);
         var preview = await settings.PreviewClosingRuleReplacementAsync(command, token);
         var before = preview.CurrentPeriod is null ? "現在の履歴では期間を算出できません。" : formatter.PayrollPeriod(preview.CurrentPeriod);
         var message = string.Join(Environment.NewLine,
@@ -91,8 +93,7 @@ public sealed class PayrollPeriodSettingsViewModel : EditableViewModelBase
 
     private async Task LoadCoreAsync(CancellationToken token)
     {
-        var key = new PayrollPeriodKey(context.SelectedMonth);
-        var rule = await settings.GetClosingRuleAsync(key, token);
+        var rule = await settings.GetClosingRuleAsync(effectiveFrom, token);
         selectedClosingDay = ClosingDayOption.All.Single(value => value.Value == rule?.ClosingDay);
         CurrentRuleText = rule is null
             ? "現在有効な締め日はありません。"

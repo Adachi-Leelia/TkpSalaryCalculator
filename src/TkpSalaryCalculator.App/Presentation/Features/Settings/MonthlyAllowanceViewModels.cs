@@ -156,30 +156,55 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
     private readonly IPayrollPeriodSettingsUseCase periods;
     private readonly ISettingsNavigator navigator;
     private readonly IAppSessionState sessionState;
+    private readonly JapaneseDisplayFormatter formatter;
+    private readonly IssuePresenter issuePresenter;
     private PayrollPeriodKey periodKey;
     private MonthlyAllowanceId? id;
     private string displayName = string.Empty;
     private string amountText = "0";
     private string periodText = string.Empty;
+    private IReadOnlyDictionary<string, string> fieldErrors = new Dictionary<string, string>();
+    private string? firstInvalidField;
 
     public MonthlyAllowanceEditorViewModel(
         IPayrollPeriodSettingsUseCase periods,
         ISettingsNavigator navigator,
         IUserErrorPresenter errorPresenter,
+        IssuePresenter issuePresenter,
         IConfirmationDialogService dialogs,
-        IAppSessionState sessionState) : base(errorPresenter, dialogs)
+        IAppSessionState sessionState,
+        JapaneseDisplayFormatter formatter) : base(errorPresenter, dialogs)
     {
         this.periods = periods ?? throw new ArgumentNullException(nameof(periods));
         this.navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
+        this.issuePresenter = issuePresenter ?? throw new ArgumentNullException(nameof(issuePresenter));
         TrackDataChanges(this.sessionState, AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.ClosingRules);
         SaveCommand = new AsyncCommand(SaveAsync, PresentError);
     }
 
     public string PageTitle => id is null ? "月額手当を追加" : "月額手当を編集";
     public string PeriodText { get => periodText; private set => SetProperty(ref periodText, value); }
-    public string DisplayName { get => displayName; set { if (SetProperty(ref displayName, value)) MarkDirty(); } }
-    public string AmountText { get => amountText; set { if (SetProperty(ref amountText, value)) MarkDirty(); } }
+    public string DisplayName { get => displayName; set { if (SetProperty(ref displayName, value)) Changed(); } }
+    public string AmountText { get => amountText; set { if (SetProperty(ref amountText, value)) Changed(); } }
+    public IReadOnlyDictionary<string, string> FieldErrors
+    {
+        get => fieldErrors;
+        private set
+        {
+            if (!SetProperty(ref fieldErrors, value)) return;
+            OnPropertyChanged(nameof(DisplayNameError));
+            OnPropertyChanged(nameof(AmountError));
+        }
+    }
+    public string DisplayNameError => FieldErrors.GetValueOrDefault("DisplayName", string.Empty);
+    public string AmountError => FieldErrors.GetValueOrDefault("Amount", string.Empty);
+    public string? FirstInvalidField
+    {
+        get => firstInvalidField;
+        private set => SetProperty(ref firstInvalidField, value);
+    }
     public AsyncCommand SaveCommand { get; }
 
     public void Initialize(PayrollPeriodKey key, MonthlyAllowanceId? allowanceId)
@@ -187,7 +212,6 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
         InvalidateTrackedLoad();
         periodKey = key;
         id = allowanceId;
-        PeriodText = $"対象給与期間: {key.Value.Year}年{key.Value.Month}月分";
         OnPropertyChanged(nameof(PageTitle));
     }
 
@@ -196,13 +220,16 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
+        var screen = await periods.GetMonthlyAllowancePeriodAsync(periodKey, cancellationToken);
+        PeriodText = $"対象給与期間: {periodKey.Value.Year}年{periodKey.Value.Month}月分（{formatter.Date(screen.Period.StartDate, false)}～{formatter.Date(screen.Period.EndDate, false)}）";
         if (id is { } allowanceId)
         {
-            var existing = (await periods.GetAllowancesAsync(periodKey, cancellationToken)).FirstOrDefault(x => x.Id == allowanceId)
+            var existing = screen.Allowances.FirstOrDefault(x => x.Id == allowanceId)
                 ?? throw new ApplicationErrorException("ALLOWANCE_NOT_FOUND", "編集する月額手当が見つかりませんでした。");
             DisplayName = existing.DisplayName;
             AmountText = existing.Amount.Value.ToString();
         }
+        ClearValidation();
         MarkSaved();
     }
 
@@ -215,4 +242,31 @@ public sealed class MonthlyAllowanceEditorViewModel : EditableViewModelBase
         MarkSaved();
         await navigator.GoBackAsync("月額手当を保存しました。", cancellationToken);
     });
+
+    protected override void OnErrorPresented(Exception exception)
+    {
+        if (exception is not ApplicationErrorException applicationError)
+        {
+            ClearValidation();
+            return;
+        }
+
+        var presentation = issuePresenter.Present(
+            [new IssueDto(applicationError.Code, applicationError.Field, applicationError.Message)]);
+        FieldErrors = presentation.FieldErrors;
+        FirstInvalidField = presentation.FirstInvalidField;
+    }
+
+    private void ClearValidation()
+    {
+        FieldErrors = new Dictionary<string, string>();
+        FirstInvalidField = null;
+    }
+
+    private void Changed()
+    {
+        ClearError();
+        ClearValidation();
+        MarkDirty();
+    }
 }

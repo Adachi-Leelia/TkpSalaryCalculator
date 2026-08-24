@@ -77,7 +77,7 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
-    public async Task UX003_CalendarOpensShiftConfirmationAndAppliesConfirmedCandidatesWithoutOpeningDayPage()
+    public async Task UX003_CalendarOpensShiftConfirmationAndAppliesSelectedCandidatesWithoutOpeningDayPage()
     {
         var query = new SalaryQueryStub();
         query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, shiftCandidates: 1);
@@ -89,29 +89,106 @@ public sealed class CalendarWorkFlowViewModelTests
         {
             Preview = new BasicShiftPreviewDto(TargetDate, [new BasicShiftCandidateDto(shift, true, false, false, [])], 0),
         };
-        var dialogs = new DialogStub { Result = true };
         var navigator = new CalendarNavigatorStub();
         var work = new WorkUseCaseStub();
         var session = new AppSessionState(TargetDate);
         var workGeneration = session.GetDataGeneration(AppDataChangeKind.WorkRecords);
         var viewModel = new CalendarViewModel(
             query, navigator, session, new ClockStub(), new LocalDateStub(),
-            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, work, dialogs);
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, work);
 
         await viewModel.LoadAsync();
         await viewModel.ConfirmShiftCandidatesAsync();
 
-        Assert.Equal("基本シフトを反映", dialogs.LastTitle);
-        Assert.Contains("追加する勤務記録: 1件", dialogs.LastMessage);
-        Assert.Contains("訪問 / 通常", dialogs.LastMessage);
+        Assert.True(viewModel.IsShiftConfirmationVisible);
+        var candidate = Assert.Single(viewModel.ShiftCandidates);
+        Assert.Equal("訪問 / 通常", candidate.DisplayName);
+        Assert.True(candidate.IsSelected);
+        Assert.Null(basicShifts.Applied);
+
+        await viewModel.ApplySelectedShiftsAsync();
+
         Assert.Equal(TargetDate, basicShifts.Applied?.WorkDate);
         Assert.Equal([shift.Id], basicShifts.Applied?.BasicShiftIds);
+        Assert.False(viewModel.IsShiftConfirmationVisible);
         Assert.Null(navigator.OpenedDay);
         Assert.Equal(1, work.SettingsForDateCalls);
         Assert.Equal(0, work.InputOptionsCalls);
         Assert.Equal(0, query.DayScreenCalls);
         Assert.Equal(2, query.CalendarScreenCalls);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.WorkRecords) > workGeneration);
+    }
+
+    [Fact]
+    public async Task SHIFT006_CalendarLetsUserSelectSimilarCandidateIndividually()
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 1, 0, shiftCandidates: 2);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var safeShift = new BasicShiftDto(
+            new BasicShiftId(Guid.Parse("70000000-0000-0000-0000-000000000001")), TargetDate.DayOfWeek, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), true);
+        var similarShift = safeShift with
+        {
+            Id = new BasicShiftId(Guid.Parse("70000000-0000-0000-0000-000000000002")),
+            DisplayOrder = new DisplayOrder(1),
+        };
+        var basicShifts = new BasicShiftUseCaseStub
+        {
+            Preview = new BasicShiftPreviewDto(TargetDate,
+            [
+                new BasicShiftCandidateDto(safeShift, true, false, false, []),
+                new BasicShiftCandidateDto(similarShift, true, false, true,
+                    [new IssueDto("SHIFT_SIMILAR_MANUAL_RECORD", null, "似た内容の手入力勤務があります。")]),
+            ], 1),
+        };
+        var viewModel = new CalendarViewModel(
+            query, new CalendarNavigatorStub(), new AppSessionState(TargetDate), new ClockStub(), new LocalDateStub(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, new WorkUseCaseStub());
+
+        await viewModel.LoadAsync();
+        await viewModel.ConfirmShiftCandidatesAsync();
+
+        var safe = Assert.Single(viewModel.ShiftCandidates, x => x.Id == safeShift.Id);
+        var similar = Assert.Single(viewModel.ShiftCandidates, x => x.Id == similarShift.Id);
+        Assert.True(safe.IsSelected);
+        Assert.False(similar.IsSelected);
+        Assert.True(similar.CanChoose);
+        Assert.Contains("似た内容", similar.WarningText);
+
+        safe.IsSelected = false;
+        similar.IsSelected = true;
+        await viewModel.ApplySelectedShiftsAsync();
+
+        Assert.Equal([similarShift.Id], basicShifts.Applied?.BasicShiftIds);
+    }
+
+    [Fact]
+    public async Task SHIFT003_CancelingCalendarShiftConfirmationDoesNotApplyAnything()
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, shiftCandidates: 1);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var shift = new BasicShiftDto(
+            new BasicShiftId(Guid.NewGuid()), TargetDate.DayOfWeek, null, Service, Category,
+            WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), true);
+        var basicShifts = new BasicShiftUseCaseStub
+        {
+            Preview = new BasicShiftPreviewDto(TargetDate,
+                [new BasicShiftCandidateDto(shift, true, false, false, [])], 0),
+        };
+        var viewModel = new CalendarViewModel(
+            query, new CalendarNavigatorStub(), new AppSessionState(TargetDate), new ClockStub(), new LocalDateStub(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, new WorkUseCaseStub());
+
+        await viewModel.LoadAsync();
+        await viewModel.ConfirmShiftCandidatesAsync();
+        var canceled = viewModel.CancelShiftConfirmation();
+
+        Assert.True(canceled);
+        Assert.False(viewModel.IsShiftConfirmationVisible);
+        Assert.Empty(viewModel.ShiftCandidates);
+        Assert.Null(basicShifts.Applied);
     }
 
     [Fact]
@@ -326,6 +403,7 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
         var previewCalls = fixture.Work.PreviewCalls;
 
         fixture.ViewModel.WorkMinutesText = "0";
@@ -338,10 +416,19 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
-    public async Task WORK001And002_PresetFillsStandardValuesAndArbitraryTimeOmitsCategory()
+    public async Task WORK001_WORK002_WORK011_NewRecordStartsBlankAndPresetFillsStandardValues()
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+
+        Assert.Null(fixture.ViewModel.SelectedPreset);
+        Assert.Null(fixture.ViewModel.SelectedService);
+        Assert.Null(fixture.ViewModel.SelectedTimeCategory);
+        Assert.Empty(fixture.ViewModel.WorkMinutesText);
+        Assert.False(fixture.ViewModel.CanSave);
+        Assert.Equal(0, fixture.Work.PreviewCalls);
+
+        fixture.SelectDefaultPreset();
 
         Assert.Equal(Preset, fixture.ViewModel.SelectedPreset?.Id);
         Assert.Equal(Service, fixture.ViewModel.SelectedService?.Id);
@@ -357,7 +444,7 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
-    public async Task WorkEditor_NewRecordFiltersUnavailableCandidatesAndSkipsUnavailableSuggestion()
+    public async Task WorkEditor_NewRecordFiltersUnavailableCandidatesWithoutSelectingFallback()
     {
         var disabledService = new ServiceId(Guid.Parse("10000000-0000-0000-0000-000000000002"));
         var disabledCategory = new TimeCategoryId(Guid.Parse("20000000-0000-0000-0000-000000000002"));
@@ -374,9 +461,6 @@ public sealed class CalendarWorkFlowViewModelTests
                 new SnapshotTimeCategory(Category, Service, "通常", new WorkMinutes(60), new DisplayOrder(0), true),
                 new SnapshotTimeCategory(disabledCategory, Service, "廃止区分", new WorkMinutes(30), new DisplayOrder(1), false),
             ],
-            suggestedValues: new SaveWorkRecordCommand(
-                null, TargetDate, disabledService, null, WorkInputMode.Duration, new WorkMinutes(60),
-                null, null, null, Guid.NewGuid()),
             presetCandidates:
             [
                 new ServicePresetCandidateDto(
@@ -389,12 +473,15 @@ public sealed class CalendarWorkFlowViewModelTests
 
         await fixture.ViewModel.LoadAsync();
 
-        Assert.Equal(Service, fixture.ViewModel.SelectedService?.Id);
+        Assert.Null(fixture.ViewModel.SelectedPreset);
+        Assert.Null(fixture.ViewModel.SelectedService);
+        Assert.Null(fixture.ViewModel.SelectedTimeCategory);
+        Assert.Empty(fixture.ViewModel.WorkMinutesText);
         Assert.DoesNotContain(fixture.ViewModel.Services, x => x.Id == disabledService);
         Assert.DoesNotContain(fixture.ViewModel.TimeCategories, x => x.Id == disabledCategory);
         Assert.DoesNotContain(fixture.ViewModel.PresetCandidates, x => x.Id == unavailablePreset);
         Assert.Contains("利用できない候補", fixture.ViewModel.UnavailableCandidatesText);
-        Assert.True(fixture.ViewModel.CanSave);
+        Assert.False(fixture.ViewModel.CanSave);
     }
 
     [Fact]
@@ -439,6 +526,8 @@ public sealed class CalendarWorkFlowViewModelTests
         var fixture = new EditorFixture();
         fixture.Work.PreviewFactory = command => UncalculatedPreview(command);
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        await fixture.ViewModel.PreviewAsync();
         var previewCalls = fixture.Work.PreviewCalls;
 
         Assert.True(fixture.ViewModel.CanSave);
@@ -454,10 +543,42 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
+    public async Task WorkEditor_CancelledWaitStillPublishesCompletedNewSave()
+    {
+        var fixture = new EditorFixture();
+        fixture.Work.SaveGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        var workGeneration = fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords);
+        var backupGeneration = fixture.Session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+
+        var save = fixture.ViewModel.SaveAsync();
+        await fixture.Work.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        fixture.ViewModel.CancelPendingOperations();
+        await save;
+
+        Assert.Equal(workGeneration, fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords));
+        Assert.Equal(backupGeneration, fixture.Session.GetDataGeneration(AppDataChangeKind.BackupStatus));
+        Assert.Equal(0, fixture.Navigator.GoBackCalls);
+        Assert.False(fixture.Work.SaveTokenCanBeCanceled);
+
+        fixture.Work.SaveGate.SetResult();
+        for (var attempt = 0; attempt < 100 &&
+             fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords) == workGeneration; attempt++)
+            await Task.Delay(10);
+
+        Assert.True(fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords) > workGeneration);
+        Assert.True(fixture.Session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupGeneration);
+        Assert.Single(fixture.Work.Saved);
+        Assert.Equal(0, fixture.Navigator.GoBackCalls);
+    }
+
+    [Fact]
     public async Task WorkEditor_TimeRangeDisplaysApplicationNormalizedOvernightResult()
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
         fixture.ViewModel.SelectedInputMode = WorkInputModeOption.TimeRange;
         fixture.ViewModel.StartTime = new TimeSpan(23, 0, 0);
         fixture.ViewModel.EndTime = new TimeSpan(1, 0, 0);
@@ -503,6 +624,7 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
         fixture.ViewModel.WorkMinutesText = "75";
         fixture.Work.SaveException = new IOException("database internal path");
 
@@ -526,12 +648,17 @@ public sealed class CalendarWorkFlowViewModelTests
         ]);
 
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        await fixture.ViewModel.PreviewAsync();
 
         Assert.False(fixture.ViewModel.ShowStartTime);
         Assert.Null(fixture.Work.LastPreviewCommand?.StartTime);
 
         fixture.Holidays.Holidays[TargetDate] = "テスト祝日";
+        fixture.ViewModel.Initialize(TargetDate, null);
         await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        await fixture.ViewModel.PreviewAsync();
 
         Assert.True(fixture.ViewModel.ShowStartTime);
         Assert.NotNull(fixture.Work.LastPreviewCommand?.StartTime);
@@ -592,7 +719,6 @@ public sealed class CalendarWorkFlowViewModelTests
         IReadOnlyList<SnapshotPremium>? premiums = null,
         IReadOnlyList<SnapshotService>? services = null,
         IReadOnlyList<SnapshotTimeCategory>? timeCategories = null,
-        SaveWorkRecordCommand? suggestedValues = null,
         IReadOnlyList<ServicePresetCandidateDto>? presetCandidates = null)
     {
         var snapshot = new SettingSnapshot(
@@ -605,7 +731,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var preset = new ServicePresetDto(Preset, "訪問・通常", Service, Category, new WorkMinutes(60), new DisplayOrder(0), true);
         return new WorkInputOptionsDto(
             TargetDate, new MonthSettingsDto(new YearMonth(2026, 8), snapshot),
-            presetCandidates ?? [new ServicePresetCandidateDto(preset, true, 3, true, [])], suggestedValues);
+            presetCandidates ?? [new ServicePresetCandidateDto(preset, true, 3, true, [])]);
     }
 
     private sealed class EditorFixture
@@ -613,15 +739,20 @@ public sealed class CalendarWorkFlowViewModelTests
         public EditorFixture()
         {
             Work.HolidayDates = Holidays.Holidays;
+            Session = new AppSessionState(TargetDate);
             ViewModel = new WorkEditorViewModel(
                 Work, Navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
-                new UserErrorPresenter(), new DialogStub { Result = true }, new AppSessionState(TargetDate));
+                new UserErrorPresenter(), new DialogStub { Result = true }, Session);
             ViewModel.Initialize(TargetDate, null);
         }
         public WorkUseCaseStub Work { get; } = new();
         public HolidayCalendarStub Holidays { get; } = new();
         public CalendarNavigatorStub Navigator { get; } = new();
+        public AppSessionState Session { get; }
         public WorkEditorViewModel ViewModel { get; }
+
+        public void SelectDefaultPreset() =>
+            ViewModel.SelectedPreset = Assert.Single(ViewModel.PresetCandidates);
     }
 
     private sealed class SalaryQueryStub : ISalaryQueryUseCase
@@ -668,6 +799,9 @@ public sealed class CalendarWorkFlowViewModelTests
         public int PreviewCalls { get; private set; }
         public SaveWorkRecordCommand? LastPreviewCommand { get; private set; }
         public Exception? SaveException { get; set; }
+        public TaskCompletionSource? SaveGate { get; set; }
+        public TaskCompletionSource SaveStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool SaveTokenCanBeCanceled { get; private set; }
         public CopyDayPreviewDto? CopyPreview { get; set; }
         public int CopyCalls { get; private set; }
         public int CopyPreviewCalls { get; private set; }
@@ -717,15 +851,18 @@ public sealed class CalendarWorkFlowViewModelTests
         public Task<WorkRecordPreviewDto> PreviewForEditorAsync(
             SaveWorkRecordCommand command, WorkEditorScreenDto screen, CancellationToken cancellationToken) =>
             PreviewAsync(command, cancellationToken);
-        public Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken)
+        public async Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken)
         {
             if (SaveException is not null) throw SaveException;
+            SaveTokenCanBeCanceled = cancellationToken.CanBeCanceled;
+            SaveStarted.TrySetResult();
+            if (SaveGate is not null) await SaveGate.Task.WaitAsync(cancellationToken);
             Saved.Add(command);
             var record = new WorkRecordDto(
                 command.Id ?? RecordId, command.WorkDate, command.ServiceId, command.TimeCategoryId,
                 command.InputMode, command.WorkMinutes ?? new WorkMinutes(60), command.StartTime,
                 command.EndTime, command.SourceServicePresetId, null, null);
-            return Task.FromResult(new SaveWorkRecordResultDto(record, PreviewFactory(command).Calculation!, []));
+            return new SaveWorkRecordResultDto(record, PreviewFactory(command).Calculation!, []);
         }
         public Task DeleteAsync(WorkRecordId id, CancellationToken cancellationToken)
         {

@@ -142,7 +142,7 @@ public sealed class BasicShiftViewModel : ViewModelBase
             "削除", "キャンセル", cancellationToken);
         if (!confirmed) return;
         await shifts.DeleteAsync(shift.Id, cancellationToken);
-        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts);
+        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts | AppDataChangeKind.BackupStatus);
         var generation = CaptureTrackedDataGeneration();
         SuccessMessage = "基本シフトを削除しました。反映済みの勤務記録は維持されています。";
         await LoadCoreAsync(cancellationToken);
@@ -167,6 +167,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
     private readonly IUtcClock clock;
     private readonly ILocalDateConverter localDates;
     private readonly IAppSessionState sessionState;
+    private readonly IssuePresenter issuePresenter;
     private BasicShiftId? id;
     private bool initializing;
     private IReadOnlyList<ServiceOptionViewModel> services = [];
@@ -182,6 +183,8 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
     private TimeSpan endTime = new(10, 0, 0);
     private string displayOrderText = "0";
     private bool isEnabled = true;
+    private IReadOnlyDictionary<string, string> fieldErrors = new Dictionary<string, string>();
+    private string? firstInvalidField;
 
     public BasicShiftEditorViewModel(
         IBasicShiftUseCase shifts,
@@ -190,6 +193,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         IUtcClock clock,
         ILocalDateConverter localDates,
         IUserErrorPresenter errorPresenter,
+        IssuePresenter issuePresenter,
         IConfirmationDialogService dialogs,
         IAppSessionState sessionState) : base(errorPresenter, dialogs)
     {
@@ -199,6 +203,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
         this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
+        this.issuePresenter = issuePresenter ?? throw new ArgumentNullException(nameof(issuePresenter));
         TrackDataChanges(this.sessionState, AppDataChangeKind.BasicShifts | AppDataChangeKind.Settings);
         Weekdays = BasicShiftViewModel.OrderedWeekdays.Select(x => new WeekdayOption(x, BasicShiftViewModel.WeekdayName(x))).ToArray();
         selectedWeekday = Weekdays[0];
@@ -250,6 +255,31 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
     public TimeSpan EndTime { get => endTime; set { if (SetProperty(ref endTime, value)) Changed(); } }
     public string DisplayOrderText { get => displayOrderText; set { if (SetProperty(ref displayOrderText, value)) Changed(); } }
     public bool IsEnabled { get => isEnabled; set { if (SetProperty(ref isEnabled, value)) Changed(); } }
+    public IReadOnlyDictionary<string, string> FieldErrors
+    {
+        get => fieldErrors;
+        private set
+        {
+            if (!SetProperty(ref fieldErrors, value)) return;
+            OnPropertyChanged(nameof(ServiceError));
+            OnPropertyChanged(nameof(TimeCategoryError));
+            OnPropertyChanged(nameof(WorkMinutesError));
+            OnPropertyChanged(nameof(StartTimeError));
+            OnPropertyChanged(nameof(EndTimeError));
+            OnPropertyChanged(nameof(DisplayOrderError));
+        }
+    }
+    public string ServiceError => FieldErrors.GetValueOrDefault("ServiceId", string.Empty);
+    public string TimeCategoryError => FieldErrors.GetValueOrDefault("TimeCategoryId", string.Empty);
+    public string WorkMinutesError => FieldErrors.GetValueOrDefault("WorkMinutes", string.Empty);
+    public string StartTimeError => FieldErrors.GetValueOrDefault("StartTime", string.Empty);
+    public string EndTimeError => FieldErrors.GetValueOrDefault("EndTime", string.Empty);
+    public string DisplayOrderError => FieldErrors.GetValueOrDefault("DisplayOrder", string.Empty);
+    public string? FirstInvalidField
+    {
+        get => firstInvalidField;
+        private set => SetProperty(ref firstInvalidField, value);
+    }
     public AsyncCommand SaveCommand { get; }
 
     public void Initialize(BasicShiftId? value) { id = value; InvalidateTrackedLoad(); OnPropertyChanged(nameof(PageTitle)); }
@@ -281,6 +311,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
             Apply(existing);
         }
         finally { initializing = false; }
+        ClearValidation();
         MarkSaved();
     }
 
@@ -306,7 +337,7 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         await shifts.SaveAsync(new SaveBasicShiftCommand(
             id, SelectedWeekday.Value, null, SelectedService.Id, SelectedTimeCategory?.Id,
             SelectedInputMode.Value, minutes, start, end, new DisplayOrder(order), IsEnabled), cancellationToken);
-        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts);
+        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts | AppDataChangeKind.BackupStatus);
         MarkSaved();
         await navigator.GoBackAsync("基本シフトを保存しました。反映済みの勤務記録は変更されません。", cancellationToken);
     });
@@ -342,5 +373,31 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         (x.ServiceIds.Count == 0 || x.ServiceIds.Contains(serviceId)) &&
         (x.Weekdays.Count == 0 || x.Weekdays.Contains(SelectedWeekday.Value)));
 
-    private void Changed() { if (!initializing) MarkDirty(); }
+    protected override void OnErrorPresented(Exception exception)
+    {
+        if (exception is not ApplicationErrorException applicationError)
+        {
+            ClearValidation();
+            return;
+        }
+
+        var presentation = issuePresenter.Present(
+            [new IssueDto(applicationError.Code, applicationError.Field, applicationError.Message)]);
+        FieldErrors = presentation.FieldErrors;
+        FirstInvalidField = presentation.FirstInvalidField;
+    }
+
+    private void ClearValidation()
+    {
+        FieldErrors = new Dictionary<string, string>();
+        FirstInvalidField = null;
+    }
+
+    private void Changed()
+    {
+        if (initializing) return;
+        ClearError();
+        ClearValidation();
+        MarkDirty();
+    }
 }

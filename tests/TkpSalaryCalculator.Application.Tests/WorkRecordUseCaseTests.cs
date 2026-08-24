@@ -355,7 +355,7 @@ public sealed class WorkRecordUseCaseTests
     }
 
     [Fact]
-    public async Task GetInputOptions_OrdersRecentThenFrequentAndCopiesPresetValues()
+    public async Task GetInputOptions_OrdersByConfiguredDisplayOrderRegardlessOfHistory()
     {
         var context = new TestContext();
         var frequent = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "頻繁", TestData.ServiceId,
@@ -369,13 +369,10 @@ public sealed class WorkRecordUseCaseTests
 
         var result = await context.WorkUseCase().GetInputOptionsAsync(new(2026, 8, 1), default);
 
-        Assert.Equal([recent.Id, frequent.Id], result.PresetCandidates.Select(x => x.Preset.Id));
-        Assert.Equal([1L, 2L], result.PresetCandidates.Select(x => x.UsageCount));
-        Assert.True(result.PresetCandidates[0].IsMostRecentlyUsed);
-        Assert.False(result.PresetCandidates[1].IsMostRecentlyUsed);
-        Assert.NotNull(result.SuggestedValues);
-        Assert.Equal(new DateOnly(2026, 8, 1), result.SuggestedValues!.WorkDate);
-        Assert.Equal(recent.Id, result.SuggestedValues.SourceServicePresetId);
+        Assert.Equal([frequent.Id, recent.Id], result.PresetCandidates.Select(x => x.Preset.Id));
+        Assert.Equal([2L, 1L], result.PresetCandidates.Select(x => x.UsageCount));
+        Assert.False(result.PresetCandidates[0].IsMostRecentlyUsed);
+        Assert.True(result.PresetCandidates[1].IsMostRecentlyUsed);
         Assert.Equal(1, context.Works.InputHistoryCalls);
         Assert.Equal(1, context.Presets.GetAllCalls);
     }

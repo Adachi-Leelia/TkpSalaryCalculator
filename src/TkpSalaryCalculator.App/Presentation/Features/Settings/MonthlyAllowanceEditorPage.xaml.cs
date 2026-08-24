@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.ComponentModel;
 using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.App.Presentation.Features.Settings;
@@ -7,7 +8,7 @@ public partial class MonthlyAllowanceEditorPage : ContentPage, IQueryAttributabl
 {
     public const string IdParameter = "allowanceId";
     private readonly MonthlyAllowanceEditorViewModel viewModel;
-    public MonthlyAllowanceEditorPage(MonthlyAllowanceEditorViewModel viewModel) { InitializeComponent(); this.viewModel = viewModel; BindingContext = viewModel; }
+    public MonthlyAllowanceEditorPage(MonthlyAllowanceEditorViewModel viewModel) { InitializeComponent(); this.viewModel = viewModel; BindingContext = viewModel; this.viewModel.PropertyChanged += OnViewModelPropertyChanged; }
     public void ApplyQueryAttributes(IDictionary<string, object> query)
     {
         if (!query.TryGetValue(MonthlyAllowancePage.PayrollPeriodParameter, out var value) ||
@@ -19,4 +20,17 @@ public partial class MonthlyAllowanceEditorPage : ContentPage, IQueryAttributabl
     }
     protected override async void OnAppearing() { base.OnAppearing(); await viewModel.LoadIfNeededAsync(); }
     protected override void OnDisappearing() { viewModel.CancelPendingOperations(); base.OnDisappearing(); }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
+    {
+        if (eventArgs.PropertyName != nameof(MonthlyAllowanceEditorViewModel.FirstInvalidField) ||
+            string.IsNullOrWhiteSpace(viewModel.FirstInvalidField)) return;
+        var target = viewModel.FirstInvalidField switch
+        {
+            "DisplayName" => DisplayNameEntry,
+            "Amount" => AmountEntry,
+            _ => null,
+        };
+        Dispatcher.Dispatch(() => _ = SettingsEditorFocus.FocusAsync(EditorScroll, target));
+    }
 }

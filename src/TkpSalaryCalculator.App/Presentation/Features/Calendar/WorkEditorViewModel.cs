@@ -33,7 +33,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     private ServiceOptionViewModel? selectedService;
     private TimeCategoryOptionViewModel? selectedTimeCategory;
     private WorkInputModeOption selectedInputMode = WorkInputModeOption.Duration;
-    private string workMinutesText = "60";
+    private string workMinutesText = string.Empty;
     private TimeSpan startTime = new(9, 0, 0);
     private TimeSpan endTime = new(10, 0, 0);
     private string previewText = "入力後に給与をプレビューできます。";
@@ -254,10 +254,12 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         originalServiceId = null;
         originalTimeCategoryId = null;
         originalSourceServicePresetId = null;
+        ResetInputFields();
         WorkRecordId = id;
         workDate = date.ToDateTime(TimeOnly.MinValue);
         OnPropertyChanged(nameof(WorkDate));
         OnPropertyChanged(nameof(SettingsMonthText));
+        NotifyCommands();
     }
 
     public async Task LoadAsync()
@@ -295,8 +297,10 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
                 if (preview is null || !preview.CanSave) return;
             }
 
-            var result = await workRecords.SaveAsync(command, cancellationToken);
-            sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+            var saveTask = workRecords.SaveAsync(
+                command,
+                command.Id is null ? CancellationToken.None : cancellationToken);
+            var result = await NotifyWhenSaveCompletesAsync(saveTask).WaitAsync(cancellationToken);
             ApplyNormalized(result.WorkRecord.WorkMinutes, result.WorkRecord.StartTime, result.WorkRecord.EndTime);
             hasSaved = true;
             MarkSaved();
@@ -305,15 +309,24 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         NotifyCommands();
     }
 
+    private async Task<SaveWorkRecordResultDto> NotifyWhenSaveCompletesAsync(
+        Task<SaveWorkRecordResultDto> saveTask)
+    {
+        var result = await saveTask.ConfigureAwait(false);
+        sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
+        return result;
+    }
+
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
+        WorkRecordDto? existing = null;
         isInitializing = true;
         try
         {
             var date = DateOnly.FromDateTime(WorkDate);
             editorScreen = await workRecords.GetEditorScreenAsync(date, WorkRecordId, cancellationToken);
             var options = editorScreen.InputOptions;
-            var existing = editorScreen.ExistingRecord;
+            existing = editorScreen.ExistingRecord;
             if (WorkRecordId is not null && existing is null)
                 throw new InvalidOperationException("編集する勤務記録が見つかりませんでした。");
 
@@ -321,16 +334,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             PopulateOptions(options, editorScreen.HolidayCalendar);
             if (existing is not null)
                 ApplyExisting(existing);
-            else if (options.SuggestedValues is { } suggested && IsAvailableForNewRecord(suggested.ServiceId, suggested.TimeCategoryId))
-                ApplySuggested(suggested);
-            else if (PresetCandidates.FirstOrDefault(x => x.IsAvailable) is { } first)
-            {
-                selectedPreset = first;
-                OnPropertyChanged(nameof(SelectedPreset));
-                ApplyPreset(first);
-            }
-            else if (Services.FirstOrDefault(x => x.IsEnabled) is { } service)
-                SelectedService = service;
             MarkSaved();
         }
         finally
@@ -338,8 +341,44 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             isInitializing = false;
         }
 
-        await PreviewCoreAsync(cancellationToken);
+        if (existing is not null || SelectedService is not null)
+            await PreviewCoreAsync(cancellationToken);
         MarkSaved();
+    }
+
+    private void ResetInputFields()
+    {
+        selectedPreset = null;
+        selectedService = null;
+        selectedTimeCategory = null;
+        selectedInputMode = WorkInputModeOption.Duration;
+        workMinutesText = string.Empty;
+        startTime = new TimeSpan(9, 0, 0);
+        endTime = new TimeSpan(10, 0, 0);
+        PresetCandidates = [];
+        Services = [];
+        TimeCategories = [];
+        allTimeCategories = [];
+        premiums = [];
+        holidayCalendar = null;
+        UnavailableCandidatesText = string.Empty;
+        PreviewText = "入力後に給与をプレビューできます。";
+        NormalizedTimeText = string.Empty;
+        IssueMessage = string.Empty;
+        FieldErrors = new Dictionary<string, string>();
+        FirstInvalidField = null;
+        CanSave = false;
+
+        OnPropertyChanged(nameof(SelectedPreset));
+        OnPropertyChanged(nameof(SelectedService));
+        OnPropertyChanged(nameof(SelectedTimeCategory));
+        OnPropertyChanged(nameof(SelectedInputMode));
+        OnPropertyChanged(nameof(ShowDuration));
+        OnPropertyChanged(nameof(ShowStartTime));
+        OnPropertyChanged(nameof(ShowEndTime));
+        OnPropertyChanged(nameof(WorkMinutesText));
+        OnPropertyChanged(nameof(StartTime));
+        OnPropertyChanged(nameof(EndTime));
     }
 
     private async Task<WorkRecordPreviewDto?> PreviewCoreAsync(CancellationToken cancellationToken)
@@ -437,18 +476,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         originalSourceServicePresetId = value.SourceServicePresetId;
     }
 
-    private void ApplySuggested(SaveWorkRecordCommand value)
-    {
-        SelectedService = Services.FirstOrDefault(x => x.Id == value.ServiceId) ?? Services.FirstOrDefault();
-        SelectedTimeCategory = TimeCategories.FirstOrDefault(x => x.Id == value.TimeCategoryId);
-        SelectedInputMode = InputModes.First(x => x.Value == value.InputMode);
-        if (value.WorkMinutes is { } minutes) WorkMinutesText = minutes.Value.ToString();
-        if (value.StartTime is { } start) StartTime = ToTimeSpan(start);
-        if (value.EndTime is { } end) EndTime = ToTimeSpan(end);
-        selectedPreset = PresetCandidates.FirstOrDefault(x => x.Id == value.SourceServicePresetId);
-        OnPropertyChanged(nameof(SelectedPreset));
-    }
-
     private void ApplyPreset(PresetOptionViewModel value)
     {
         isInitializing = true;
@@ -496,11 +523,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
                 (x.UsesNationalHolidays && holidayCalendar?.Holidays.ContainsKey(date) == true);
         });
     }
-
-    private bool IsAvailableForNewRecord(ServiceId serviceId, TimeCategoryId? timeCategoryId) =>
-        Services.Any(x => x.Id == serviceId && x.IsEnabled) &&
-        (timeCategoryId is null || allTimeCategories.Any(x =>
-            x.Id == timeCategoryId && x.ServiceId == serviceId && x.IsEnabled));
 
     private SaveWorkRecordCommand? BuildCommand(out IReadOnlyList<IssueDto> issues)
     {

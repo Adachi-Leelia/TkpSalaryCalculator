@@ -107,6 +107,7 @@ public sealed class CountBonusSettingsEditorViewModel : MonthSettingsEditorViewM
 
     public Task SaveAsync() => RunBusyAsync(async token =>
     {
+        ResetFirstInvalidField();
         var replacement = BuildReplacement();
         await ConfirmAndSaveAsync(replacement, "件数加算の変更を確認",
             "件数加算の変更は選択中の設定対象年月だけに適用します。他の年月の給与設定は変更しません。",

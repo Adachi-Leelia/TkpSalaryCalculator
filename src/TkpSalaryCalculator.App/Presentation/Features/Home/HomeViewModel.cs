@@ -136,6 +136,7 @@ public sealed class HomeViewModel : ViewModelBase
     private Task queuedSummaryRequest = Task.CompletedTask;
     private int latestSummaryRequestVersion;
     private bool reloadBackupAfterLatestSummaryRequest;
+    private DateOnly? lastBackupEvaluationDate;
     private string totalText = "0円";
     private string basePayText = "0円";
     private string premiumText = "0円";
@@ -275,7 +276,13 @@ public sealed class HomeViewModel : ViewModelBase
         reloadBackup: true);
 
     /// <summary>初回表示または依存データの変更後だけ最新状態を読み直します。</summary>
-    public Task LoadIfNeededAsync() => IsTrackedDataCurrent() ? Task.CompletedTask : LoadAsync();
+    public Task LoadIfNeededAsync()
+    {
+        if (!IsTrackedDataCurrent()) return LoadAsync();
+        return lastBackupEvaluationDate == GetLocalToday()
+            ? Task.CompletedTask
+            : ReloadBackupAsync();
+    }
 
     public Task MoveByAsync(int monthDelta)
     {
@@ -341,7 +348,7 @@ public sealed class HomeViewModel : ViewModelBase
             ApplySummary(value);
             if (ConsumeBackupReloadRequest(requestVersion))
             {
-                await BackupReminder.LoadAsync(cancellationToken);
+                await LoadBackupAsync(cancellationToken);
             }
         }))
             AcceptDataGeneration(dataGeneration);
@@ -349,6 +356,18 @@ public sealed class HomeViewModel : ViewModelBase
 
     private bool IsLatestSummaryRequest(int requestVersion) =>
         requestVersion == Volatile.Read(ref latestSummaryRequestVersion);
+
+    private async Task ReloadBackupAsync()
+    {
+        await TryRunBusyAsync(LoadBackupAsync);
+    }
+
+    private async Task LoadBackupAsync(CancellationToken cancellationToken)
+    {
+        var localToday = GetLocalToday();
+        await BackupReminder.LoadAsync(cancellationToken);
+        lastBackupEvaluationDate = localToday;
+    }
 
     private bool ConsumeBackupReloadRequest(int requestVersion)
     {
