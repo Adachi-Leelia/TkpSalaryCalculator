@@ -95,5 +95,50 @@
             </VerticalStackLayout>
         </ScrollView>
         <controls:LoadingStateView IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" Message="カレンダーを読み込んでいます。" />
+        <Grid
+            IsVisible="{Binding IsShiftConfirmationVisible}"
+            Padding="20"
+            BackgroundColor="#99000000"
+            InputTransparent="False">
+            <Border
+                Padding="18"
+                BackgroundColor="{StaticResource Surface}"
+                HorizontalOptions="Fill"
+                Stroke="{StaticResource Outline}"
+                StrokeShape="RoundRectangle 16"
+                VerticalOptions="Center">
+                <Grid MaximumHeightRequest="620" RowDefinitions="Auto,*,Auto" RowSpacing="14">
+                    <VerticalStackLayout Spacing="6">
+                        <Label Style="{StaticResource SectionTitleStyle}" Text="基本シフト反映確認" />
+                        <Label FontAttributes="Bold" Text="{Binding SelectedDateText}" />
+                        <Label Text="{Binding ShiftExistingWorkText}" />
+                        <Label
+                            Style="{StaticResource SupportingTextStyle}"
+                            Text="反映する候補を選択してください。類似する勤務がある候補も、内容を確認して選択できます。" />
+                        <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
+                    </VerticalStackLayout>
+                    <ScrollView Grid.Row="1">
+                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding ShiftCandidates}" Spacing="10">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="calendar:ShiftCandidateRowViewModel">
+                                    <Border Padding="10" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
+                                        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                                            <CheckBox IsChecked="{Binding IsSelected}" IsEnabled="{Binding CanChoose}" />
+                                            <Label Grid.Column="1" FontAttributes="Bold" Text="{Binding DisplayName}" />
+                                            <Label Grid.Row="1" Grid.Column="1" Text="{Binding DurationText}" />
+                                            <Label Grid.Row="2" Grid.Column="1" IsVisible="{Binding HasWarning}" Text="{Binding WarningText}" TextColor="{StaticResource Warning}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </VerticalStackLayout>
+                    </ScrollView>
+                    <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="10">
+                        <Button Command="{Binding CancelShiftConfirmationCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="キャンセル" />
+                        <Button Grid.Column="1" Command="{Binding ApplySelectedShiftsCommand}" Text="確定して追加" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </ContentPage>

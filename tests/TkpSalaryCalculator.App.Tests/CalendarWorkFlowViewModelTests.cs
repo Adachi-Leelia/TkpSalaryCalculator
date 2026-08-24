@@ -77,7 +77,7 @@ public sealed class CalendarWorkFlowViewModelTests
     }
 
     [Fact]
-    public async Task UX003_CalendarOpensShiftConfirmationAndAppliesConfirmedCandidatesWithoutOpeningDayPage()
+    public async Task UX003_CalendarOpensShiftConfirmationAndAppliesSelectedCandidatesWithoutOpeningDayPage()
     {
         var query = new SalaryQueryStub();
         query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, shiftCandidates: 1);
@@ -89,29 +89,106 @@ public sealed class CalendarWorkFlowViewModelTests
         {
             Preview = new BasicShiftPreviewDto(TargetDate, [new BasicShiftCandidateDto(shift, true, false, false, [])], 0),
         };
-        var dialogs = new DialogStub { Result = true };
         var navigator = new CalendarNavigatorStub();
         var work = new WorkUseCaseStub();
         var session = new AppSessionState(TargetDate);
         var workGeneration = session.GetDataGeneration(AppDataChangeKind.WorkRecords);
         var viewModel = new CalendarViewModel(
             query, navigator, session, new ClockStub(), new LocalDateStub(),
-            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, work, dialogs);
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, work);
 
         await viewModel.LoadAsync();
         await viewModel.ConfirmShiftCandidatesAsync();
 
-        Assert.Equal("基本シフトを反映", dialogs.LastTitle);
-        Assert.Contains("追加する勤務記録: 1件", dialogs.LastMessage);
-        Assert.Contains("訪問 / 通常", dialogs.LastMessage);
+        Assert.True(viewModel.IsShiftConfirmationVisible);
+        var candidate = Assert.Single(viewModel.ShiftCandidates);
+        Assert.Equal("訪問 / 通常", candidate.DisplayName);
+        Assert.True(candidate.IsSelected);
+        Assert.Null(basicShifts.Applied);
+
+        await viewModel.ApplySelectedShiftsAsync();
+
         Assert.Equal(TargetDate, basicShifts.Applied?.WorkDate);
         Assert.Equal([shift.Id], basicShifts.Applied?.BasicShiftIds);
+        Assert.False(viewModel.IsShiftConfirmationVisible);
         Assert.Null(navigator.OpenedDay);
         Assert.Equal(1, work.SettingsForDateCalls);
         Assert.Equal(0, work.InputOptionsCalls);
         Assert.Equal(0, query.DayScreenCalls);
         Assert.Equal(2, query.CalendarScreenCalls);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.WorkRecords) > workGeneration);
+    }
+
+    [Fact]
+    public async Task SHIFT006_CalendarLetsUserSelectSimilarCandidateIndividually()
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 1, 0, shiftCandidates: 2);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var safeShift = new BasicShiftDto(
+            new BasicShiftId(Guid.Parse("70000000-0000-0000-0000-000000000001")), TargetDate.DayOfWeek, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), true);
+        var similarShift = safeShift with
+        {
+            Id = new BasicShiftId(Guid.Parse("70000000-0000-0000-0000-000000000002")),
+            DisplayOrder = new DisplayOrder(1),
+        };
+        var basicShifts = new BasicShiftUseCaseStub
+        {
+            Preview = new BasicShiftPreviewDto(TargetDate,
+            [
+                new BasicShiftCandidateDto(safeShift, true, false, false, []),
+                new BasicShiftCandidateDto(similarShift, true, false, true,
+                    [new IssueDto("SHIFT_SIMILAR_MANUAL_RECORD", null, "似た内容の手入力勤務があります。")]),
+            ], 1),
+        };
+        var viewModel = new CalendarViewModel(
+            query, new CalendarNavigatorStub(), new AppSessionState(TargetDate), new ClockStub(), new LocalDateStub(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, new WorkUseCaseStub());
+
+        await viewModel.LoadAsync();
+        await viewModel.ConfirmShiftCandidatesAsync();
+
+        var safe = Assert.Single(viewModel.ShiftCandidates, x => x.Id == safeShift.Id);
+        var similar = Assert.Single(viewModel.ShiftCandidates, x => x.Id == similarShift.Id);
+        Assert.True(safe.IsSelected);
+        Assert.False(similar.IsSelected);
+        Assert.True(similar.CanChoose);
+        Assert.Contains("似た内容", similar.WarningText);
+
+        safe.IsSelected = false;
+        similar.IsSelected = true;
+        await viewModel.ApplySelectedShiftsAsync();
+
+        Assert.Equal([similarShift.Id], basicShifts.Applied?.BasicShiftIds);
+    }
+
+    [Fact]
+    public async Task SHIFT003_CancelingCalendarShiftConfirmationDoesNotApplyAnything()
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, shiftCandidates: 1);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var shift = new BasicShiftDto(
+            new BasicShiftId(Guid.NewGuid()), TargetDate.DayOfWeek, null, Service, Category,
+            WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), true);
+        var basicShifts = new BasicShiftUseCaseStub
+        {
+            Preview = new BasicShiftPreviewDto(TargetDate,
+                [new BasicShiftCandidateDto(shift, true, false, false, [])], 0),
+        };
+        var viewModel = new CalendarViewModel(
+            query, new CalendarNavigatorStub(), new AppSessionState(TargetDate), new ClockStub(), new LocalDateStub(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), basicShifts, new WorkUseCaseStub());
+
+        await viewModel.LoadAsync();
+        await viewModel.ConfirmShiftCandidatesAsync();
+        var canceled = viewModel.CancelShiftConfirmation();
+
+        Assert.True(canceled);
+        Assert.False(viewModel.IsShiftConfirmationVisible);
+        Assert.Empty(viewModel.ShiftCandidates);
+        Assert.Null(basicShifts.Applied);
     }
 
     [Fact]

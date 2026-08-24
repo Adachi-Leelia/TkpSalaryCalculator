@@ -23,4 +23,7 @@ public partial class CalendarPage : ContentPage
         viewModel.CancelPendingOperations();
         base.OnDisappearing();
     }
+
+    protected override bool OnBackButtonPressed() =>
+        viewModel.CancelShiftConfirmation() || base.OnBackButtonPressed();
 }

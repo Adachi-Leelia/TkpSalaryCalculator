@@ -375,11 +375,14 @@ public sealed class SettingsViewModelTests
     {
         var key = new PayrollPeriodKey(August);
         var periodSettings = new PeriodSettingsStub();
+        periodSettings.AllowancePeriods[key] = new MonthlyAllowancePeriodDto(
+            new PayrollPeriod(key, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)), []);
         var navigator = new SettingsNavigatorStub();
         var session = new AppSessionState(new DateOnly(2026, 8, 22));
         var generationBefore = session.GetDataGeneration(AppDataChangeKind.MonthlyAllowances);
         var viewModel = new MonthlyAllowanceEditorViewModel(periodSettings, navigator,
-            new UserErrorPresenter(), new DialogStub(), session);
+            new UserErrorPresenter(), new IssuePresenter(), new DialogStub(), session,
+            new JapaneseDisplayFormatter());
         viewModel.Initialize(key, null);
         await viewModel.LoadAsync();
         viewModel.DisplayName = "資格手当";
@@ -389,9 +392,36 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal("資格手当", periodSettings.LastAllowanceCommand!.DisplayName);
         Assert.Equal(5_000, periodSettings.LastAllowanceCommand.Amount.Value);
+        Assert.Equal("対象給与期間: 2026年8月分（2026年7月21日～2026年8月20日）", viewModel.PeriodText);
         Assert.Equal("月額手当を保存しました。", navigator.SuccessMessage);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.MonthlyAllowances) > generationBefore);
         Assert.False(viewModel.IsDirty);
+    }
+
+    [Fact]
+    public async Task UI008_MonthlyAllowanceEditorShowsAndClearsFirstFieldError()
+    {
+        var key = new PayrollPeriodKey(August);
+        var periodSettings = new PeriodSettingsStub();
+        periodSettings.AllowancePeriods[key] = new MonthlyAllowancePeriodDto(
+            new PayrollPeriod(key, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)), []);
+        var viewModel = new MonthlyAllowanceEditorViewModel(
+            periodSettings, new SettingsNavigatorStub(), new UserErrorPresenter(), new IssuePresenter(),
+            new DialogStub(), new AppSessionState(new DateOnly(2026, 8, 22)), new JapaneseDisplayFormatter());
+        viewModel.Initialize(key, null);
+        await viewModel.LoadAsync();
+        viewModel.DisplayName = "資格手当";
+        viewModel.AmountText = "-1";
+
+        await viewModel.SaveAsync();
+
+        Assert.Equal("Amount", viewModel.FirstInvalidField);
+        Assert.Equal("金額は0円以上の整数で入力してください。", viewModel.AmountError);
+        Assert.Null(periodSettings.LastAllowanceCommand);
+
+        viewModel.AmountText = "5000";
+        Assert.Null(viewModel.FirstInvalidField);
+        Assert.Empty(viewModel.AmountError);
     }
 
     [Fact]
@@ -449,7 +479,7 @@ public sealed class SettingsViewModelTests
         var viewModel = new BasicShiftEditorViewModel(
             shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
             new SettingsNavigatorStub(), new FixedClock(), new FixedLocalDate(), new UserErrorPresenter(),
-            new DialogStub { Result = true }, session);
+            new IssuePresenter(), new DialogStub { Result = true }, session);
         viewModel.Initialize(null);
         await viewModel.LoadAsync();
         var shiftGeneration = session.GetDataGeneration(AppDataChangeKind.BasicShifts);
@@ -460,6 +490,28 @@ public sealed class SettingsViewModelTests
         Assert.NotNull(shifts.SavedCommand);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.BasicShifts) > shiftGeneration);
         Assert.True(session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupGeneration);
+    }
+
+    [Fact]
+    public async Task UI008_BasicShiftEditorIdentifiesDisplayOrderAsFirstInvalidField()
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
+            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var viewModel = new BasicShiftEditorViewModel(
+            shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new FixedClock(), new FixedLocalDate(), new UserErrorPresenter(),
+            new IssuePresenter(), new DialogStub(), new AppSessionState(new DateOnly(2026, 8, 22)));
+        viewModel.Initialize(null);
+        await viewModel.LoadAsync();
+        viewModel.DisplayOrderText = "-1";
+
+        await viewModel.SaveAsync();
+
+        Assert.Equal("DisplayOrder", viewModel.FirstInvalidField);
+        Assert.Equal("表示順は0以上の整数で入力してください。", viewModel.DisplayOrderError);
+        Assert.Null(shifts.SavedCommand);
     }
 
     private static SettingsMonthContext Context(MonthSettingsStub settings, IAppSessionState session) =>

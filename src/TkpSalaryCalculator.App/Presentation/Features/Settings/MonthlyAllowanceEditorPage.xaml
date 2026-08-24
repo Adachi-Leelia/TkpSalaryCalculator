@@ -4,10 +4,12 @@
     xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings"
     xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
     x:DataType="settings:MonthlyAllowanceEditorViewModel" Title="{Binding PageTitle}">
-    <Grid RowDefinitions="*,Auto"><ScrollView><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="12">
+    <Grid RowDefinitions="*,Auto"><ScrollView x:Name="EditorScroll"><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="12">
         <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" /><Label FontAttributes="Bold" Text="{Binding PeriodText}" />
-        <Label Text="表示名" /><Entry Text="{Binding DisplayName}" Placeholder="例: 資格手当" />
-        <Label Text="金額（円）" /><Entry Keyboard="Numeric" Text="{Binding AmountText}" />
+        <Label Text="表示名" /><Entry x:Name="DisplayNameEntry" Text="{Binding DisplayName}" Placeholder="例: 資格手当" />
+        <Label Text="{Binding DisplayNameError}" TextColor="{StaticResource Error}" />
+        <Label Text="金額（円）" /><Entry x:Name="AmountEntry" Keyboard="Numeric" Text="{Binding AmountText}" />
+        <Label Text="{Binding AmountError}" TextColor="{StaticResource Error}" />
         <Label IsVisible="{Binding HasError}" Text="{Binding ErrorMessage}" TextColor="{StaticResource Error}" />
     </VerticalStackLayout></ScrollView>
     <controls:FixedSaveBar
