@@ -365,14 +365,11 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         if (startDate > endDate) throw new ArgumentException("Start date must not follow end date.", nameof(startDate));
-        cancellationToken.ThrowIfCancellationRequested();
-        var ambient = database.AmbientTransaction;
-        SqliteConnection? ownedConnection = null;
-        var connection = ambient?.Connection ?? (ownedConnection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
-        try
+        var values = await database.ReadAsync(async (connection, transaction, token) =>
         {
+            var result = new List<WorkRecordDto>();
             await using var command = connection.CreateCommand();
-            command.Transaction = ambient?.Transaction;
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
                        end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
@@ -380,12 +377,15 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
                 """;
             command.Parameters.AddValue("$start", SqliteValue.Date(startDate));
             command.Parameters.AddValue("$end", SqliteValue.Date(endDate));
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) yield return Read(reader);
-        }
-        finally
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false)) result.Add(Read(reader));
+            return result;
+        }, cancellationToken).ConfigureAwait(false);
+
+        foreach (var value in values)
         {
-            if (ownedConnection is not null) await ownedConnection.DisposeAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return value;
         }
     }
 

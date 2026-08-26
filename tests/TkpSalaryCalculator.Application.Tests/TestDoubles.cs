@@ -59,21 +59,30 @@ internal sealed class RecordingSalaryCalculator : ISalaryCalculator
 {
     private readonly SalaryCalculator inner = new();
     public List<WorkSalaryCalculationRequest> Requests { get; } = [];
+    public List<SynchronizationContext?> ExecutionContexts { get; } = [];
 
     public WorkSalaryCalculation Calculate(WorkSalaryCalculationRequest request)
     {
+        ExecutionContexts.Add(SynchronizationContext.Current);
         Requests.Add(request);
         return inner.Calculate(request);
     }
 
     public DailySalaryCalculation AggregateDay(
-        DateOnly workDate,
-        IReadOnlyList<WorkSalaryCalculation> records) => inner.AggregateDay(workDate, records);
+        DateOnly workDate, IReadOnlyList<WorkSalaryCalculation> records)
+    {
+        ExecutionContexts.Add(SynchronizationContext.Current);
+        return inner.AggregateDay(workDate, records);
+    }
 
     public PayrollPeriodSalaryCalculation AggregatePeriod(
         PayrollPeriod period,
         IReadOnlyList<DailySalaryCalculation> days,
-        IReadOnlyList<MonthlyAllowance> allowances) => inner.AggregatePeriod(period, days, allowances);
+        IReadOnlyList<MonthlyAllowance> allowances)
+    {
+        ExecutionContexts.Add(SynchronizationContext.Current);
+        return inner.AggregatePeriod(period, days, allowances);
+    }
 }
 
 internal interface ITransactionalFakeState

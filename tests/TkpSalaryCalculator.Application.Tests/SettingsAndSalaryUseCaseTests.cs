@@ -456,6 +456,32 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task ARCH005_SalaryCalculationLeavesTheCallingSynchronizationContext()
+    {
+        var context = new TestContext();
+        var calculator = new RecordingSalaryCalculator();
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, calculator, context.Periods);
+        var callingContext = new SynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        Task<IReadOnlyList<CalendarDayDto>> operation;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(callingContext);
+            operation = useCase.GetCalendarMonthAsync(new YearMonth(2026, 8), default);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        await operation;
+
+        Assert.NotEmpty(calculator.ExecutionContexts);
+        Assert.All(calculator.ExecutionContexts, observed => Assert.NotSame(callingContext, observed));
+    }
+
+    [Fact]
     public async Task SalaryQuery_TwentyRecordsReuseOneDailyCalculationSnapshot()
     {
         var context = new TestContext();

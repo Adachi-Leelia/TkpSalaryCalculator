@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.Data.Sqlite;
 using TkpSalaryCalculator.Application.Contracts;
 using TkpSalaryCalculator.Application.Ports;
@@ -16,55 +17,125 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
 {
     private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
 
-    public async Task<IExportReadSession> OpenReadSessionAsync(CancellationToken cancellationToken)
-    {
-        var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var transaction = connection.BeginTransaction(deferred: true);
-            await using (var establishSnapshot = connection.CreateCommand())
-            {
-                establishSnapshot.Transaction = transaction;
-                establishSnapshot.CommandText = "SELECT id FROM app_metadata WHERE id = 1;";
-                _ = await establishSnapshot.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            }
-            return new ReadSession(connection, transaction);
-        }
-        catch
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-    }
+    public async Task<IExportReadSession> OpenReadSessionAsync(CancellationToken cancellationToken) =>
+        await ReadSession.CreateAsync(database, cancellationToken).ConfigureAwait(false);
 
-    private sealed class ReadSession(SqliteConnection connection, SqliteTransaction transaction) : IExportReadSession
+    private sealed class ReadSession : IExportReadSession
     {
+        private const int BufferCapacity = 32;
+        private readonly CancellationTokenSource lifetime;
+        private readonly Channel<DataTransferRecord> records;
+        private readonly TaskCompletionSource snapshotEstablished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource streamRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Task producer;
         private bool disposed;
+        private int streamStarted;
+
+        private ReadSession(SqliteDatabase database, CancellationToken cancellationToken)
+        {
+            lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            records = Channel.CreateBounded<DataTransferRecord>(new BoundedChannelOptions(BufferCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true,
+                SingleWriter = true,
+            });
+            producer = BackgroundOperation.RunAsync(() => ProduceAsync(database), CancellationToken.None);
+        }
+
+        public static async Task<IExportReadSession> CreateAsync(SqliteDatabase database,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var session = new ReadSession(database, cancellationToken);
+            try
+            {
+                await session.snapshotEstablished.Task.ConfigureAwait(false);
+                return session;
+            }
+            catch
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
 
         public async IAsyncEnumerable<DataTransferRecord> StreamAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            var nextSequence = new Dictionary<DataTransferSection, long>();
-            foreach (var query in ExportQueries)
+            if (Interlocked.Exchange(ref streamStarted, 1) != 0)
+                throw new InvalidOperationException("An export read session can only be streamed once.");
+            streamRequested.TrySetResult();
+
+            await foreach (var record in records.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+                yield return record;
+        }
+
+        private async Task ProduceAsync(SqliteDatabase database)
+        {
+            var cancellationToken = lifetime.Token;
+            try
             {
-                if (!nextSequence.TryGetValue(query.Section, out var sequence)) sequence = query.FirstSequence;
-                await using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = query.Sql;
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+                await using var transaction = connection.BeginTransaction(deferred: true);
+                await using (var establishSnapshot = connection.CreateCommand())
                 {
-                    var values = new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["type"] = query.Type,
-                    };
-                    for (var index = 0; index < reader.FieldCount; index++)
-                        values[reader.GetName(index)] = reader.IsDBNull(index) ? null : reader.GetValue(index);
-                    var element = JsonSerializer.SerializeToElement(values);
-                    yield return new DataTransferRecord<JsonElement>(query.Section, sequence++, element);
+                    establishSnapshot.Transaction = transaction;
+                    establishSnapshot.CommandText = "SELECT id FROM app_metadata WHERE id = 1;";
+                    _ = await establishSnapshot.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
                 }
-                nextSequence[query.Section] = sequence;
+                snapshotEstablished.TrySetResult();
+                await streamRequested.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+                try
+                {
+                    var nextSequence = new Dictionary<DataTransferSection, long>();
+                    foreach (var query in ExportQueries)
+                    {
+                        if (!nextSequence.TryGetValue(query.Section, out var sequence)) sequence = query.FirstSequence;
+                        await using var command = connection.CreateCommand();
+                        command.Transaction = transaction;
+                        command.CommandText = query.Sql;
+                        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                        {
+                            var values = new Dictionary<string, object?>(StringComparer.Ordinal)
+                            {
+                                ["type"] = query.Type,
+                            };
+                            for (var index = 0; index < reader.FieldCount; index++)
+                                values[reader.GetName(index)] = reader.IsDBNull(index) ? null : reader.GetValue(index);
+                            var element = JsonSerializer.SerializeToElement(values);
+                            await records.Writer.WriteAsync(
+                                new DataTransferRecord<JsonElement>(query.Section, sequence++, element),
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                        nextSequence[query.Section] = sequence;
+                    }
+                    records.Writer.TryComplete();
+                }
+                finally
+                {
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Read-only disposal is best effort.
+                    }
+                }
+            }
+            catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+            {
+                snapshotEstablished.TrySetCanceled(cancellationToken);
+                records.Writer.TryComplete(exception);
+            }
+            catch (Exception exception)
+            {
+                snapshotEstablished.TrySetException(exception);
+                records.Writer.TryComplete(exception);
             }
         }
 
@@ -72,16 +143,10 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
         {
             if (disposed) return;
             disposed = true;
-            try
-            {
-                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Read-only disposal is best effort.
-            }
-            await transaction.DisposeAsync().ConfigureAwait(false);
-            await connection.DisposeAsync().ConfigureAwait(false);
+            lifetime.Cancel();
+            streamRequested.TrySetResult();
+            await producer.ConfigureAwait(false);
+            lifetime.Dispose();
         }
     }
 
@@ -232,7 +297,10 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
-    public async Task<PreparedImportId> CreateAsync(CancellationToken cancellationToken)
+    public Task<PreparedImportId> CreateAsync(CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() => CreateCoreAsync(cancellationToken), cancellationToken);
+
+    private async Task<PreparedImportId> CreateCoreAsync(CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(stagingDirectory);
         var id = new PreparedImportId(Guid.NewGuid());
@@ -264,8 +332,12 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         return id;
     }
 
-    public async Task AppendBatchAsync(PreparedImportId preparedImportId, IReadOnlyList<DataTransferRecord> records,
-        CancellationToken cancellationToken)
+    public Task AppendBatchAsync(PreparedImportId preparedImportId, IReadOnlyList<DataTransferRecord> records,
+        CancellationToken cancellationToken) => BackgroundOperation.RunAsync(
+        () => AppendBatchCoreAsync(preparedImportId, records, cancellationToken), cancellationToken);
+
+    private async Task AppendBatchCoreAsync(PreparedImportId preparedImportId,
+        IReadOnlyList<DataTransferRecord> records, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(records);
         if (!active.TryGetValue(preparedImportId.Value, out var state) ||
@@ -306,7 +378,11 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     }
 
     // DATA-003/DATA-004/DATA-005: validation only touches staging and a candidate DB.
-    public async Task<ImportPreviewDto> ValidateAsync(PreparedImportId preparedImportId,
+    public Task<ImportPreviewDto> ValidateAsync(PreparedImportId preparedImportId,
+        CancellationToken cancellationToken) => BackgroundOperation.RunAsync(
+        () => ValidateCoreAsync(preparedImportId, cancellationToken), cancellationToken);
+
+    private async Task<ImportPreviewDto> ValidateCoreAsync(PreparedImportId preparedImportId,
         CancellationToken cancellationToken)
     {
         if (!active.TryGetValue(preparedImportId.Value, out var state) ||
@@ -362,7 +438,12 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     // DATA-002/DATA-007: replacement is committed before installation-local bootstrap is applied.
     // A temporary snapshot of the old live rows remains on the same connection until bootstrap succeeds,
     // so a bootstrap or final-validation failure can restore the pre-import database before returning.
-    public async Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId,
+    public Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId,
+        DateTimeOffset importedAtUtc, CancellationToken cancellationToken) => BackgroundOperation.RunAsync(
+        () => TryConsumeAndReplaceLiveDataCoreAsync(preparedImportId, importedAtUtc, cancellationToken),
+        cancellationToken);
+
+    private async Task<bool> TryConsumeAndReplaceLiveDataCoreAsync(PreparedImportId preparedImportId,
         DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {
         if (!active.TryUpdate(preparedImportId.Value, PreparedImportState.Consuming,
@@ -551,17 +632,19 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         catch { /* Preserve the operation failure. Disposing the connection also rolls back an open transaction. */ }
     }
 
-    public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken)
-    {
+    public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() =>
+        {
         cancellationToken.ThrowIfCancellationRequested();
         active.TryRemove(preparedImportId.Value, out _);
         DeleteDatabaseFiles(StagePath(preparedImportId));
         DeleteDatabaseFiles(CandidatePath(preparedImportId));
         return Task.CompletedTask;
-    }
+        }, cancellationToken);
 
-    public Task DiscardAbandonedAsync(CancellationToken cancellationToken)
-    {
+    public Task DiscardAbandonedAsync(CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() =>
+        {
         cancellationToken.ThrowIfCancellationRequested();
         if (!Directory.Exists(stagingDirectory)) return Task.CompletedTask;
         foreach (var path in Directory.EnumerateFiles(stagingDirectory, "tkp-import-*.db*", SearchOption.TopDirectoryOnly))
@@ -572,7 +655,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             File.Delete(path);
         }
         return Task.CompletedTask;
-    }
+        }, cancellationToken);
 
     private string StagePath(PreparedImportId id) => Path.Combine(stagingDirectory,
         $"tkp-import-{id.Value:N}.stage.db");

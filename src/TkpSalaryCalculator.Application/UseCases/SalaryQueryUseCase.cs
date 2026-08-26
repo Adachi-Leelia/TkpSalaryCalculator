@@ -65,19 +65,25 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
         var requestedWeekdays = Enumerable.Range(0, end.Day)
             .Select(offset => start.AddDays(offset).DayOfWeek).Distinct().ToArray();
         var shiftsByWeekday = await shifts.GetForWeekdaysAsync(requestedWeekdays, cancellationToken).ConfigureAwait(false);
-        var result = new List<CalendarDayDto>(end.Day);
-        DailySalaryDto? selectedDay = null;
-        for (var date = start; date <= end; date = date.AddDays(1))
+        return await RunCalculationAsync(() =>
         {
-            var dayRecords = byDate.TryGetValue(date, out var values) ? values : [];
-            var daily = CalculateDay(date, dayRecords, calculationContext);
-            if (date == selectedDate) selectedDay = daily;
-            var weekdayShifts = shiftsByWeekday[date.DayOfWeek];
-            var appliedIds = dayRecords.Where(x => x.SourceBasicShiftId is not null).Select(x => x.SourceBasicShiftId!.Value).ToHashSet();
-            var candidateCount = weekdayShifts.Count(x => x.IsEnabled && !appliedIds.Contains(x.Id));
-            result.Add(new(date, dayRecords.Count, daily.CalculatedSubtotal, daily.UncalculatedCount, candidateCount));
-        }
-        return (result, selectedDay);
+            var result = new List<CalendarDayDto>(end.Day);
+            DailySalaryDto? selectedDay = null;
+            for (var date = start; date <= end; date = date.AddDays(1))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var dayRecords = byDate.TryGetValue(date, out var values) ? values : [];
+                var daily = CalculateDay(date, dayRecords, calculationContext);
+                if (date == selectedDate) selectedDay = daily;
+                var weekdayShifts = shiftsByWeekday[date.DayOfWeek];
+                var appliedIds = dayRecords.Where(x => x.SourceBasicShiftId is not null)
+                    .Select(x => x.SourceBasicShiftId!.Value).ToHashSet();
+                var candidateCount = weekdayShifts.Count(x => x.IsEnabled && !appliedIds.Contains(x.Id));
+                result.Add(new(date, dayRecords.Count, daily.CalculatedSubtotal, daily.UncalculatedCount,
+                    candidateCount));
+            }
+            return ((IReadOnlyList<CalendarDayDto>)result, selectedDay);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -96,10 +102,13 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
         var context = new SalaryCalculationContext(
             new Dictionary<YearMonth, SettingSnapshot> { [month] = snapshot },
             new Dictionary<HolidayCalendarVersionId, HolidayCalendar> { [calendar.VersionId] = calendar });
-        var daily = CalculateDay(workDate, values, context);
-        var shiftPreview = BasicShiftUseCase.BuildPreview(
-            workDate, sourceShifts, values, snapshot, calendar, calculator);
-        return new(daily, new MonthSettingsDto(month, snapshot), shiftPreview);
+        return await RunCalculationAsync(() =>
+        {
+            var daily = CalculateDay(workDate, values, context);
+            var shiftPreview = BasicShiftUseCase.BuildPreview(
+                workDate, sourceShifts, values, snapshot, calendar, calculator);
+            return new DayScreenDto(daily, new MonthSettingsDto(month, snapshot), shiftPreview);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -110,7 +119,8 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
         await foreach (var item in records.StreamRangeAsync(workDate, workDate, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false)) values.Add(item);
         var context = await LoadCalculationContextAsync(values.Count == 0 ? [] : [workDate], cancellationToken)
             .ConfigureAwait(false);
-        return CalculateDay(workDate, values, context);
+        return await RunCalculationAsync(() => CalculateDay(workDate, values, context), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -128,20 +138,24 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
             list.Add(record);
         }
         var calculationContext = await LoadCalculationContextAsync(byDate.Keys, cancellationToken).ConfigureAwait(false);
-        var days = new List<DailySalaryDto>();
-        var domainDays = new List<DailySalaryCalculation>();
-        foreach (var pair in byDate)
-        {
-            var day = CalculateDay(pair.Key, pair.Value, calculationContext);
-            days.Add(day);
-            domainDays.Add(ToDomain(day));
-        }
         var periodAllowances = await allowances.GetForPeriodAsync(payrollPeriodKey, cancellationToken).ConfigureAwait(false);
-        var aggregate = calculator.AggregatePeriod(period, domainDays, periodAllowances);
-        return new(aggregate.Period, days,
-            [.. periodAllowances.Select(x => new MonthlyAllowanceDto(x.Id, x.DisplayName, x.Amount))],
-            aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
-            aggregate.AllowanceSubtotal, aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
+        return await RunCalculationAsync(() =>
+        {
+            var days = new List<DailySalaryDto>();
+            var domainDays = new List<DailySalaryCalculation>();
+            foreach (var pair in byDate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var day = CalculateDay(pair.Key, pair.Value, calculationContext);
+                days.Add(day);
+                domainDays.Add(ToDomain(day));
+            }
+            var aggregate = calculator.AggregatePeriod(period, domainDays, periodAllowances);
+            return new PayrollPeriodSummaryDto(aggregate.Period, days,
+                [.. periodAllowances.Select(x => new MonthlyAllowanceDto(x.Id, x.DisplayName, x.Amount))],
+                aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
+                aggregate.AllowanceSubtotal, aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<SalaryCalculationContext> LoadCalculationContextAsync(
@@ -186,6 +200,13 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
                 settingMonth))],
             aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
             aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
+    }
+
+    private static Task<T> RunCalculationAsync<T>(Func<T> calculation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(calculation);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(calculation, cancellationToken);
     }
 
     private static DailySalaryCalculation ToDomain(DailySalaryDto value)

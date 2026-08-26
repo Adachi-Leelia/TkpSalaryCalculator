@@ -176,29 +176,34 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
             [current.HolidayCalendarVersionId, candidate.HolidayCalendarVersionId], cancellationToken).ConfigureAwait(false);
         var currentCalendar = calendars[current.HolidayCalendarVersionId];
         var candidateCalendar = calendars[candidate.HolidayCalendarVersionId];
-        var calculationSnapshots = monthRecords.Select(x => x.WorkDate).Distinct().ToDictionary(
-            date => date,
-            date => (
-                Current: ApplicationSupport.ForCalculationDate(current, date, currentCalendar),
-                Candidate: ApplicationSupport.ForCalculationDate(candidate, date, candidateCalendar)));
-        long currentTotal = 0;
-        long replacementTotal = 0;
-        var affected = 0;
-        var uncalculated = 0;
-        foreach (var value in monthRecords)
+        return await Task.Run(() =>
         {
-            var domain = ApplicationSupport.ToDomain(value);
-            var snapshots = calculationSnapshots[value.WorkDate];
-            var before = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
-                snapshots.Current, currentCalendar));
-            var after = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
-                snapshots.Candidate, candidateCalendar));
-            currentTotal += before.Total?.Value ?? 0;
-            replacementTotal += after.Total?.Value ?? 0;
-            if (!Equals(before, after)) affected++;
-            if (after.Status == SalaryCalculationStatus.Uncalculated) uncalculated++;
-        }
-        return new(month, confirmation, affected, new YenAmount(currentTotal), new YenAmount(replacementTotal), uncalculated, []);
+            var calculationSnapshots = monthRecords.Select(x => x.WorkDate).Distinct().ToDictionary(
+                date => date,
+                date => (
+                    Current: ApplicationSupport.ForCalculationDate(current, date, currentCalendar),
+                    Candidate: ApplicationSupport.ForCalculationDate(candidate, date, candidateCalendar)));
+            long currentTotal = 0;
+            long replacementTotal = 0;
+            var affected = 0;
+            var uncalculated = 0;
+            foreach (var value in monthRecords)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var domain = ApplicationSupport.ToDomain(value);
+                var snapshots = calculationSnapshots[value.WorkDate];
+                var before = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
+                    snapshots.Current, currentCalendar));
+                var after = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
+                    snapshots.Candidate, candidateCalendar));
+                currentTotal += before.Total?.Value ?? 0;
+                replacementTotal += after.Total?.Value ?? 0;
+                if (!Equals(before, after)) affected++;
+                if (after.Status == SalaryCalculationStatus.Uncalculated) uncalculated++;
+            }
+            return new SettingReplacementPreviewDto(month, confirmation, affected, new YenAmount(currentTotal),
+                new YenAmount(replacementTotal), uncalculated, []);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ValidateConfirmationAsync(YearMonth month, SettingSnapshotReplacementDto replacement,

@@ -50,13 +50,20 @@ public sealed class SqliteDatabase
     private readonly bool bootstrapDefaults;
     private readonly SemaphoreSlim initializationGate = new(1, 1);
     private readonly AsyncLocal<TransactionContext?> ambientTransaction = new();
+    private readonly Action? workerEntered;
     private bool initialized;
 
     public SqliteDatabase(string databasePath, bool bootstrapDefaults = true)
+        : this(databasePath, bootstrapDefaults, null)
+    {
+    }
+
+    internal SqliteDatabase(string databasePath, bool bootstrapDefaults, Action? workerEntered)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         DatabasePath = Path.GetFullPath(databasePath);
         this.bootstrapDefaults = bootstrapDefaults;
+        this.workerEntered = workerEntered;
         connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = DatabasePath,
@@ -70,7 +77,10 @@ public sealed class SqliteDatabase
     public string DatabasePath { get; }
 
     /// <summary>未作成 DB を作成し、古い版には順次マイグレーションを適用します。</summary>
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        BackgroundOperation.RunAsync(() => InitializeCoreAsync(cancellationToken), cancellationToken, workerEntered);
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
         if (initialized) return;
 
@@ -111,18 +121,28 @@ public sealed class SqliteDatabase
 
     internal TransactionContext? AmbientTransaction => ambientTransaction.Value;
 
-    internal async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
+    internal Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() => OpenConnectionCoreAsync(cancellationToken), cancellationToken, workerEntered);
+
+    private async Task<SqliteConnection> OpenConnectionCoreAsync(CancellationToken cancellationToken)
     {
         await InitializeAsync(cancellationToken).ConfigureAwait(false);
         return await OpenUninitializedConnectionAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task<T> ReadAsync<T>(
+    internal Task<T> ReadAsync<T>(
         Func<SqliteConnection, SqliteTransaction?, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        return BackgroundOperation.RunAsync(() => ReadCoreAsync(operation, cancellationToken), cancellationToken,
+            workerEntered);
+    }
+
+    private async Task<T> ReadCoreAsync<T>(
+        Func<SqliteConnection, SqliteTransaction?, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
         var ambient = ambientTransaction.Value;
         if (ambient is not null)
         {
@@ -133,11 +153,19 @@ public sealed class SqliteDatabase
         return await operation(connection, null, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task<T> WriteAsync<T>(
+    internal Task<T> WriteAsync<T>(
         Func<SqliteConnection, SqliteTransaction, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        return BackgroundOperation.RunAsync(() => WriteCoreAsync(operation, cancellationToken), cancellationToken,
+            workerEntered);
+    }
+
+    private async Task<T> WriteCoreAsync<T>(
+        Func<SqliteConnection, SqliteTransaction, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
         var ambient = ambientTransaction.Value;
         if (ambient is not null)
         {
@@ -153,10 +181,16 @@ public sealed class SqliteDatabase
         return result!;
     }
 
-    internal async Task RunTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+    internal Task RunTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        return BackgroundOperation.RunAsync(() => RunTransactionCoreAsync(operation, cancellationToken),
+            cancellationToken, workerEntered);
+    }
+
+    private async Task RunTransactionCoreAsync(Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
         if (ambientTransaction.Value is not null)
         {
             await operation(cancellationToken).ConfigureAwait(false);
