@@ -11,6 +11,7 @@
     <Color x:Key="TextPrimary">#17231E</Color>
     <Color x:Key="TextSecondary">#52615A</Color>
     <Color x:Key="Outline">#BEC9C3</Color>
+    <Color x:Key="Success">#2E6B47</Color>
     <Color x:Key="Error">#9F2D25</Color>
     <Color x:Key="ErrorContainer">#FCE8E6</Color>
     <Color x:Key="Warning">#735B00</Color>
