@@ -105,6 +105,11 @@ public interface ISalaryQueryUseCase
     /// <summary>指定日 1 日分の詳細な給与結果を取得します。</summary>
     Task<DailySalaryDto> GetDayAsync(DateOnly workDate, CancellationToken cancellationToken);
 
+    /// <summary>指定した勤務記録 1 件と、その勤務日を含む給与期間の境界だけを取得します。</summary>
+    Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+        WorkRecordId workRecordId,
+        CancellationToken cancellationToken);
+
     /// <summary>直接適用する月額手当を含む給与期間の概要を取得します。</summary>
     Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(
         PayrollPeriodKey payrollPeriodKey,

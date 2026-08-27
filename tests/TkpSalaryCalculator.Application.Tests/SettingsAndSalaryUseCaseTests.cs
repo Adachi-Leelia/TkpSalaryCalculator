@@ -341,6 +341,44 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task RSP004_WorkRecordCalculationLoadsOnlyTheRequestedRecordContext()
+    {
+        var context = new TestContext();
+        var selected = TestData.Work(new DateOnly(2026, 8, 10));
+        context.Works.Values.AddRange([
+            TestData.Work(new DateOnly(2026, 7, 21)),
+            selected,
+            TestData.Work(new DateOnly(2026, 8, 20)),
+        ]);
+        context.Closing.Values.Add(new ClosingRule(
+            new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)),
+            20));
+        context.Allowances.Values.Add(new MonthlyAllowance(
+            new MonthlyAllowanceId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(2026, 8)),
+            "交通手当",
+            new YenAmount(5_000)));
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods);
+
+        var result = await useCase.GetWorkRecordCalculationAsync(selected.Id, default);
+
+        Assert.Equal(selected.Id, result.Record.WorkRecord.Id);
+        Assert.Equal(1_000, result.Record.Calculation.Total?.Value);
+        Assert.Equal(new DateOnly(2026, 7, 21), result.Period.StartDate);
+        Assert.Equal(new DateOnly(2026, 8, 20), result.Period.EndDate);
+        Assert.Equal(1, context.Works.FindCalls);
+        Assert.Equal(0, context.Works.StreamRangeCalls);
+        Assert.Equal(1, context.Settings.EffectiveMonthCalls);
+        Assert.Equal(0, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal(1, context.Holidays.GetCalls);
+        Assert.Equal(0, context.Holidays.GetManyCalls);
+        Assert.Equal(1, context.Closing.GetHistoryCalls);
+        Assert.Equal(0, context.Allowances.GetForPeriodCalls);
+    }
+
+    [Fact]
     public async Task CalendarDayAndMonthQueries_UseOrchestratedApplicationModels()
     {
         var context = new TestContext();

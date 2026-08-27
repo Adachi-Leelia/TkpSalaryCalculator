@@ -58,7 +58,7 @@ public sealed class CalculationDetailViewModelTests
     }
 
     [Fact]
-    public async Task SCRCALC01_RecordEntryShowsOnlyTheSelectedRecordWithoutPeriodTotals()
+    public async Task RSP004_RecordEntryUsesSingleRecordQueryWithoutPeriodTotals()
     {
         var selected = CalculatedRecord(RecordId);
         var uncalculated = UncalculatedRecord(OtherRecordId);
@@ -72,13 +72,13 @@ public sealed class CalculationDetailViewModelTests
             UncalculatedCount = 1,
         };
         var salary = new SalaryStub { Summary = summary };
-        var periods = new PayrollPeriodStub();
-        var viewModel = CreateViewModel(salary, periods);
+        var viewModel = CreateViewModel(salary);
         viewModel.SetWorkRecord(WorkDate, RecordId);
 
         await viewModel.LoadAsync();
 
-        Assert.Equal(WorkDate, periods.RequestedDate);
+        Assert.Equal(RecordId, salary.RequestedWorkRecordId);
+        Assert.Null(salary.RequestedKey);
         Assert.False(viewModel.ShowsPayrollPeriodBreakdown);
         Assert.False(viewModel.HasPeriodUncalculated);
         Assert.False(viewModel.HasPremiumTotals);
@@ -164,11 +164,8 @@ public sealed class CalculationDetailViewModelTests
         Assert.NotEmpty(viewModel.Rows);
     }
 
-    private static CalculationDetailViewModel CreateViewModel(
-        SalaryStub salary,
-        PayrollPeriodStub? periods = null) => new(
+    private static CalculationDetailViewModel CreateViewModel(SalaryStub salary) => new(
         salary,
-        periods ?? new PayrollPeriodStub(),
         new JapaneseDisplayFormatter(),
         new UserErrorPresenter(),
         new AppSessionState(new DateOnly(2026, 8, 21)));
@@ -219,6 +216,7 @@ public sealed class CalculationDetailViewModelTests
     {
         public required PayrollPeriodSummaryDto Summary { get; init; }
         public PayrollPeriodKey? RequestedKey { get; private set; }
+        public WorkRecordId? RequestedWorkRecordId { get; private set; }
 
         public Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
             YearMonth yearMonth, DateOnly selectedDate, CancellationToken cancellationToken) =>
@@ -237,27 +235,17 @@ public sealed class CalculationDetailViewModelTests
             throw new NotSupportedException();
         public Task<DailySalaryDto> GetDayAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-    }
 
-    private sealed class PayrollPeriodStub : IPayrollPeriodSettingsUseCase
-    {
-        public DateOnly? RequestedDate { get; private set; }
-
-        public Task<PayrollPeriod> FindPeriodAsync(DateOnly localDate, CancellationToken cancellationToken)
+        public Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+            WorkRecordId workRecordId,
+            CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RequestedDate = localDate;
-            return Task.FromResult(new PayrollPeriod(PeriodKey, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)));
+            RequestedWorkRecordId = workRecordId;
+            var record = Summary.Days.SelectMany(x => x.Records)
+                .Single(x => x.WorkRecord.Id == workRecordId);
+            return Task.FromResult(new WorkRecordCalculationDto(Summary.Period, record));
         }
-
-        public Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(ReplaceClosingRuleCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<EffectiveClosingRuleDto?> GetClosingRuleAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task ReplaceClosingRuleAsync(ReplaceClosingRuleCommand command, ClosingRuleReplacementConfirmationToken confirmationToken, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<IReadOnlyList<MonthlyAllowanceDto>> GetAllowancesAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<MonthlyAllowanceDto> SaveAllowanceAsync(SaveMonthlyAllowanceCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task DeleteAllowanceAsync(MonthlyAllowanceId id, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class ContextTrackingReadOnlyList<T>(

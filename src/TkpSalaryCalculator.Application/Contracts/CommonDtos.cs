@@ -117,6 +117,13 @@ public sealed record WorkRecordSalaryDto(
     string? TimeCategoryDisplayName = null,
     YearMonth? SettingMonth = null);
 
+/// <summary>勤務記録 1 件の計算内訳画面に必要なデータだけを保持します。</summary>
+/// <param name="Period">勤務日を含む、両端の日付を含む給与期間。</param>
+/// <param name="Record">指定された勤務記録と、その計算根拠および結果。</param>
+public sealed record WorkRecordCalculationDto(
+    PayrollPeriod Period,
+    WorkRecordSalaryDto Record);
+
 /// <summary>1 日分の計算詳細を保持します。</summary>
 /// <param name="Date">現地日付。</param>
 /// <param name="Records">保存済み勤務内容と各計算結果の組み合わせ。</param>

@@ -1,4 +1,5 @@
 using TkpSalaryCalculator.Application.Contracts;
+using TkpSalaryCalculator.Application.Errors;
 using TkpSalaryCalculator.Application.Internal;
 using TkpSalaryCalculator.Application.Ports;
 using TkpSalaryCalculator.Domain.Contracts;
@@ -121,6 +122,40 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
             .ConfigureAwait(false);
         return await RunCalculationAsync(() => CalculateDay(workDate, values, context), cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+        WorkRecordId workRecordId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var record = await records.FindAsync(workRecordId, cancellationToken).ConfigureAwait(false)
+            ?? throw new ApplicationErrorException(
+                "WORK_NOT_FOUND",
+                "計算内訳を表示する勤務記録が見つかりませんでした。");
+        var settingMonth = ApplicationSupport.ToYearMonth(record.WorkDate);
+        var snapshot = await settings.GetEffectiveForMonthAsync(settingMonth, cancellationToken)
+            .ConfigureAwait(false);
+        var holiday = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken)
+            .ConfigureAwait(false);
+        var closingRuleHistory = ClosingRuleHistorySupport.ForCalculation(
+            await closingRules.GetHistoryAsync(cancellationToken).ConfigureAwait(false));
+
+        return await RunCalculationAsync(() =>
+        {
+            var calculationSnapshot = ApplicationSupport.ForCalculationDate(snapshot, record.WorkDate, holiday);
+            var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(
+                ApplicationSupport.ToDomain(record), calculationSnapshot, holiday));
+            var serviceName = snapshot.Services.FirstOrDefault(x => x.Id == record.ServiceId)?.DisplayName;
+            var categoryName = record.TimeCategoryId is { } categoryId
+                ? snapshot.TimeCategories.FirstOrDefault(x => x.Id == categoryId)?.DisplayName
+                : null;
+            var period = periodCalculator.FindPeriod(record.WorkDate, closingRuleHistory);
+            return new WorkRecordCalculationDto(
+                period,
+                new WorkRecordSalaryDto(record, calculation, serviceName, categoryName, settingMonth));
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

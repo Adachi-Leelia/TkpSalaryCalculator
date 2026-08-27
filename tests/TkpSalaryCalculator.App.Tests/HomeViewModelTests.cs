@@ -393,6 +393,10 @@ public sealed class HomeViewModelTests
 
         public Task<DailySalaryDto> GetDayAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+            WorkRecordId workRecordId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class PayrollPeriodStub(PayrollPeriod current) : IPayrollPeriodSettingsUseCase

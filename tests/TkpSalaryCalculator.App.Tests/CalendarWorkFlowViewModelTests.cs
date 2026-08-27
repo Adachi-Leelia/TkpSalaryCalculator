@@ -789,6 +789,9 @@ public sealed class CalendarWorkFlowViewModelTests
                 : Task.FromResult(Days.GetValueOrDefault(workDate, EmptyDay(workDate)));
         public Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+        public Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+            WorkRecordId workRecordId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class WorkUseCaseStub : IWorkRecordUseCase
