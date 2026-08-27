@@ -41,7 +41,7 @@ public sealed class TimeZoneLocalDateConverter(TimeZoneInfo timeZone) : ILocalDa
 /// <summary>接続設定、スキーマ更新および Ambient トランザクションを所有します。</summary>
 public sealed class SqliteDatabase
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
     public const int CurrentSettingSnapshotSchemaVersion = 1;
     public const int CurrentExportFormatVersion = 1;
     public const int CurrentBundledBootstrapVersion = 1;
@@ -270,8 +270,30 @@ public sealed class SqliteDatabase
                 .ConfigureAwait(false),
             1 => await MigrateFromOneToTwoAsync(connection, cancellationToken).ConfigureAwait(false),
             2 => await MigrateFromTwoToThreeAsync(connection, cancellationToken).ConfigureAwait(false),
+            3 => await MigrateFromThreeToFourAsync(connection, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"No migration from schema version {fromVersion} is available."),
         };
+    }
+
+    private static async Task<int> MigrateFromThreeToFourAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, transaction, """
+                DROP INDEX IF EXISTS ix_work_record_source_preset;
+                PRAGMA user_version = 4;
+                """, cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 4;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async Task<int> MigrateFromTwoToThreeAsync(

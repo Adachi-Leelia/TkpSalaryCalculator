@@ -312,39 +312,6 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         return Convert.ToInt64(await command.ExecuteScalarAsync(token).ConfigureAwait(false)) != 0;
     }, cancellationToken);
 
-    public Task<WorkInputHistory> GetInputHistoryAsync(
-        CancellationToken cancellationToken) => database.ReadAsync(async (connection, transaction, token) =>
-    {
-        var usageCounts = new Dictionary<ServicePresetId, long>();
-        await using (var usageCommand = connection.CreateCommand())
-        {
-            usageCommand.Transaction = transaction;
-            usageCommand.CommandText = """
-                SELECT source_service_preset_id, COUNT(*) AS usage_count
-                FROM work_record WHERE source_service_preset_id IS NOT NULL GROUP BY source_service_preset_id;
-                """;
-            await using var reader = await usageCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
-                usageCounts[new ServicePresetId(SqliteValue.Guid(reader.GetString("source_service_preset_id")))] =
-                    reader.GetInt64("usage_count");
-        }
-
-        WorkRecordDto? mostRecent = null;
-        await using (var recentCommand = connection.CreateCommand())
-        {
-            recentCommand.Transaction = transaction;
-            recentCommand.CommandText = """
-                SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
-                       end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
-                FROM work_record ORDER BY updated_at_utc DESC, work_date DESC, id DESC LIMIT 1;
-                """;
-            await using var reader = await recentCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
-            if (await reader.ReadAsync(token).ConfigureAwait(false)) mostRecent = Read(reader);
-        }
-
-        return new WorkInputHistory(usageCounts, mostRecent);
-    }, cancellationToken);
-
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken) => FindBySqlAsync("""
         SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
                end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id

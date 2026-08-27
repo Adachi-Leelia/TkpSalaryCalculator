@@ -65,14 +65,10 @@ public sealed record SaveWorkRecordCommand(
 /// <summary>勤務入力用のサービスプリセット候補を表します。</summary>
 /// <param name="Preset">現在の入力補助プリセット。</param>
 /// <param name="IsAvailable">選択日の設定スナップショットで、変換せずにプリセットを使用できるかどうか。</param>
-/// <param name="UsageCount">プリセットから作成され、保存された勤務記録の件数。</param>
-/// <param name="IsMostRecentlyUsed">直近で確定した勤務記録に使用されたプリセットかどうか。</param>
 /// <param name="Issues">利用できない候補を使用できない理由、または処理を妨げないその他の案内。</param>
 public sealed record ServicePresetCandidateDto(
     ServicePresetDto Preset,
     bool IsAvailable,
-    long UsageCount,
-    bool IsMostRecentlyUsed,
     IReadOnlyList<IssueDto> Issues);
 
 /// <summary>1 日分の勤務入力を開くために必要な設定と順序付け済み候補をすべて保持します。</summary>

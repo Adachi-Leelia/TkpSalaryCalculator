@@ -180,22 +180,11 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
     public int? UpsertFailureAtCall { get; set; }
     public TaskCompletionSource? UpsertGate { get; set; }
     public int UpsertCalls { get; private set; }
-    public int InputHistoryCalls { get; private set; }
     public int FindCalls { get; private set; }
     public int StreamRangeCalls { get; private set; }
     public Task<bool> AnyAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult(Values.Count != 0);
-    }
-
-    public Task<WorkInputHistory> GetInputHistoryAsync(CancellationToken cancellationToken)
-    {
-        InputHistoryCalls++;
-        IReadOnlyDictionary<ServicePresetId, long> usageCounts = Values
-            .Where(x => x.SourceServicePresetId is not null)
-            .GroupBy(x => x.SourceServicePresetId!.Value)
-            .ToDictionary(x => x.Key, x => (long)x.Count());
-        return Task.FromResult(new WorkInputHistory(usageCounts, Values.LastOrDefault()));
     }
 
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken)

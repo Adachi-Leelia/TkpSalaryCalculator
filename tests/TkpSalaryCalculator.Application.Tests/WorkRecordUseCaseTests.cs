@@ -355,7 +355,7 @@ public sealed class WorkRecordUseCaseTests
     }
 
     [Fact]
-    public async Task GetInputOptions_OrdersByConfiguredDisplayOrderRegardlessOfHistory()
+    public async Task GetInputOptions_OrdersByConfiguredDisplayOrderWithoutReadingWorkHistory()
     {
         var context = new TestContext();
         var frequent = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "頻繁", TestData.ServiceId,
@@ -370,10 +370,8 @@ public sealed class WorkRecordUseCaseTests
         var result = await context.WorkUseCase().GetInputOptionsAsync(new(2026, 8, 1), default);
 
         Assert.Equal([frequent.Id, recent.Id], result.PresetCandidates.Select(x => x.Preset.Id));
-        Assert.Equal([2L, 1L], result.PresetCandidates.Select(x => x.UsageCount));
-        Assert.False(result.PresetCandidates[0].IsMostRecentlyUsed);
-        Assert.True(result.PresetCandidates[1].IsMostRecentlyUsed);
-        Assert.Equal(1, context.Works.InputHistoryCalls);
+        Assert.Equal(0, context.Works.FindCalls);
+        Assert.Equal(0, context.Works.StreamRangeCalls);
         Assert.Equal(1, context.Presets.GetAllCalls);
     }
 
@@ -398,7 +396,6 @@ public sealed class WorkRecordUseCaseTests
         Assert.Equal(first.Calculation?.Total, second.Calculation?.Total);
         Assert.Equal(1, context.Works.FindCalls);
         Assert.Equal(0, context.Works.StreamRangeCalls);
-        Assert.Equal(1, context.Works.InputHistoryCalls);
         Assert.Equal(1, context.Settings.EffectiveMonthCalls);
         Assert.Equal(1, context.Holidays.GetCalls);
         Assert.Equal(1, context.Presets.GetAllCalls);
@@ -458,7 +455,7 @@ public sealed class WorkRecordUseCaseTests
     }
 
     [Fact]
-    public async Task GetInputOptions_DisabledMonthlySettingKeepsCandidateWithReasonAndHistoryStatistics()
+    public async Task GetInputOptions_DisabledMonthlySettingKeepsCandidateWithReason()
     {
         var context = new TestContext();
         context.Settings.Fallback = TestData.Snapshot(serviceEnabled: false, categoryEnabled: false);
@@ -471,8 +468,6 @@ public sealed class WorkRecordUseCaseTests
 
         var candidate = Assert.Single(result.PresetCandidates);
         Assert.False(candidate.IsAvailable);
-        Assert.True(candidate.IsMostRecentlyUsed);
-        Assert.Equal(1, candidate.UsageCount);
         Assert.Contains(candidate.Issues, issue => issue.Code == "WORK_SERVICE_UNAVAILABLE");
     }
 
@@ -486,6 +481,7 @@ public sealed class WorkRecordUseCaseTests
         Assert.Equal(new YearMonth(2026, 8), result.YearMonth);
         Assert.Equal(context.Settings.Fallback, result.Snapshot);
         Assert.Equal(0, context.Presets.GetAllCalls);
-        Assert.Equal(0, context.Works.InputHistoryCalls);
+        Assert.Equal(0, context.Works.FindCalls);
+        Assert.Equal(0, context.Works.StreamRangeCalls);
     }
 }

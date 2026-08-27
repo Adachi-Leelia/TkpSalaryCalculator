@@ -465,10 +465,10 @@ public sealed class CalendarWorkFlowViewModelTests
             [
                 new ServicePresetCandidateDto(
                     new ServicePresetDto(Preset, "訪問・通常", Service, Category, new WorkMinutes(60), new DisplayOrder(0), true),
-                    true, 3, true, []),
+                    true, []),
                 new ServicePresetCandidateDto(
                     new ServicePresetDto(unavailablePreset, "利用不可", disabledService, null, new WorkMinutes(60), new DisplayOrder(1), false),
-                    false, 0, false, [new IssueDto("WORK_SERVICE_UNAVAILABLE", null, "この年月では使用できません。")]),
+                    false, [new IssueDto("WORK_SERVICE_UNAVAILABLE", null, "この年月では使用できません。")]),
             ]);
 
         await fixture.ViewModel.LoadAsync();
@@ -501,7 +501,7 @@ public sealed class CalendarWorkFlowViewModelTests
             [
                 new ServicePresetCandidateDto(
                     new ServicePresetDto(unavailablePreset, "利用不可", disabledService, disabledCategory, new WorkMinutes(60), new DisplayOrder(0), false),
-                    false, 1, true, [new IssueDto("WORK_SERVICE_UNAVAILABLE", null, "この年月では使用できません。")]),
+                    false, [new IssueDto("WORK_SERVICE_UNAVAILABLE", null, "この年月では使用できません。")]),
             ]);
         var viewModel = new WorkEditorViewModel(
             work, new CalendarNavigatorStub(), new IssuePresenter(), new JapaneseDisplayFormatter(),
@@ -731,7 +731,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var preset = new ServicePresetDto(Preset, "訪問・通常", Service, Category, new WorkMinutes(60), new DisplayOrder(0), true);
         return new WorkInputOptionsDto(
             TargetDate, new MonthSettingsDto(new YearMonth(2026, 8), snapshot),
-            presetCandidates ?? [new ServicePresetCandidateDto(preset, true, 3, true, [])]);
+            presetCandidates ?? [new ServicePresetCandidateDto(preset, true, [])]);
     }
 
     private sealed class EditorFixture

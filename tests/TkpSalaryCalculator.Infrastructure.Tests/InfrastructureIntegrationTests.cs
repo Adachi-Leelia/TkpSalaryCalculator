@@ -48,13 +48,16 @@ public sealed class InfrastructureIntegrationTests
             "ux_snapshot_rate_service", "ux_snapshot_rate_time_category", "ix_snapshot_premium_snapshot",
             "ix_snapshot_count_bonus_snapshot", "ix_service_preset_order", "ix_basic_shift_weekday",
             "ix_work_record_date", "ix_work_record_service_date", "ux_work_record_shift_date",
-            "ix_work_record_source_preset",
             "ux_work_record_save_operation", "ux_closing_rule_effective_month", "ix_monthly_allowance_period",
             "ix_holiday_date_lookup",
         };
         foreach (var index in requiredIndexes)
             Assert.Equal(1L, await ScalarLongAsync(connection,
                 $"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{index}';"));
+        Assert.Equal(0L, await ScalarLongAsync(connection, """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'index' AND name = 'ix_work_record_source_preset';
+            """));
 
         var requiredForeignKeys = new[]
         {
@@ -134,7 +137,6 @@ public sealed class InfrastructureIntegrationTests
             {
                 await versionOne.OpenAsync();
                 await ExecuteAsync(versionOne, """
-                    DROP INDEX ix_work_record_source_preset;
                     ALTER TABLE app_metadata DROP COLUMN bundled_bootstrap_version;
                     PRAGMA user_version = 1;
                     """);
@@ -369,29 +371,7 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
-    public async Task WORK001_MostRecentUsesUpdatedTimestampBeforeWorkDate()
-    {
-        await using var fixture = await DatabaseFixture.CreateSeededAsync();
-        var newerWorkDate = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 20),
-            new ServiceId(fixture.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
-            null, null, null);
-        var earlierWorkDateButLaterUpdate = newerWorkDate with
-        {
-            Id = new WorkRecordId(Guid.NewGuid()),
-            WorkDate = new DateOnly(2026, 8, 1),
-        };
-        await new SqliteWorkRecordRepository(fixture.Database,
-            new FixedClock(new DateTimeOffset(2026, 8, 16, 1, 0, 0, TimeSpan.Zero)))
-            .UpsertAsync(newerWorkDate, default);
-        var repository = new SqliteWorkRecordRepository(fixture.Database,
-            new FixedClock(new DateTimeOffset(2026, 8, 16, 2, 0, 0, TimeSpan.Zero)));
-        await repository.UpsertAsync(earlierWorkDateButLaterUpdate, default);
-
-        Assert.Equal(earlierWorkDateButLaterUpdate.Id, (await repository.GetInputHistoryAsync(default)).MostRecent!.Id);
-    }
-
-    [Fact]
-    public async Task DB007_VersionOneToCurrentAddsMeasuredUsageIndexAndPreservesInputHistory()
+    public async Task DB007_VersionThreeToCurrentRemovesUnusedHistoryIndexAndPreservesWorkRecords()
     {
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 0, 0, TimeSpan.Zero));
@@ -402,10 +382,12 @@ public sealed class InfrastructureIntegrationTests
             preset.ServiceId, null, WorkInputMode.Duration, new WorkMinutes(60), null, null,
             preset.Id, null, null);
         await new SqliteWorkRecordRepository(fixture.Database, clock).UpsertAsync(record, default);
-        await using (var versionOne = await fixture.OpenRawAsync())
-            await ExecuteAsync(versionOne, """
-                DROP INDEX ix_work_record_source_preset;
-                PRAGMA user_version = 1;
+        await using (var versionThree = await fixture.OpenRawAsync())
+            await ExecuteAsync(versionThree, """
+                CREATE INDEX ix_work_record_source_preset
+                    ON work_record(source_service_preset_id)
+                    WHERE source_service_preset_id IS NOT NULL;
+                PRAGMA user_version = 3;
                 """);
 
         var migrated = new SqliteDatabase(fixture.DatabasePath);
@@ -415,27 +397,11 @@ public sealed class InfrastructureIntegrationTests
         Assert.Equal(SqliteDatabase.CurrentSchemaVersion, await ScalarLongAsync(connection, "PRAGMA user_version;"));
         Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(connection,
             "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
-        Assert.Equal(1L, await ScalarLongAsync(connection, """
+        Assert.Equal(0L, await ScalarLongAsync(connection, """
             SELECT COUNT(*) FROM sqlite_master
             WHERE type = 'index' AND name = 'ix_work_record_source_preset';
             """));
-        var history = await new SqliteWorkRecordRepository(migrated, clock).GetInputHistoryAsync(default);
-        Assert.Equal(record.Id, history.MostRecent!.Id);
-        Assert.Equal(1, history.ServicePresetUsageCounts[preset.Id]);
-
-        await using var plan = connection.CreateCommand();
-        plan.CommandText = """
-            EXPLAIN QUERY PLAN
-            SELECT source_service_preset_id, COUNT(*) AS usage_count
-            FROM work_record
-            WHERE source_service_preset_id IS NOT NULL
-            GROUP BY source_service_preset_id;
-            """;
-        await using var reader = await plan.ExecuteReaderAsync();
-        var details = new List<string>();
-        while (await reader.ReadAsync()) details.Add(reader.GetString(3));
-        Assert.Contains(details, detail => detail.Contains(
-            "ix_work_record_source_preset", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(record, await new SqliteWorkRecordRepository(migrated, clock).FindAsync(record.Id, default));
     }
 
     [Fact]

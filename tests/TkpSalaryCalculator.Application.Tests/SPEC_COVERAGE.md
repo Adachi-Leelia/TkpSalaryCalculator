@@ -31,7 +31,7 @@ or orchestration coverage that complements the end-to-end specification case.
 | `Save_ReusedOperationIdWithDifferentInput_IsRejectedPendingAndPersisted` | WORK-007 |
 | `GetForDateAndDelete_ReflectStoredRecords` | WORK-009, APP-WORK-QUERY |
 | `Preview_RejectsInvalidModeAndOverTwentyFourHours_AndHonorsCancellation` | WORK-006, WORK-014, APP-CANCEL |
-| `GetInputOptions_OrdersByConfiguredDisplayOrderRegardlessOfHistory` | WORK-001, WORK-012 |
+| `GetInputOptions_OrdersByConfiguredDisplayOrderWithoutReadingWorkHistory` | WORK-001, WORK-012 |
 
 ## BasicShiftUseCaseTests
 

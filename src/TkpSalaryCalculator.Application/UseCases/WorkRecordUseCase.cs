@@ -43,14 +43,13 @@ public sealed class WorkRecordUseCase(
         var month = ApplicationSupport.ToYearMonth(workDate);
         var snapshot = await settings.GetEffectiveForMonthAsync(month, cancellationToken).ConfigureAwait(false);
         var allPresets = await presets.GetAllAsync(cancellationToken).ConfigureAwait(false);
-        var history = await records.GetInputHistoryAsync(cancellationToken).ConfigureAwait(false);
         var existing = workRecordId is null
             ? null
             : await records.FindAsync(workRecordId.Value, cancellationToken).ConfigureAwait(false);
         var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
 
         return new(
-            BuildInputOptions(workDate, snapshot, allPresets, history),
+            BuildInputOptions(workDate, snapshot, allPresets),
             existing,
             calendar);
     }
@@ -74,26 +73,21 @@ public sealed class WorkRecordUseCase(
         var snapshot = await settings.GetEffectiveForMonthAsync(ApplicationSupport.ToYearMonth(workDate), cancellationToken)
             .ConfigureAwait(false);
         var allPresets = await presets.GetAllAsync(cancellationToken).ConfigureAwait(false);
-        var history = await records.GetInputHistoryAsync(cancellationToken).ConfigureAwait(false);
-        return BuildInputOptions(workDate, snapshot, allPresets, history);
+        return BuildInputOptions(workDate, snapshot, allPresets);
     }
 
     private static WorkInputOptionsDto BuildInputOptions(
         DateOnly workDate,
         SettingSnapshot snapshot,
-        IReadOnlyList<ServicePresetDto> allPresets,
-        WorkInputHistory history)
+        IReadOnlyList<ServicePresetDto> allPresets)
     {
         var monthSettings = new MonthSettingsDto(ApplicationSupport.ToYearMonth(workDate), snapshot);
-        var usage = history.ServicePresetUsageCounts;
-        var recent = history.MostRecent;
         var candidates = allPresets.Select(p =>
         {
             var issues = ApplicationSupport.ValidateSelection(snapshot, p.ServiceId, p.TimeCategoryId);
             return new ServicePresetCandidateDto(
                 p, p.IsEnabled && issues.Count == 0,
-                usage.TryGetValue(p.Id, out var count) ? count : 0,
-                recent?.SourceServicePresetId == p.Id, issues);
+                issues);
         }).OrderBy(x => x.Preset.DisplayOrder.Value)
           .ThenBy(x => x.Preset.DisplayName, StringComparer.Ordinal)
           .ToArray();
