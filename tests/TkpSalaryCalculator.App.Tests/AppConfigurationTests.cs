@@ -258,21 +258,23 @@ public sealed class AppConfigurationTests
     {
         var calculation = XDocument.Load(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
         AssertControlUsesCompiledBinding(calculation);
+        var controls = calculation.Descendants().Select(element => element.Name.LocalName).ToArray();
+        Assert.Single(controls, name => name == "CollectionView");
+        Assert.DoesNotContain("ScrollView", controls);
+        var attributes = calculation.Descendants().SelectMany(element => element.Attributes()).ToArray();
+        Assert.DoesNotContain(attributes, attribute => attribute.Name.LocalName == "BindableLayout.ItemsSource");
         var calculationSource = File.ReadAllText(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
         foreach (var binding in new[]
                  {
                      "StartDateText",
                      "EndDateText",
-                     "PremiumTotals",
-                     "Allowances",
-                     "Days",
+                     "Rows",
+                     "DetailRowTemplateSelector",
                      "TotalLabel",
                      "ShowsPayrollPeriodBreakdown",
                      "HasPeriodUncalculated",
                      "HasDaySubtotal",
                      "AppliedRateText",
-                     "Premiums",
-                     "CountBonuses",
                      "SettingMonthText",
                      "MissingReasonText",
                  })

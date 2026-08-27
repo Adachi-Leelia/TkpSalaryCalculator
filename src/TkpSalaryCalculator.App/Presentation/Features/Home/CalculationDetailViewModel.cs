@@ -28,7 +28,7 @@ public sealed class CalculationDetailViewModel : ViewModelBase
     private string uncalculatedText = string.Empty;
     private IReadOnlyList<CalculationPremiumTotalRowViewModel> premiumTotals = [];
     private IReadOnlyList<CalculationAllowanceRowViewModel> allowances = [];
-    private IReadOnlyList<CalculationDayRowViewModel> days = [];
+    private IReadOnlyList<CalculationDetailRowViewModel> rows = [];
 
     public CalculationDetailViewModel(
         ISalaryQueryUseCase salaryQuery,
@@ -89,16 +89,19 @@ public sealed class CalculationDetailViewModel : ViewModelBase
         }
     }
     public bool HasAllowances => ShowsPayrollPeriodBreakdown && Allowances.Count != 0;
-    public IReadOnlyList<CalculationDayRowViewModel> Days
+    /// <summary>
+    /// 日、勤務記録、割増、件数加算を単一の仮想化リストで表示するためのフラットな行です。
+    /// </summary>
+    public IReadOnlyList<CalculationDetailRowViewModel> Rows
     {
-        get => days;
+        get => rows;
         private set
         {
-            if (!SetProperty(ref days, value)) return;
+            if (!SetProperty(ref rows, value)) return;
             OnPropertyChanged(nameof(IsEmpty));
         }
     }
-    public bool IsEmpty => Days.Count == 0;
+    public bool IsEmpty => !Rows.Any(row => row is CalculationWorkRecordRowViewModel);
     public AsyncCommand ReloadCommand { get; }
 
     public void SetPayrollPeriod(PayrollPeriodKey value)
@@ -125,26 +128,41 @@ public sealed class CalculationDetailViewModel : ViewModelBase
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
+        var scope = new CalculationDetailScope(selectedDate, selectedWorkRecordId);
         var key = payrollPeriodKey;
-        if (key is null && selectedDate is { } date)
+        if (key is null && scope.SelectedDate is { } date)
             key = (await payrollPeriods.FindPeriodAsync(date, cancellationToken)).Key;
         if (key is null) throw new InvalidOperationException("対象給与期間が指定されていません。");
 
         var summary = await salaryQuery.GetPayrollPeriodAsync(key.Value, cancellationToken);
-        StartDateText = $"給与算定開始日: {formatter.Date(summary.Period.StartDate, false)}";
-        EndDateText = $"給与算定終了日: {formatter.Date(summary.Period.EndDate, false)}";
-        TotalText = formatter.Money(summary.CalculatedSubtotal);
-        BasePayText = formatter.Money(summary.BasePaySubtotal);
-        PremiumText = formatter.Money(summary.PremiumSubtotal);
-        CountBonusText = formatter.Money(summary.CountBonusSubtotal);
-        AllowanceText = formatter.Money(summary.AllowanceSubtotal);
-        UncalculatedText = summary.UncalculatedCount == 0
-            ? string.Empty
-            : $"未計算 {summary.UncalculatedCount}件。下記の勤務記録で不足している設定を確認してください。";
-        Allowances = summary.Allowances
+        var presentation = await Task.Run(
+            () => CreatePresentation(summary, scope, cancellationToken),
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        StartDateText = presentation.StartDateText;
+        EndDateText = presentation.EndDateText;
+        TotalText = presentation.TotalText;
+        BasePayText = presentation.BasePayText;
+        PremiumText = presentation.PremiumText;
+        CountBonusText = presentation.CountBonusText;
+        AllowanceText = presentation.AllowanceText;
+        UncalculatedText = presentation.UncalculatedText;
+        Allowances = presentation.Allowances;
+        PremiumTotals = presentation.PremiumTotals;
+        Rows = presentation.Rows;
+    }
+
+    private CalculationDetailPresentation CreatePresentation(
+        PayrollPeriodSummaryDto summary,
+        CalculationDetailScope scope,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var allowances = summary.Allowances
             .Select(x => new CalculationAllowanceRowViewModel(x.DisplayName, formatter.Money(x.Amount)))
             .ToArray();
-        PremiumTotals = summary.Days
+        var premiumTotals = summary.Days
             .SelectMany(day => day.Records)
             .SelectMany(record => record.Calculation.Premiums)
             .GroupBy(premium => new { premium.Rule.Id, premium.Rule.DisplayName })
@@ -152,30 +170,76 @@ public sealed class CalculationDetailViewModel : ViewModelBase
                 group.Key.DisplayName,
                 formatter.Money(new YenAmount(group.Sum(x => x.Amount.Value)))))
             .ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
 
-        var visibleDays = selectedDate is { } selected
-            ? summary.Days.Where(day => day.Date == selected)
-            : summary.Days;
-        Days = visibleDays.Select(CreateDay).Where(day => day.Records.Count != 0).ToArray();
+        var uncalculatedText = summary.UncalculatedCount == 0
+            ? string.Empty
+            : $"未計算 {summary.UncalculatedCount}件。下記の勤務記録で不足している設定を確認してください。";
+        return new CalculationDetailPresentation(
+            $"給与算定開始日: {formatter.Date(summary.Period.StartDate, false)}",
+            $"給与算定終了日: {formatter.Date(summary.Period.EndDate, false)}",
+            formatter.Money(summary.CalculatedSubtotal),
+            formatter.Money(summary.BasePaySubtotal),
+            formatter.Money(summary.PremiumSubtotal),
+            formatter.Money(summary.CountBonusSubtotal),
+            formatter.Money(summary.AllowanceSubtotal),
+            uncalculatedText,
+            allowances,
+            premiumTotals,
+            CreateRows(summary, scope, premiumTotals, allowances, cancellationToken));
     }
 
-    private CalculationDayRowViewModel CreateDay(DailySalaryDto day)
+    private IReadOnlyList<CalculationDetailRowViewModel> CreateRows(
+        PayrollPeriodSummaryDto summary,
+        CalculationDetailScope scope,
+        IReadOnlyList<CalculationPremiumTotalRowViewModel> premiumTotals,
+        IReadOnlyList<CalculationAllowanceRowViewModel> allowances,
+        CancellationToken cancellationToken)
     {
-        var visibleRecords = (selectedWorkRecordId is { } selectedId
-            ? day.Records.Where(record => record.WorkRecord.Id == selectedId)
-            : day.Records).ToArray();
-        var uncalculatedCount = ShowsPayrollPeriodBreakdown
-            ? day.UncalculatedCount
-            : visibleRecords.Count(record => record.Calculation.Status == SalaryCalculationStatus.Uncalculated);
-        return new CalculationDayRowViewModel(
-            formatter.Date(day.Date),
-            formatter.Money(day.BasePaySubtotal),
-            formatter.Money(day.PremiumSubtotal),
-            formatter.Money(day.CountBonusSubtotal),
-            formatter.Money(day.CalculatedSubtotal),
-            uncalculatedCount == 0 ? string.Empty : $"未計算 {uncalculatedCount}件",
-            visibleRecords.Select(CreateRecord).ToArray(),
-            ShowsPayrollPeriodBreakdown);
+        var result = new List<CalculationDetailRowViewModel>();
+        if (scope.ShowsPayrollPeriodBreakdown && premiumTotals.Count != 0)
+        {
+            result.Add(new CalculationSectionHeaderRowViewModel("割増種別ごとの合計"));
+            result.AddRange(premiumTotals);
+        }
+
+        if (scope.ShowsPayrollPeriodBreakdown && allowances.Count != 0)
+        {
+            result.Add(new CalculationSectionHeaderRowViewModel("月額手当"));
+            result.AddRange(allowances);
+        }
+
+        var visibleDays = scope.SelectedDate is { } selected
+            ? summary.Days.Where(day => day.Date == selected)
+            : summary.Days;
+        foreach (var day in visibleDays)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var visibleRecords = (scope.SelectedWorkRecordId is { } selectedId
+                ? day.Records.Where(record => record.WorkRecord.Id == selectedId)
+                : day.Records).ToArray();
+            if (visibleRecords.Length == 0) continue;
+
+            var uncalculatedCount = scope.ShowsPayrollPeriodBreakdown
+                ? day.UncalculatedCount
+                : visibleRecords.Count(record => record.Calculation.Status == SalaryCalculationStatus.Uncalculated);
+            result.Add(new CalculationDayRowViewModel(
+                formatter.Date(day.Date),
+                formatter.Money(day.BasePaySubtotal),
+                formatter.Money(day.PremiumSubtotal),
+                formatter.Money(day.CountBonusSubtotal),
+                formatter.Money(day.CalculatedSubtotal),
+                uncalculatedCount == 0 ? string.Empty : $"未計算 {uncalculatedCount}件",
+                scope.ShowsPayrollPeriodBreakdown));
+
+            foreach (var record in visibleRecords)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                AddRecordRows(result, record);
+            }
+        }
+
+        return result;
     }
 
     private void OnDetailScopeChanged()
@@ -186,7 +250,7 @@ public sealed class CalculationDetailViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasAllowances));
     }
 
-    private CalculationWorkRecordRowViewModel CreateRecord(WorkRecordSalaryDto value)
+    private void AddRecordRows(List<CalculationDetailRowViewModel> rows, WorkRecordSalaryDto value)
     {
         var record = value.WorkRecord;
         var calculation = value.Calculation;
@@ -204,22 +268,23 @@ public sealed class CalculationDetailViewModel : ViewModelBase
             .Select(requirement => MissingReason(requirement.Code))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        return new CalculationWorkRecordRowViewModel(
+        rows.Add(new CalculationWorkRecordRowViewModel(
             title,
             time,
             rate,
-            calculation.BasePay is { } basePay ? formatter.Money(basePay) : "未計算",
+            calculation.BasePay is { } basePay ? formatter.Money(basePay) : "未計算"));
+        rows.AddRange(calculation.Premiums.Select(premium => new CalculationPremiumRowViewModel(
+            premium.Rule.DisplayName,
+            PremiumRuleText(premium.Rule),
+            formatter.Duration(premium.ApplicableMinutes),
+            formatter.Money(premium.Amount))));
+        rows.AddRange(calculation.CountBonuses.Select(bonus => new CalculationCountBonusRowViewModel(
+            bonus.DisplayName,
+            formatter.Money(bonus.Amount))));
+        rows.Add(new CalculationWorkRecordTotalRowViewModel(
             calculation.Total is { } total ? formatter.Money(total) : "未計算",
             formatter.SettingsMonth(value.SettingMonth ?? new YearMonth(record.WorkDate.Year, record.WorkDate.Month)),
-            missing.Length == 0 ? string.Empty : string.Join("\n", missing),
-            calculation.Premiums.Select(premium => new CalculationPremiumRowViewModel(
-                premium.Rule.DisplayName,
-                PremiumRuleText(premium.Rule),
-                formatter.Duration(premium.ApplicableMinutes),
-                formatter.Money(premium.Amount))).ToArray(),
-            calculation.CountBonuses.Select(bonus => new CalculationCountBonusRowViewModel(
-                bonus.DisplayName,
-                formatter.Money(bonus.Amount))).ToArray());
+            missing.Length == 0 ? string.Empty : string.Join("\n", missing)));
     }
 
     private string PremiumRuleText(SnapshotPremium rule)
@@ -268,10 +333,37 @@ public sealed class CalculationDetailViewModel : ViewModelBase
         DayOfWeek.Saturday => "土曜",
         _ => value.ToString(),
     };
+
+    private readonly record struct CalculationDetailScope(
+        DateOnly? SelectedDate,
+        WorkRecordId? SelectedWorkRecordId)
+    {
+        public bool ShowsPayrollPeriodBreakdown => SelectedWorkRecordId is null;
+    }
+
+    private sealed record CalculationDetailPresentation(
+        string StartDateText,
+        string EndDateText,
+        string TotalText,
+        string BasePayText,
+        string PremiumText,
+        string CountBonusText,
+        string AllowanceText,
+        string UncalculatedText,
+        IReadOnlyList<CalculationAllowanceRowViewModel> Allowances,
+        IReadOnlyList<CalculationPremiumTotalRowViewModel> PremiumTotals,
+        IReadOnlyList<CalculationDetailRowViewModel> Rows);
 }
 
-public sealed record CalculationPremiumTotalRowViewModel(string DisplayName, string AmountText);
-public sealed record CalculationAllowanceRowViewModel(string DisplayName, string AmountText);
+public abstract record CalculationDetailRowViewModel;
+
+public sealed record CalculationSectionHeaderRowViewModel(string Title) : CalculationDetailRowViewModel;
+
+public sealed record CalculationPremiumTotalRowViewModel(string DisplayName, string AmountText)
+    : CalculationDetailRowViewModel;
+
+public sealed record CalculationAllowanceRowViewModel(string DisplayName, string AmountText)
+    : CalculationDetailRowViewModel;
 
 public sealed record CalculationDayRowViewModel(
     string DateText,
@@ -280,8 +372,7 @@ public sealed record CalculationDayRowViewModel(
     string CountBonusText,
     string TotalText,
     string UncalculatedText,
-    IReadOnlyList<CalculationWorkRecordRowViewModel> Records,
-    bool HasDaySubtotal)
+    bool HasDaySubtotal) : CalculationDetailRowViewModel
 {
     public bool HasUncalculated => !string.IsNullOrWhiteSpace(UncalculatedText);
 }
@@ -290,22 +381,21 @@ public sealed record CalculationWorkRecordRowViewModel(
     string DisplayName,
     string WorkTimeText,
     string AppliedRateText,
-    string BasePayText,
+    string BasePayText) : CalculationDetailRowViewModel;
+
+public sealed record CalculationWorkRecordTotalRowViewModel(
     string TotalText,
     string SettingMonthText,
-    string MissingReasonText,
-    IReadOnlyList<CalculationPremiumRowViewModel> Premiums,
-    IReadOnlyList<CalculationCountBonusRowViewModel> CountBonuses)
+    string MissingReasonText) : CalculationDetailRowViewModel
 {
     public bool HasMissingReason => !string.IsNullOrWhiteSpace(MissingReasonText);
-    public bool HasPremiums => Premiums.Count != 0;
-    public bool HasCountBonuses => CountBonuses.Count != 0;
 }
 
 public sealed record CalculationPremiumRowViewModel(
     string DisplayName,
     string RuleText,
     string ApplicableTimeText,
-    string AmountText);
+    string AmountText) : CalculationDetailRowViewModel;
 
-public sealed record CalculationCountBonusRowViewModel(string DisplayName, string AmountText);
+public sealed record CalculationCountBonusRowViewModel(string DisplayName, string AmountText)
+    : CalculationDetailRowViewModel;
