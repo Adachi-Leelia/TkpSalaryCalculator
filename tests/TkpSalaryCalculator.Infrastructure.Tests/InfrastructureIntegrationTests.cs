@@ -447,6 +447,41 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
+    public async Task ANNUALINFRA001_MonthlyAllowancesAreReadForTheInclusivePeriodRangeInOneQuery()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 0, 0, 0, TimeSpan.Zero));
+        var repository = new SqliteMonthlyAllowanceRepository(fixture.Database, clock);
+        foreach (var (year, month, amount) in new[]
+                 {
+                     (2025, 12, 12L),
+                     (2026, 1, 1L),
+                     (2026, 8, 8L),
+                     (2026, 9, 9L),
+                 })
+        {
+            await repository.UpsertAsync(new MonthlyAllowance(
+                new MonthlyAllowanceId(Guid.NewGuid()),
+                new PayrollPeriodKey(new YearMonth(year, month)),
+                $"{month}月手当",
+                new YenAmount(amount)), default);
+        }
+
+        var values = await repository.GetForRangeAsync(
+            new PayrollPeriodKey(new YearMonth(2026, 1)),
+            new PayrollPeriodKey(new YearMonth(2026, 8)),
+            default);
+
+        Assert.Equal([new YearMonth(2026, 1), new YearMonth(2026, 8)],
+            values.Select(static value => value.PayrollPeriodKey.Value));
+        Assert.Equal([1L, 8L], values.Select(static value => value.Amount.Value));
+        await Assert.ThrowsAsync<ArgumentException>(() => repository.GetForRangeAsync(
+            new PayrollPeriodKey(new YearMonth(2026, 8)),
+            new PayrollPeriodKey(new YearMonth(2026, 1)),
+            default));
+    }
+
+    [Fact]
     public async Task DATA001_StreamingJsonRoundTripProducesHeaderThenRecords()
     {
         var value = JsonSerializer.SerializeToElement(new Dictionary<string, object?>

@@ -114,6 +114,11 @@ public interface ISalaryQueryUseCase
     Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(
         PayrollPeriodKey payrollPeriodKey,
         CancellationToken cancellationToken);
+
+    /// <summary>選択中の給与期間について、月次サマリーと年間累計を同じ一括読取から取得します。</summary>
+    Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
+        PayrollPeriodKey payrollPeriodKey,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>不変の月設定に対する操作をプレゼンテーション層へ公開します。</summary>

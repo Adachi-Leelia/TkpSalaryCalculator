@@ -13,7 +13,8 @@ namespace TkpSalaryCalculator.Application.UseCases;
 public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSnapshotRepository settings,
     IHolidayCalendarRepository holidays, IClosingRuleRepository closingRules,
     IMonthlyAllowanceRepository allowances, IBasicShiftRepository shifts,
-    ISalaryCalculator calculator, IPayrollPeriodCalculator periodCalculator) : ISalaryQueryUseCase
+    ISalaryCalculator calculator, IPayrollPeriodCalculator periodCalculator,
+    IAnnualSalaryCalculator annualCalculator) : ISalaryQueryUseCase
 {
     private readonly IWorkRecordRepository records = records ?? throw new ArgumentNullException(nameof(records));
     private readonly ISettingSnapshotRepository settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -23,7 +24,22 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
     private readonly IBasicShiftRepository shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
     private readonly ISalaryCalculator calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
     private readonly IPayrollPeriodCalculator periodCalculator = periodCalculator ?? throw new ArgumentNullException(nameof(periodCalculator));
+    private readonly IAnnualSalaryCalculator annualCalculator = annualCalculator ?? throw new ArgumentNullException(nameof(annualCalculator));
 
+    /// <summary>年間集計サービスの標準実装を使用して生成します。</summary>
+    public SalaryQueryUseCase(
+        IWorkRecordRepository records,
+        ISettingSnapshotRepository settings,
+        IHolidayCalendarRepository holidays,
+        IClosingRuleRepository closingRules,
+        IMonthlyAllowanceRepository allowances,
+        IBasicShiftRepository shifts,
+        ISalaryCalculator calculator,
+        IPayrollPeriodCalculator periodCalculator)
+        : this(records, settings, holidays, closingRules, allowances, shifts, calculator, periodCalculator,
+            new Domain.Services.AnnualSalaryCalculator())
+    {
+    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<CalendarDayDto>> GetCalendarMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken)
@@ -191,6 +207,131 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
                 aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
                 aggregate.AllowanceSubtotal, aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
+        PayrollPeriodKey payrollPeriodKey,
+        CancellationToken cancellationToken)
+    {
+        ApplicationSupport.ValidatePayrollPeriodKey(payrollPeriodKey, nameof(payrollPeriodKey));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var annualRange = annualCalculator.GetPeriodRange(payrollPeriodKey, AnnualClosingMonth.Default);
+        var history = ClosingRuleHistorySupport.ForCalculation(
+            await closingRules.GetHistoryAsync(cancellationToken).ConfigureAwait(false));
+        var periodKeys = GetPeriodKeys(annualRange.Start, annualRange.AccumulationEnd);
+        var periods = periodKeys.Select(key => periodCalculator.GetPeriod(key, history)).ToArray();
+
+        var byDate = new SortedDictionary<DateOnly, List<WorkRecordDto>>();
+        await foreach (var record in records.StreamRangeAsync(
+            periods[0].StartDate,
+            periods[^1].EndDate,
+            cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            if (!byDate.TryGetValue(record.WorkDate, out var list))
+            {
+                byDate[record.WorkDate] = list = [];
+            }
+
+            list.Add(record);
+        }
+
+        var calculationContext = await LoadCalculationContextAsync(byDate.Keys, cancellationToken)
+            .ConfigureAwait(false);
+        var rangeAllowances = await allowances.GetForRangeAsync(
+            annualRange.Start,
+            annualRange.AccumulationEnd,
+            cancellationToken).ConfigureAwait(false);
+
+        return await RunCalculationAsync(() =>
+        {
+            var daysByPeriod = periodKeys.ToDictionary(
+                static key => key,
+                static _ => new List<DailySalaryCalculation>());
+            var selectedDays = new List<DailySalaryDto>();
+            var periodIndex = 0;
+            foreach (var pair in byDate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                while (periodIndex < periods.Length - 1 && pair.Key > periods[periodIndex].EndDate)
+                {
+                    periodIndex++;
+                }
+
+                var period = periods[periodIndex];
+                if (!period.Contains(pair.Key))
+                {
+                    throw new InvalidOperationException("年間集計範囲の勤務日を給与期間へ割り当てられませんでした。");
+                }
+
+                var day = CalculateDay(pair.Key, pair.Value, calculationContext);
+                daysByPeriod[period.Key].Add(ToDomain(day));
+                if (period.Key == payrollPeriodKey)
+                {
+                    selectedDays.Add(day);
+                }
+            }
+
+            var allowancesByPeriod = rangeAllowances
+                .GroupBy(static allowance => allowance.PayrollPeriodKey)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => (IReadOnlyList<MonthlyAllowance>)group.ToArray());
+            var periodCalculations = new List<PayrollPeriodSalaryCalculation>(periods.Length);
+            foreach (var period in periods)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var periodAllowances = allowancesByPeriod.TryGetValue(period.Key, out var values)
+                    ? values
+                    : [];
+                periodCalculations.Add(calculator.AggregatePeriod(
+                    period,
+                    daysByPeriod[period.Key],
+                    periodAllowances));
+            }
+
+            var monthlyCalculation = periodCalculations[^1];
+            var monthlyAllowances = allowancesByPeriod.TryGetValue(payrollPeriodKey, out var selectedAllowances)
+                ? selectedAllowances
+                : [];
+            var monthlySummary = new PayrollPeriodSummaryDto(
+                monthlyCalculation.Period,
+                selectedDays,
+                [.. monthlyAllowances.Select(static allowance => new MonthlyAllowanceDto(
+                    allowance.Id,
+                    allowance.DisplayName,
+                    allowance.Amount))],
+                monthlyCalculation.BasePaySubtotal,
+                monthlyCalculation.PremiumSubtotal,
+                monthlyCalculation.CountBonusSubtotal,
+                monthlyCalculation.AllowanceSubtotal,
+                monthlyCalculation.CalculatedSubtotal,
+                monthlyCalculation.UncalculatedCount);
+            var annualCalculation = annualCalculator.Aggregate(periodCalculations);
+            var annualSummary = new AnnualSalarySummaryDto(
+                annualRange.Start,
+                annualRange.End,
+                annualRange.AccumulationEnd,
+                annualCalculation.CalculatedSubtotal,
+                annualCalculation.UncalculatedCount);
+            return new HomeSalarySummaryDto(monthlySummary, annualSummary);
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static IReadOnlyList<PayrollPeriodKey> GetPeriodKeys(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end)
+    {
+        var values = new List<PayrollPeriodKey>();
+        for (var current = start;; current = new PayrollPeriodKey(current.Value.AddMonths(1)))
+        {
+            values.Add(current);
+            if (current == end)
+            {
+                return values;
+            }
+        }
     }
 
     private async Task<SalaryCalculationContext> LoadCalculationContextAsync(

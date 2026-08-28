@@ -182,6 +182,7 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
     public int UpsertCalls { get; private set; }
     public int FindCalls { get; private set; }
     public int StreamRangeCalls { get; private set; }
+    public List<(DateOnly Start, DateOnly End)> StreamRanges { get; } = [];
     public Task<bool> AnyAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult(Values.Count != 0);
@@ -203,6 +204,7 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         StreamRangeCalls++;
+        StreamRanges.Add((startDate, endDate));
         foreach (var value in Values.Where(x => x.WorkDate >= startDate && x.WorkDate <= endDate).OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -484,10 +486,23 @@ internal sealed class FakeAllowanceRepository : IMonthlyAllowanceRepository, ITr
 {
     public List<MonthlyAllowance> Values { get; } = [];
     public int GetForPeriodCalls { get; private set; }
+    public int GetForRangeCalls { get; private set; }
     public Task<IReadOnlyList<MonthlyAllowance>> GetForPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
     {
         GetForPeriodCalls++;
         return Task.FromResult<IReadOnlyList<MonthlyAllowance>>([.. Values.Where(x => x.PayrollPeriodKey == payrollPeriodKey)]);
+    }
+
+    public Task<IReadOnlyList<MonthlyAllowance>> GetForRangeAsync(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end,
+        CancellationToken cancellationToken)
+    {
+        GetForRangeCalls++;
+        return Task.FromResult<IReadOnlyList<MonthlyAllowance>>([.. Values
+            .Where(x => x.PayrollPeriodKey.Value.CompareTo(start.Value) >= 0 &&
+                        x.PayrollPeriodKey.Value.CompareTo(end.Value) <= 0)
+            .OrderBy(x => x.PayrollPeriodKey.Value)]);
     }
 
 

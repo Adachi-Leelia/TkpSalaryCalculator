@@ -124,11 +124,11 @@ flowchart LR
 
 **分割**: `HomeViewModel` は給与期間キー、`PayrollPeriodHeaderViewModel` は期間移動、`BackupReminderViewModel` は案内表示を担当する。
 
-- `ISalaryQueryUseCase.GetPayrollPeriodAsync` で合計・内訳・未計算件数を取得する。
+- `ISalaryQueryUseCase.GetHomeSalarySummaryAsync` で、同じ一括読取から月次の合計・内訳・未計算件数と12月締めの年間給与見込み累計を取得する。計算内訳画面では`GetPayrollPeriodAsync`を継続利用する。
 - `IBackupReminderUseCase` で条件付きのバックアップ案内と 7 日延期を実装する。
 - カレンダー、内訳、月額手当、未計算日へ遷移できるようにする。
 
-**完了条件**: 開始日・終了日を常に明記し、期間移動で小計・合計・未計算件数が更新される。
+**完了条件**: 開始日・終了日を常に明記し、期間移動で月次の小計・合計・未計算件数と、年間の範囲・累計・未計算件数が同時に更新される。年間累計は0円でも表示し、範囲・金額・未計算件数をアクセシビリティ説明として提供する。
 
 **状態**: 完了
 

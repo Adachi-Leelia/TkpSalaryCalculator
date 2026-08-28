@@ -69,6 +69,33 @@ public readonly record struct PayrollPeriodKey
 
 }
 
+/// <summary>年間給与集計の区切りとなる月を表します。</summary>
+public readonly record struct AnnualClosingMonth
+{
+    /// <summary>12月締めの既定値を取得します。</summary>
+    public static AnnualClosingMonth Default { get; } = new(12);
+
+    /// <summary>年間締め月を生成します。</summary>
+    public AnnualClosingMonth(int Value)
+    {
+        if (Value is < 1 or > 12)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Value), Value, "年間締め月は1月から12月の範囲で指定してください。");
+        }
+
+        this.Value = Value;
+    }
+
+    /// <summary>月を取得します。</summary>
+    public int Value { get; }
+
+    /// <summary>値へ分解します。</summary>
+    public void Deconstruct(out int Value)
+    {
+        Value = this.Value;
+    }
+}
+
 /// <summary>0以上の整数円を表します。</summary>
 public readonly record struct YenAmount
 {

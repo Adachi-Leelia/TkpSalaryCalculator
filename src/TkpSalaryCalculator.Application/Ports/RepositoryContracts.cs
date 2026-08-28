@@ -137,6 +137,12 @@ public interface IMonthlyAllowanceRepository
         PayrollPeriodKey payrollPeriodKey,
         CancellationToken cancellationToken);
 
+    /// <summary>両端を含む給与期間キー範囲の手当を給与期間順にまとめて取得します。</summary>
+    Task<IReadOnlyList<MonthlyAllowance>> GetForRangeAsync(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end,
+        CancellationToken cancellationToken);
+
     /// <summary>現在のトランザクション内で手当を保存します。</summary>
     Task UpsertAsync(MonthlyAllowance allowance, CancellationToken cancellationToken);
 

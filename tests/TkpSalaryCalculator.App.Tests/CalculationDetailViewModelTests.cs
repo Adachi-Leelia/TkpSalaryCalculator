@@ -214,6 +214,10 @@ public sealed class CalculationDetailViewModelTests
 
     private sealed class SalaryStub : ISalaryQueryUseCase
     {
+        public Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
+            PayrollPeriodKey payrollPeriodKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public required PayrollPeriodSummaryDto Summary { get; init; }
         public PayrollPeriodKey? RequestedKey { get; private set; }
         public WorkRecordId? RequestedWorkRecordId { get; private set; }

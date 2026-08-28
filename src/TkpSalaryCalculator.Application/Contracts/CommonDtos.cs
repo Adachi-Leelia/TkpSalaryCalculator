@@ -209,6 +209,26 @@ public sealed record PayrollPeriodSummaryDto(
     YenAmount CalculatedSubtotal,
     int UncalculatedCount);
 
+/// <summary>ホーム画面向けの年間給与見込み累計を保持します。</summary>
+/// <param name="PeriodStart">年間区分の開始給与期間。</param>
+/// <param name="PeriodEnd">年間区分の終了給与期間。</param>
+/// <param name="AccumulationEnd">実際に累計した最後の給与期間。</param>
+/// <param name="CalculatedSubtotal">年間給与見込み累計。</param>
+/// <param name="UncalculatedCount">年間範囲内の未計算勤務記録数。</param>
+public sealed record AnnualSalarySummaryDto(
+    PayrollPeriodKey PeriodStart,
+    PayrollPeriodKey PeriodEnd,
+    PayrollPeriodKey AccumulationEnd,
+    YenAmount CalculatedSubtotal,
+    int UncalculatedCount);
+
+/// <summary>同じ一括読取から生成したホーム画面の月次・年間サマリーを保持します。</summary>
+/// <param name="MonthlySummary">選択中の給与期間サマリー。</param>
+/// <param name="AnnualSummary">選択中の給与期間までの年間サマリー。</param>
+public sealed record HomeSalarySummaryDto(
+    PayrollPeriodSummaryDto MonthlySummary,
+    AnnualSalarySummaryDto AnnualSummary);
+
 /// <summary>暦日 1 日分の読み取りモデルを保持します。</summary>
 /// <param name="Date">現地日付。</param>
 /// <param name="WorkRecordCount">保存済み記録の件数。</param>

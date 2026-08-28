@@ -305,6 +305,97 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task ANNUALAPP001_HomeSummaryBatchesAnnualRangeAndBuildsMonthlyFromTheSameRead()
+    {
+        var context = new TestContext();
+        var selected = new PayrollPeriodKey(new YearMonth(2026, 8));
+        var future = new PayrollPeriodKey(new YearMonth(2026, 9));
+        context.Closing.Values.Add(new ClosingRule(
+            new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)),
+            20));
+        context.Works.Values.AddRange([
+            TestData.Work(new DateOnly(2026, 1, 1)),
+            TestData.Work(new DateOnly(2026, 2, 1)) with { ServiceId = new ServiceId(Guid.NewGuid()) },
+            TestData.Work(new DateOnly(2026, 8, 1)),
+            TestData.Work(new DateOnly(2026, 9, 1)),
+        ]);
+        context.Allowances.Values.AddRange([
+            new MonthlyAllowance(new MonthlyAllowanceId(Guid.NewGuid()),
+                new PayrollPeriodKey(new YearMonth(2026, 1)), "1月手当", new YenAmount(100)),
+            new MonthlyAllowance(new MonthlyAllowanceId(Guid.NewGuid()),
+                selected, "8月手当", new YenAmount(200)),
+            new MonthlyAllowance(new MonthlyAllowanceId(Guid.NewGuid()),
+                future, "9月手当", new YenAmount(500)),
+        ]);
+        var useCase = new SalaryQueryUseCase(
+            context.Works,
+            context.Settings,
+            context.Holidays,
+            context.Closing,
+            context.Allowances,
+            context.Shifts,
+            context.Salary,
+            context.Periods,
+            new AnnualSalaryCalculator());
+
+        var result = await useCase.GetHomeSalarySummaryAsync(selected, default);
+
+        Assert.Equal(new YearMonth(2026, 1), result.AnnualSummary.PeriodStart.Value);
+        Assert.Equal(new YearMonth(2026, 12), result.AnnualSummary.PeriodEnd.Value);
+        Assert.Equal(new YearMonth(2026, 8), result.AnnualSummary.AccumulationEnd.Value);
+        Assert.Equal(2_300, result.AnnualSummary.CalculatedSubtotal.Value);
+        Assert.Equal(1, result.AnnualSummary.UncalculatedCount);
+        Assert.Equal(1_200, result.MonthlySummary.CalculatedSubtotal.Value);
+        Assert.Equal(200, result.MonthlySummary.AllowanceSubtotal.Value);
+        Assert.Single(result.MonthlySummary.Days);
+        Assert.Equal(1, context.Closing.GetHistoryCalls);
+        Assert.Equal(1, context.Works.StreamRangeCalls);
+        Assert.Equal((new DateOnly(2025, 12, 21), new DateOnly(2026, 8, 20)),
+            Assert.Single(context.Works.StreamRanges));
+        Assert.Equal(1, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal(1, context.Holidays.GetManyCalls);
+        Assert.Equal(1, context.Allowances.GetForRangeCalls);
+        Assert.Equal(0, context.Allowances.GetForPeriodCalls);
+    }
+
+    [Fact]
+    public async Task ANNUALAPP002_HomeSummaryIncludesAllowanceOnlyPeriodsAndReturnsZeroWithoutData()
+    {
+        var context = new TestContext();
+        var selected = new PayrollPeriodKey(new YearMonth(2026, 8));
+        context.Closing.Values.Add(new ClosingRule(
+            new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)),
+            null));
+        context.Allowances.Values.Add(new MonthlyAllowance(
+            new MonthlyAllowanceId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(2026, 3)),
+            "3月手当",
+            new YenAmount(400)));
+        var useCase = new SalaryQueryUseCase(
+            context.Works,
+            context.Settings,
+            context.Holidays,
+            context.Closing,
+            context.Allowances,
+            context.Shifts,
+            context.Salary,
+            context.Periods,
+            new AnnualSalaryCalculator());
+
+        var withAllowance = await useCase.GetHomeSalarySummaryAsync(selected, default);
+        context.Allowances.Values.Clear();
+        var withoutData = await useCase.GetHomeSalarySummaryAsync(selected, default);
+
+        Assert.Equal(400, withAllowance.AnnualSummary.CalculatedSubtotal.Value);
+        Assert.Equal(0, withAllowance.MonthlySummary.CalculatedSubtotal.Value);
+        Assert.Equal(0, withoutData.AnnualSummary.CalculatedSubtotal.Value);
+        Assert.Equal(0, withoutData.AnnualSummary.UncalculatedCount);
+        Assert.Empty(withoutData.MonthlySummary.Days);
+    }
+
+    [Fact]
     public async Task SalaryQuery_UsesHolidayVersionSelectedByEachCalendarMonth()
     {
         var context = new TestContext();

@@ -777,6 +777,39 @@ public sealed record PayrollPeriod
 
 }
 
+/// <summary>年間区分と、選択中の給与期間までの累計範囲を表します。</summary>
+public sealed record AnnualSalaryPeriodRange
+{
+    /// <summary>年間範囲を生成します。</summary>
+    public AnnualSalaryPeriodRange(
+        PayrollPeriodKey Start,
+        PayrollPeriodKey End,
+        PayrollPeriodKey AccumulationEnd)
+    {
+        DomainValueGuard.ValidPayrollPeriodKey(Start, nameof(Start));
+        DomainValueGuard.ValidPayrollPeriodKey(End, nameof(End));
+        DomainValueGuard.ValidPayrollPeriodKey(AccumulationEnd, nameof(AccumulationEnd));
+        if (Start.Value.CompareTo(AccumulationEnd.Value) > 0 ||
+            AccumulationEnd.Value.CompareTo(End.Value) > 0)
+        {
+            throw new ArgumentException("累計終点は年間区分の範囲内で指定してください。", nameof(AccumulationEnd));
+        }
+
+        this.Start = Start;
+        this.End = End;
+        this.AccumulationEnd = AccumulationEnd;
+    }
+
+    /// <summary>年間区分の開始給与期間を取得します。</summary>
+    public PayrollPeriodKey Start { get; }
+
+    /// <summary>年間区分の終了給与期間を取得します。</summary>
+    public PayrollPeriodKey End { get; }
+
+    /// <summary>実際に累計する最後の給与期間を取得します。</summary>
+    public PayrollPeriodKey AccumulationEnd { get; }
+}
+
 /// <summary>1給与期間へ直接適用する月額手当を表します。</summary>
 public sealed record MonthlyAllowance
 {

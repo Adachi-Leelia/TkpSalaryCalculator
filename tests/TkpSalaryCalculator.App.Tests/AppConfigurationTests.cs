@@ -206,6 +206,11 @@ public sealed class AppConfigurationTests
                      "CountBonusText",
                      "AllowanceText",
                      "UncalculatedCountText",
+                     "AnnualRangeText",
+                     "AnnualTotalText",
+                     "AnnualUncalculatedText",
+                     "AnnualAccessibilityText",
+                     "HasAnnualUncalculatedRecords",
                      "CalendarCommand",
                      "CalculationDetailsCommand",
                      "MonthlyAllowancesCommand",
@@ -220,6 +225,8 @@ public sealed class AppConfigurationTests
         Assert.DoesNotContain("SemanticProperties.Description=\"給与算定開始日\"", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SemanticProperties.Description=\"給与算定終了日\"", source, StringComparison.Ordinal);
         Assert.Contains("SemanticProperties.Description=\"{Binding TotalAccessibilityText}\"", source, StringComparison.Ordinal);
+        Assert.Contains("SemanticProperties.Description=\"{Binding AnnualAccessibilityText}\"", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationId=\"Home.AnnualSalarySummary\"", source, StringComparison.Ordinal);
         Assert.Contains("SemanticProperties.Description=\"{Binding PayrollPeriodAccessibilityText}\"", File.ReadAllText(AppPath("Presentation", "Features", "Home", "HomeDestinationPage.xaml")), StringComparison.Ordinal);
 
         var uncalculatedRecords = home.Descendants().Single(element =>

@@ -757,6 +757,10 @@ public sealed class CalendarWorkFlowViewModelTests
 
     private sealed class SalaryQueryStub : ISalaryQueryUseCase
     {
+        public Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
+            PayrollPeriodKey payrollPeriodKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Dictionary<YearMonth, IReadOnlyList<CalendarDayDto>> Months { get; } = [];
         public Dictionary<DateOnly, DailySalaryDto> Days { get; init; } = [];
         public Dictionary<DateOnly, Exception> DayExceptions { get; } = [];

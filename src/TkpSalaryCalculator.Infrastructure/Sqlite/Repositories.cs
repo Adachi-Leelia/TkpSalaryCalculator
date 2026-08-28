@@ -497,6 +497,42 @@ public sealed class SqliteMonthlyAllowanceRepository(SqliteDatabase database, IU
         return (IReadOnlyList<MonthlyAllowance>)values;
     }, cancellationToken);
 
+    public Task<IReadOnlyList<MonthlyAllowance>> GetForRangeAsync(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end,
+        CancellationToken cancellationToken)
+    {
+        if (start.Value.CompareTo(end.Value) > 0)
+        {
+            throw new ArgumentException("月額手当の検索開始給与期間は終了給与期間以前で指定してください。", nameof(start));
+        }
+
+        return database.ReadAsync(async (connection, transaction, token) =>
+        {
+            var values = new List<MonthlyAllowance>();
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT id, payroll_period_year_month, display_name, amount_yen FROM monthly_allowance
+                WHERE payroll_period_year_month BETWEEN $start AND $end
+                ORDER BY payroll_period_year_month, created_at_utc, id;
+                """;
+            command.Parameters.AddValue("$start", SqliteValue.YearMonth(start.Value));
+            command.Parameters.AddValue("$end", SqliteValue.YearMonth(end.Value));
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                values.Add(new MonthlyAllowance(
+                    new MonthlyAllowanceId(SqliteValue.Guid(reader.GetString("id"))),
+                    new PayrollPeriodKey(SqliteValue.YearMonth(reader.GetInt64("payroll_period_year_month"))),
+                    reader.GetString("display_name"),
+                    new YenAmount(reader.GetInt64("amount_yen"))));
+            }
+
+            return (IReadOnlyList<MonthlyAllowance>)values;
+        }, cancellationToken);
+    }
+
     public Task UpsertAsync(MonthlyAllowance allowance, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(allowance);

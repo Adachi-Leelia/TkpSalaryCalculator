@@ -79,6 +79,7 @@ public static class MauiProgram
     {
         services.AddSingleton<ISalaryCalculator, SalaryCalculator>();
         services.AddSingleton<IPayrollPeriodCalculator, PayrollPeriodCalculator>();
+        services.AddSingleton<IAnnualSalaryCalculator, AnnualSalaryCalculator>();
         services.AddSingleton<IInitialSetupUseCase, InitialSetupUseCase>();
         services.AddSingleton<IServicePresetUseCase, ServicePresetUseCase>();
         services.AddSingleton<IWorkRecordUseCase, WorkRecordUseCase>();
