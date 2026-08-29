@@ -329,7 +329,7 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
         PayrollPeriodKey end)
     {
         var values = new List<PayrollPeriodKey>();
-        for (var current = start;; current = new PayrollPeriodKey(current.Value.AddMonths(1)))
+        for (var current = start; ; current = new PayrollPeriodKey(current.Value.AddMonths(1)))
         {
             values.Add(current);
             if (current == end)
