@@ -9,7 +9,7 @@
 
     <ApplicationTitle>タコピー給与計算</ApplicationTitle>
     <ApplicationId>com.tkpsalarycalculator.app</ApplicationId>
-    <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>1.0.1</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
 
     <SupportedOSPlatformVersion>29.0</SupportedOSPlatformVersion>

@@ -48,6 +48,7 @@
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\PremiumSettingsViewModels.cs" Link="Production\PremiumSettingsViewModels.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\CountBonusSettingsViewModels.cs" Link="Production\CountBonusSettingsViewModels.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\PayrollPeriodSettingsViewModel.cs" Link="Production\PayrollPeriodSettingsViewModel.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\AnnualSummarySettingsViewModel.cs" Link="Production\AnnualSummarySettingsViewModel.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\MonthlyAllowanceViewModels.cs" Link="Production\MonthlyAllowanceViewModels.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Settings\BasicShiftViewModels.cs" Link="Production\BasicShiftViewModels.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\DataManagement\DataManagementViewModels.cs" Link="Production\DataManagementViewModels.cs" />

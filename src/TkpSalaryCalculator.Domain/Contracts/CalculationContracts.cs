@@ -46,6 +46,19 @@ public interface IPayrollPeriodCalculator
     PayrollPeriod FindPeriod(DateOnly workDate, IReadOnlyList<ClosingRule> closingRules);
 }
 
+/// <summary>年間区分の境界決定と給与期間集計の合算を副作用なく実行します。</summary>
+public interface IAnnualSalaryCalculator
+{
+    /// <summary>選択中の給与期間を含む年間区分と累計終点を計算します。</summary>
+    AnnualSalaryPeriodRange GetPeriodRange(
+        PayrollPeriodKey selected,
+        AnnualClosingMonth closingMonth);
+
+    /// <summary>給与期間キー順に並んだ期間集計を年間累計へ合算します。</summary>
+    AnnualSalaryCalculation Aggregate(
+        IReadOnlyList<PayrollPeriodSalaryCalculation> periods);
+}
+
 /// <summary>1 件の勤務記録を計算するために必要な、副作用のない入力をすべて保持します。</summary>
 /// <param name="WorkRecord">正規化済みの勤務記録。</param>
 /// <param name="SettingSnapshot">勤務日の暦月から選択されたスナップショット。</param>
@@ -139,5 +152,12 @@ public sealed record PayrollPeriodSalaryCalculation(
     YenAmount PremiumSubtotal,
     YenAmount CountBonusSubtotal,
     YenAmount AllowanceSubtotal,
+    YenAmount CalculatedSubtotal,
+    int UncalculatedCount);
+
+/// <summary>年間範囲内の給与見込み累計を保持します。</summary>
+/// <param name="CalculatedSubtotal">計算済み給与期間の累計額。</param>
+/// <param name="UncalculatedCount">年間範囲内の未計算勤務記録数。</param>
+public sealed record AnnualSalaryCalculation(
     YenAmount CalculatedSubtotal,
     int UncalculatedCount);

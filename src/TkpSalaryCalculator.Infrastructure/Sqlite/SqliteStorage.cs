@@ -41,22 +41,29 @@ public sealed class TimeZoneLocalDateConverter(TimeZoneInfo timeZone) : ILocalDa
 /// <summary>接続設定、スキーマ更新および Ambient トランザクションを所有します。</summary>
 public sealed class SqliteDatabase
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 5;
     public const int CurrentSettingSnapshotSchemaVersion = 1;
-    public const int CurrentExportFormatVersion = 1;
+    public const int CurrentExportFormatVersion = 2;
     public const int CurrentBundledBootstrapVersion = 1;
 
     private readonly string connectionString;
     private readonly bool bootstrapDefaults;
     private readonly SemaphoreSlim initializationGate = new(1, 1);
     private readonly AsyncLocal<TransactionContext?> ambientTransaction = new();
+    private readonly Action? workerEntered;
     private bool initialized;
 
     public SqliteDatabase(string databasePath, bool bootstrapDefaults = true)
+        : this(databasePath, bootstrapDefaults, null)
+    {
+    }
+
+    internal SqliteDatabase(string databasePath, bool bootstrapDefaults, Action? workerEntered)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         DatabasePath = Path.GetFullPath(databasePath);
         this.bootstrapDefaults = bootstrapDefaults;
+        this.workerEntered = workerEntered;
         connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = DatabasePath,
@@ -70,7 +77,10 @@ public sealed class SqliteDatabase
     public string DatabasePath { get; }
 
     /// <summary>未作成 DB を作成し、古い版には順次マイグレーションを適用します。</summary>
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        BackgroundOperation.RunAsync(() => InitializeCoreAsync(cancellationToken), cancellationToken, workerEntered);
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
         if (initialized) return;
 
@@ -111,18 +121,28 @@ public sealed class SqliteDatabase
 
     internal TransactionContext? AmbientTransaction => ambientTransaction.Value;
 
-    internal async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
+    internal Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() => OpenConnectionCoreAsync(cancellationToken), cancellationToken, workerEntered);
+
+    private async Task<SqliteConnection> OpenConnectionCoreAsync(CancellationToken cancellationToken)
     {
         await InitializeAsync(cancellationToken).ConfigureAwait(false);
         return await OpenUninitializedConnectionAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task<T> ReadAsync<T>(
+    internal Task<T> ReadAsync<T>(
         Func<SqliteConnection, SqliteTransaction?, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        return BackgroundOperation.RunAsync(() => ReadCoreAsync(operation, cancellationToken), cancellationToken,
+            workerEntered);
+    }
+
+    private async Task<T> ReadCoreAsync<T>(
+        Func<SqliteConnection, SqliteTransaction?, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
         var ambient = ambientTransaction.Value;
         if (ambient is not null)
         {
@@ -133,11 +153,19 @@ public sealed class SqliteDatabase
         return await operation(connection, null, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task<T> WriteAsync<T>(
+    internal Task<T> WriteAsync<T>(
         Func<SqliteConnection, SqliteTransaction, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        return BackgroundOperation.RunAsync(() => WriteCoreAsync(operation, cancellationToken), cancellationToken,
+            workerEntered);
+    }
+
+    private async Task<T> WriteCoreAsync<T>(
+        Func<SqliteConnection, SqliteTransaction, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
         var ambient = ambientTransaction.Value;
         if (ambient is not null)
         {
@@ -153,10 +181,16 @@ public sealed class SqliteDatabase
         return result!;
     }
 
-    internal async Task RunTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+    internal Task RunTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        return BackgroundOperation.RunAsync(() => RunTransactionCoreAsync(operation, cancellationToken),
+            cancellationToken, workerEntered);
+    }
+
+    private async Task RunTransactionCoreAsync(Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
         if (ambientTransaction.Value is not null)
         {
             await operation(cancellationToken).ConfigureAwait(false);
@@ -236,8 +270,85 @@ public sealed class SqliteDatabase
                 .ConfigureAwait(false),
             1 => await MigrateFromOneToTwoAsync(connection, cancellationToken).ConfigureAwait(false),
             2 => await MigrateFromTwoToThreeAsync(connection, cancellationToken).ConfigureAwait(false),
+            3 => await MigrateFromThreeToFourAsync(connection, cancellationToken).ConfigureAwait(false),
+            4 => await MigrateFromFourToFiveAsync(connection, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"No migration from schema version {fromVersion} is available."),
         };
+    }
+
+    private static async Task<int> MigrateFromFourToFiveAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, transaction, """
+                CREATE TABLE IF NOT EXISTS annual_summary_setting (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    closing_month INTEGER NOT NULL DEFAULT 12 CHECK(closing_month BETWEEN 1 AND 12),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+                """, cancellationToken).ConfigureAwait(false);
+
+            var now = SqliteValue.Utc(DateTimeOffset.UtcNow);
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT OR IGNORE INTO annual_summary_setting(id, closing_month, created_at_utc, updated_at_utc)
+                    VALUES(1, 12, $now, $now);
+                    """;
+                command.Parameters.AddWithValue("$now", now);
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE app_metadata
+                    SET export_format_version = $format, updated_at_utc = $now
+                    WHERE id = 1;
+                    """;
+                command.Parameters.AddWithValue("$now", now);
+                command.Parameters.AddWithValue("$format", CurrentExportFormatVersion);
+                if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+                    throw new InvalidDataException("The required app_metadata row is missing.");
+            }
+
+            await ExecuteNonQueryAsync(connection, transaction, "PRAGMA user_version = 5;", cancellationToken)
+                .ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 5;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task<int> MigrateFromThreeToFourAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, transaction, """
+                DROP INDEX IF EXISTS ix_work_record_source_preset;
+                PRAGMA user_version = 4;
+                """, cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 4;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async Task<int> MigrateFromTwoToThreeAsync(

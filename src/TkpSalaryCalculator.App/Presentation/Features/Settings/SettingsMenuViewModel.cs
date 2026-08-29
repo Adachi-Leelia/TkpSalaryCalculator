@@ -34,6 +34,8 @@ public sealed class SettingsMenuViewModel : ViewModelBase
         OpenPremiumsCommand = new AsyncCommand(() => navigator.OpenPremiumsAsync(default), PresentError);
         OpenCountBonusesCommand = new AsyncCommand(() => navigator.OpenCountBonusesAsync(default), PresentError);
         OpenPayrollPeriodCommand = new AsyncCommand(() => navigator.OpenPayrollPeriodAsync(default), PresentError);
+        OpenAnnualSummarySettingsCommand = new AsyncCommand(
+            () => navigator.OpenAnnualSummarySettingsAsync(default), PresentError);
         OpenMonthlyAllowancesCommand = new AsyncCommand(() => navigator.OpenMonthlyAllowancesAsync(default), PresentError);
         OpenBasicShiftsCommand = new AsyncCommand(() => navigator.OpenBasicShiftsAsync(default), PresentError);
         OpenDataManagementCommand = new AsyncCommand(() => navigator.OpenDataManagementAsync(default), PresentError);
@@ -48,6 +50,7 @@ public sealed class SettingsMenuViewModel : ViewModelBase
     public AsyncCommand OpenPremiumsCommand { get; }
     public AsyncCommand OpenCountBonusesCommand { get; }
     public AsyncCommand OpenPayrollPeriodCommand { get; }
+    public AsyncCommand OpenAnnualSummarySettingsCommand { get; }
     public AsyncCommand OpenMonthlyAllowancesCommand { get; }
     public AsyncCommand OpenBasicShiftsCommand { get; }
     public AsyncCommand OpenDataManagementCommand { get; }

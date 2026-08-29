@@ -90,6 +90,44 @@ public sealed class SqliteAppMetadataRepository(SqliteDatabase database, IUtcClo
         }, cancellationToken);
 }
 
+public sealed class SqliteAnnualSummarySettingRepository(SqliteDatabase database, IUtcClock clock)
+    : IAnnualSummarySettingRepository
+{
+    private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
+
+    public Task<AnnualClosingMonth> GetClosingMonthAsync(CancellationToken cancellationToken) =>
+        database.ReadAsync(async (connection, transaction, token) =>
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT closing_month FROM annual_summary_setting WHERE id = 1;";
+            var value = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            if (value is null or DBNull)
+                throw new InvalidDataException("The required annual_summary_setting row is missing.");
+            return new AnnualClosingMonth(Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
+        }, cancellationToken);
+
+    public Task SaveClosingMonthAsync(
+        AnnualClosingMonth closingMonth,
+        CancellationToken cancellationToken) =>
+        database.WriteAsync(async (connection, transaction, token) =>
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE annual_summary_setting
+                SET closing_month = $closingMonth, updated_at_utc = $now
+                WHERE id = 1;
+                """;
+            command.Parameters.AddValue("$closingMonth", closingMonth.Value);
+            command.Parameters.AddValue("$now", SqliteValue.Utc(clock.UtcNow));
+            if (await command.ExecuteNonQueryAsync(token).ConfigureAwait(false) != 1)
+                throw new InvalidDataException("The required annual_summary_setting row is missing.");
+            return true;
+        }, cancellationToken);
+}
+
 public sealed class SqliteServicePresetRepository(SqliteDatabase database, IUtcClock clock) : IServicePresetRepository
 {
     private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
@@ -312,39 +350,6 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         return Convert.ToInt64(await command.ExecuteScalarAsync(token).ConfigureAwait(false)) != 0;
     }, cancellationToken);
 
-    public Task<WorkInputHistory> GetInputHistoryAsync(
-        CancellationToken cancellationToken) => database.ReadAsync(async (connection, transaction, token) =>
-    {
-        var usageCounts = new Dictionary<ServicePresetId, long>();
-        await using (var usageCommand = connection.CreateCommand())
-        {
-            usageCommand.Transaction = transaction;
-            usageCommand.CommandText = """
-                SELECT source_service_preset_id, COUNT(*) AS usage_count
-                FROM work_record WHERE source_service_preset_id IS NOT NULL GROUP BY source_service_preset_id;
-                """;
-            await using var reader = await usageCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
-                usageCounts[new ServicePresetId(SqliteValue.Guid(reader.GetString("source_service_preset_id")))] =
-                    reader.GetInt64("usage_count");
-        }
-
-        WorkRecordDto? mostRecent = null;
-        await using (var recentCommand = connection.CreateCommand())
-        {
-            recentCommand.Transaction = transaction;
-            recentCommand.CommandText = """
-                SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
-                       end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
-                FROM work_record ORDER BY updated_at_utc DESC, work_date DESC, id DESC LIMIT 1;
-                """;
-            await using var reader = await recentCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
-            if (await reader.ReadAsync(token).ConfigureAwait(false)) mostRecent = Read(reader);
-        }
-
-        return new WorkInputHistory(usageCounts, mostRecent);
-    }, cancellationToken);
-
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken) => FindBySqlAsync("""
         SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
                end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
@@ -365,14 +370,11 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         if (startDate > endDate) throw new ArgumentException("Start date must not follow end date.", nameof(startDate));
-        cancellationToken.ThrowIfCancellationRequested();
-        var ambient = database.AmbientTransaction;
-        SqliteConnection? ownedConnection = null;
-        var connection = ambient?.Connection ?? (ownedConnection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
-        try
+        var values = await database.ReadAsync(async (connection, transaction, token) =>
         {
+            var result = new List<WorkRecordDto>();
             await using var command = connection.CreateCommand();
-            command.Transaction = ambient?.Transaction;
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
                        end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
@@ -380,12 +382,15 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
                 """;
             command.Parameters.AddValue("$start", SqliteValue.Date(startDate));
             command.Parameters.AddValue("$end", SqliteValue.Date(endDate));
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) yield return Read(reader);
-        }
-        finally
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false)) result.Add(Read(reader));
+            return result;
+        }, cancellationToken).ConfigureAwait(false);
+
+        foreach (var value in values)
         {
-            if (ownedConnection is not null) await ownedConnection.DisposeAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return value;
         }
     }
 
@@ -529,6 +534,42 @@ public sealed class SqliteMonthlyAllowanceRepository(SqliteDatabase database, IU
                 reader.GetString("display_name"), new YenAmount(reader.GetInt64("amount_yen"))));
         return (IReadOnlyList<MonthlyAllowance>)values;
     }, cancellationToken);
+
+    public Task<IReadOnlyList<MonthlyAllowance>> GetForRangeAsync(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end,
+        CancellationToken cancellationToken)
+    {
+        if (start.Value.CompareTo(end.Value) > 0)
+        {
+            throw new ArgumentException("月額手当の検索開始給与期間は終了給与期間以前で指定してください。", nameof(start));
+        }
+
+        return database.ReadAsync(async (connection, transaction, token) =>
+        {
+            var values = new List<MonthlyAllowance>();
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT id, payroll_period_year_month, display_name, amount_yen FROM monthly_allowance
+                WHERE payroll_period_year_month BETWEEN $start AND $end
+                ORDER BY payroll_period_year_month, created_at_utc, id;
+                """;
+            command.Parameters.AddValue("$start", SqliteValue.YearMonth(start.Value));
+            command.Parameters.AddValue("$end", SqliteValue.YearMonth(end.Value));
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                values.Add(new MonthlyAllowance(
+                    new MonthlyAllowanceId(SqliteValue.Guid(reader.GetString("id"))),
+                    new PayrollPeriodKey(SqliteValue.YearMonth(reader.GetInt64("payroll_period_year_month"))),
+                    reader.GetString("display_name"),
+                    new YenAmount(reader.GetInt64("amount_yen"))));
+            }
+
+            return (IReadOnlyList<MonthlyAllowance>)values;
+        }, cancellationToken);
+    }
 
     public Task UpsertAsync(MonthlyAllowance allowance, CancellationToken cancellationToken)
     {

@@ -18,6 +18,7 @@ public static class NavigationRoutes
     public const string CountBonusSettings = "count-bonus-settings";
     public const string CountBonusSettingsEditor = "count-bonus-settings-editor";
     public const string PayrollPeriodSettings = "payroll-period-settings";
+    public const string AnnualSummarySettings = "annual-summary-settings";
     public const string MonthlyAllowanceEditor = "monthly-allowance-editor";
     public const string BasicShifts = "basic-shifts";
     public const string BasicShiftEditor = "basic-shift-editor";

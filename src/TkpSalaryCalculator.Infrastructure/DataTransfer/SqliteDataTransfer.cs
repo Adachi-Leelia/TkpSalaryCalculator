@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.Data.Sqlite;
 using TkpSalaryCalculator.Application.Contracts;
 using TkpSalaryCalculator.Application.Ports;
@@ -16,55 +17,130 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
 {
     private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
 
-    public async Task<IExportReadSession> OpenReadSessionAsync(CancellationToken cancellationToken)
-    {
-        var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var transaction = connection.BeginTransaction(deferred: true);
-            await using (var establishSnapshot = connection.CreateCommand())
-            {
-                establishSnapshot.Transaction = transaction;
-                establishSnapshot.CommandText = "SELECT id FROM app_metadata WHERE id = 1;";
-                _ = await establishSnapshot.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            }
-            return new ReadSession(connection, transaction);
-        }
-        catch
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-    }
+    public async Task<IExportReadSession> OpenReadSessionAsync(CancellationToken cancellationToken) =>
+        await ReadSession.CreateAsync(database, cancellationToken).ConfigureAwait(false);
 
-    private sealed class ReadSession(SqliteConnection connection, SqliteTransaction transaction) : IExportReadSession
+    private sealed class ReadSession : IExportReadSession
     {
+        private const int BufferCapacity = 32;
+        private readonly CancellationTokenSource lifetime;
+        private readonly Channel<DataTransferRecord> records;
+        private readonly TaskCompletionSource snapshotEstablished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource streamRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Task producer;
         private bool disposed;
+        private int streamStarted;
+
+        private ReadSession(SqliteDatabase database, CancellationToken cancellationToken)
+        {
+            lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            records = Channel.CreateBounded<DataTransferRecord>(new BoundedChannelOptions(BufferCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true,
+                SingleWriter = true,
+            });
+            producer = BackgroundOperation.RunAsync(() => ProduceAsync(database), CancellationToken.None);
+        }
+
+        public static async Task<IExportReadSession> CreateAsync(SqliteDatabase database,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var session = new ReadSession(database, cancellationToken);
+            try
+            {
+                await session.snapshotEstablished.Task.ConfigureAwait(false);
+                return session;
+            }
+            catch
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
 
         public async IAsyncEnumerable<DataTransferRecord> StreamAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            var nextSequence = new Dictionary<DataTransferSection, long>();
-            foreach (var query in ExportQueries)
+            if (Interlocked.Exchange(ref streamStarted, 1) != 0)
+                throw new InvalidOperationException("An export read session can only be streamed once.");
+            streamRequested.TrySetResult();
+
+            await foreach (var record in records.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+                yield return record;
+        }
+
+        private async Task ProduceAsync(SqliteDatabase database)
+        {
+            var cancellationToken = lifetime.Token;
+            try
             {
-                if (!nextSequence.TryGetValue(query.Section, out var sequence)) sequence = query.FirstSequence;
-                await using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = query.Sql;
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+                await using var transaction = connection.BeginTransaction(deferred: true);
+                await using (var establishSnapshot = connection.CreateCommand())
                 {
-                    var values = new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["type"] = query.Type,
-                    };
-                    for (var index = 0; index < reader.FieldCount; index++)
-                        values[reader.GetName(index)] = reader.IsDBNull(index) ? null : reader.GetValue(index);
-                    var element = JsonSerializer.SerializeToElement(values);
-                    yield return new DataTransferRecord<JsonElement>(query.Section, sequence++, element);
+                    establishSnapshot.Transaction = transaction;
+                    establishSnapshot.CommandText = "SELECT id FROM app_metadata WHERE id = 1;";
+                    _ = await establishSnapshot.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
                 }
-                nextSequence[query.Section] = sequence;
+                snapshotEstablished.TrySetResult();
+                await streamRequested.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+                try
+                {
+                    var nextSequence = new Dictionary<DataTransferSection, long>();
+                    foreach (var query in ExportQueries)
+                    {
+                        if (!nextSequence.TryGetValue(query.Section, out var sequence)) sequence = query.FirstSequence;
+                        var rowCount = 0;
+                        await using var command = connection.CreateCommand();
+                        command.Transaction = transaction;
+                        command.CommandText = query.Sql;
+                        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                        {
+                            rowCount++;
+                            var values = new Dictionary<string, object?>(StringComparer.Ordinal)
+                            {
+                                ["type"] = query.Type,
+                            };
+                            for (var index = 0; index < reader.FieldCount; index++)
+                                values[reader.GetName(index)] = reader.IsDBNull(index) ? null : reader.GetValue(index);
+                            var element = JsonSerializer.SerializeToElement(values);
+                            await records.Writer.WriteAsync(
+                                new DataTransferRecord<JsonElement>(query.Section, sequence++, element),
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                        if (query.RequiredRowCount is { } requiredRowCount && rowCount != requiredRowCount)
+                            throw new InvalidDataException(
+                                $"Export record '{query.Type}' must occur exactly {requiredRowCount} time(s).");
+                        nextSequence[query.Section] = sequence;
+                    }
+                    records.Writer.TryComplete();
+                }
+                finally
+                {
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Read-only disposal is best effort.
+                    }
+                }
+            }
+            catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+            {
+                snapshotEstablished.TrySetCanceled(cancellationToken);
+                records.Writer.TryComplete(exception);
+            }
+            catch (Exception exception)
+            {
+                snapshotEstablished.TrySetException(exception);
+                records.Writer.TryComplete(exception);
             }
         }
 
@@ -72,16 +148,10 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
         {
             if (disposed) return;
             disposed = true;
-            try
-            {
-                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Read-only disposal is best effort.
-            }
-            await transaction.DisposeAsync().ConfigureAwait(false);
-            await connection.DisposeAsync().ConfigureAwait(false);
+            lifetime.Cancel();
+            streamRequested.TrySetResult();
+            await producer.ConfigureAwait(false);
+            lifetime.Dispose();
         }
     }
 
@@ -161,6 +231,10 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
             SELECT id, payroll_period_year_month, display_name, amount_yen, created_at_utc, updated_at_utc
             FROM monthly_allowance ORDER BY payroll_period_year_month, id;
             """),
+        new(DataTransferSection.AnnualSummarySettings, 0, "annual_summary_setting", """
+            SELECT id, closing_month, created_at_utc, updated_at_utc
+            FROM annual_summary_setting WHERE id = 1;
+            """, RequiredRowCount: 1),
         new(DataTransferSection.Definitions, 0, "service_definition", SnapshotSet + """
             SELECT d.id, d.created_at_utc FROM service_definition d WHERE d.id IN (
                 SELECT service_id FROM snapshot_service WHERE snapshot_id IN (SELECT id FROM exported_snapshot)
@@ -211,14 +285,20 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
             """),
     ];
 
-    private sealed record ExportQuery(DataTransferSection Section, long FirstSequence, string Type, string Sql);
+    private sealed record ExportQuery(
+        DataTransferSection Section,
+        long FirstSequence,
+        string Type,
+        string Sql,
+        int? RequiredRowCount = null);
 }
 
 /// <summary>インポートを一時 SQLite へ格納し、確認前の検証と確認後の全置換を行います。</summary>
 public sealed class SqliteImportStagingRepository : IImportStagingRepository
 {
     private const string FormatName = "tkp-salary-calculator";
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
+    private const int LegacyFormatVersion = 1;
     private readonly SqliteDatabase liveDatabase;
     private readonly string stagingDirectory;
     private readonly IUtcClock clock;
@@ -232,7 +312,10 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
-    public async Task<PreparedImportId> CreateAsync(CancellationToken cancellationToken)
+    public Task<PreparedImportId> CreateAsync(CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() => CreateCoreAsync(cancellationToken), cancellationToken);
+
+    private async Task<PreparedImportId> CreateCoreAsync(CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(stagingDirectory);
         var id = new PreparedImportId(Guid.NewGuid());
@@ -264,8 +347,12 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         return id;
     }
 
-    public async Task AppendBatchAsync(PreparedImportId preparedImportId, IReadOnlyList<DataTransferRecord> records,
-        CancellationToken cancellationToken)
+    public Task AppendBatchAsync(PreparedImportId preparedImportId, IReadOnlyList<DataTransferRecord> records,
+        CancellationToken cancellationToken) => BackgroundOperation.RunAsync(
+        () => AppendBatchCoreAsync(preparedImportId, records, cancellationToken), cancellationToken);
+
+    private async Task AppendBatchCoreAsync(PreparedImportId preparedImportId,
+        IReadOnlyList<DataTransferRecord> records, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(records);
         if (!active.TryGetValue(preparedImportId.Value, out var state) ||
@@ -306,7 +393,11 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     }
 
     // DATA-003/DATA-004/DATA-005: validation only touches staging and a candidate DB.
-    public async Task<ImportPreviewDto> ValidateAsync(PreparedImportId preparedImportId,
+    public Task<ImportPreviewDto> ValidateAsync(PreparedImportId preparedImportId,
+        CancellationToken cancellationToken) => BackgroundOperation.RunAsync(
+        () => ValidateCoreAsync(preparedImportId, cancellationToken), cancellationToken);
+
+    private async Task<ImportPreviewDto> ValidateCoreAsync(PreparedImportId preparedImportId,
         CancellationToken cancellationToken)
     {
         if (!active.TryGetValue(preparedImportId.Value, out var state) ||
@@ -322,7 +413,9 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         if (RequiredString(header, "format") != FormatName)
             throw new InvalidDataException("The import format is not supported.");
         var version = RequiredInt32(header, "formatVersion");
-        if (version != FormatVersion) throw new InvalidDataException($"Export format version {version} is not supported.");
+        if (version is not LegacyFormatVersion and not FormatVersion)
+            throw new InvalidDataException($"Export format version {version} is not supported.");
+        await ValidateAnnualSummarySettingRecordAsync(stage, version, cancellationToken).ConfigureAwait(false);
         var exportCreated = SqliteValue.Utc(RequiredString(header, "createdAtUtc"));
 
         // The candidate must contain only imported rows. Default bootstrap data would otherwise
@@ -334,6 +427,11 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             var context = candidate.AmbientTransaction!;
             await SqliteDatabase.ExecuteNonQueryAsync(context.Connection, context.Transaction,
                 "PRAGMA defer_foreign_keys = ON;", token).ConfigureAwait(false);
+            if (version == FormatVersion)
+            {
+                await SqliteDatabase.ExecuteNonQueryAsync(context.Connection, context.Transaction,
+                    "DELETE FROM annual_summary_setting;", token).ConfigureAwait(false);
+            }
             foreach (var table in InsertOrder)
                 await InsertStagedTableAsync(stage, context.Connection, context.Transaction, table, token)
                     .ConfigureAwait(false);
@@ -362,7 +460,12 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     // DATA-002/DATA-007: replacement is committed before installation-local bootstrap is applied.
     // A temporary snapshot of the old live rows remains on the same connection until bootstrap succeeds,
     // so a bootstrap or final-validation failure can restore the pre-import database before returning.
-    public async Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId,
+    public Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId,
+        DateTimeOffset importedAtUtc, CancellationToken cancellationToken) => BackgroundOperation.RunAsync(
+        () => TryConsumeAndReplaceLiveDataCoreAsync(preparedImportId, importedAtUtc, cancellationToken),
+        cancellationToken);
+
+    private async Task<bool> TryConsumeAndReplaceLiveDataCoreAsync(PreparedImportId preparedImportId,
         DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {
         if (!active.TryUpdate(preparedImportId.Value, PreparedImportState.Consuming,
@@ -551,17 +654,19 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         catch { /* Preserve the operation failure. Disposing the connection also rolls back an open transaction. */ }
     }
 
-    public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken)
-    {
+    public Task DiscardAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() =>
+        {
         cancellationToken.ThrowIfCancellationRequested();
         active.TryRemove(preparedImportId.Value, out _);
         DeleteDatabaseFiles(StagePath(preparedImportId));
         DeleteDatabaseFiles(CandidatePath(preparedImportId));
         return Task.CompletedTask;
-    }
+        }, cancellationToken);
 
-    public Task DiscardAbandonedAsync(CancellationToken cancellationToken)
-    {
+    public Task DiscardAbandonedAsync(CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() =>
+        {
         cancellationToken.ThrowIfCancellationRequested();
         if (!Directory.Exists(stagingDirectory)) return Task.CompletedTask;
         foreach (var path in Directory.EnumerateFiles(stagingDirectory, "tkp-import-*.db*", SearchOption.TopDirectoryOnly))
@@ -572,7 +677,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             File.Delete(path);
         }
         return Task.CompletedTask;
-    }
+        }, cancellationToken);
 
     private string StagePath(PreparedImportId id) => Path.Combine(stagingDirectory,
         $"tkp-import-{id.Value:N}.stage.db");
@@ -640,6 +745,33 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             throw new InvalidDataException($"Record '{type}' must occur exactly once.");
         return result;
+    }
+
+    private static async Task ValidateAnnualSummarySettingRecordAsync(
+        SqliteConnection stage,
+        int formatVersion,
+        CancellationToken cancellationToken)
+    {
+        await using var command = stage.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM staged_record WHERE record_type = 'annual_summary_setting';";
+        var count = Convert.ToInt64(
+            await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+            CultureInfo.InvariantCulture);
+        if (formatVersion == LegacyFormatVersion && count != 0)
+            throw new InvalidDataException("Export format version 1 cannot contain an annual summary setting.");
+        if (formatVersion == FormatVersion && count != 1)
+            throw new InvalidDataException("Export format version 2 requires exactly one annual summary setting.");
+        if (formatVersion != FormatVersion) return;
+
+        var setting = await ReadSingleRecordAsync(stage, "annual_summary_setting", cancellationToken)
+            .ConfigureAwait(false);
+        if (RequiredInt32(setting, "id") != 1)
+            throw new InvalidDataException("The annual summary setting id must be the integer 1.");
+        var closingMonth = RequiredInt32(setting, "closing_month");
+        if (closingMonth is < 1 or > 12)
+            throw new InvalidDataException("The annual summary closing month must be an integer from 1 through 12.");
+        ValidateUtcString(setting, "created_at_utc");
+        ValidateUtcString(setting, "updated_at_utc");
     }
 
     private static async Task InsertStagedTableAsync(SqliteConnection stage, SqliteConnection candidate,
@@ -743,9 +875,10 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
                 throw new InvalidDataException("The initial setting snapshot is missing.");
             initialSnapshotId = reader.GetString(0);
             var metadataVersion = reader.GetInt32(1);
-            if (metadataVersion != expectedFormatVersion || metadataVersion != FormatVersion)
+            if (metadataVersion != expectedFormatVersion ||
+                expectedFormatVersion is not LegacyFormatVersion and not FormatVersion)
                 throw new InvalidDataException(
-                    $"Metadata export format version {metadataVersion} does not match supported header version {FormatVersion}.");
+                    $"Metadata export format version {metadataVersion} does not match header version {expectedFormatVersion}.");
         }
 
         await using (var versions = connection.CreateCommand())
@@ -941,13 +1074,12 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         SqliteTransaction transaction, DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {
         await using var read = source.CreateCommand();
-        read.CommandText = "SELECT initial_snapshot_id, export_format_version, created_at_utc FROM app_metadata WHERE id = 1;";
+        read.CommandText = "SELECT initial_snapshot_id, created_at_utc FROM app_metadata WHERE id = 1;";
         await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             throw new InvalidDataException("Imported metadata is missing.");
         var initial = reader.GetString(0);
-        var version = reader.GetInt32(1);
-        var created = reader.GetString(2);
+        var created = reader.GetString(1);
         await reader.DisposeAsync().ConfigureAwait(false);
         await using var update = destination.CreateCommand();
         update.Transaction = transaction;
@@ -960,7 +1092,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             WHERE id = 1;
             """;
         update.Parameters.AddWithValue("$initial", initial);
-        update.Parameters.AddWithValue("$version", version);
+        update.Parameters.AddWithValue("$version", SqliteDatabase.CurrentExportFormatVersion);
         update.Parameters.AddWithValue("$now", SqliteValue.Utc(importedAtUtc));
         update.Parameters.AddWithValue("$created", created);
         await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -987,9 +1119,23 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             : throw new InvalidDataException($"Required property '{propertyName}' is missing.");
 
     private static int RequiredInt32(JsonElement element, string propertyName) =>
-        element.TryGetProperty(propertyName, out var property) && property.TryGetInt32(out var value)
+        element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number &&
+        property.TryGetInt32(out var value)
             ? value
             : throw new InvalidDataException($"Required property '{propertyName}' is missing.");
+
+    private static void ValidateUtcString(JsonElement element, string propertyName)
+    {
+        var value = RequiredString(element, propertyName);
+        try
+        {
+            _ = SqliteValue.Utc(value);
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidDataException($"Property '{propertyName}' is not a valid UTC timestamp.", exception);
+        }
+    }
 
     private static async Task ExecuteAsync(SqliteConnection connection, SqliteTransaction? transaction, string sql,
         CancellationToken cancellationToken)
@@ -1057,6 +1203,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         new("work_record", "id", "work_date", "service_id", "time_category_id", "input_mode", "work_minutes", "start_time_minutes", "end_time_minutes", "source_service_preset_id", "source_basic_shift_id", "source_work_record_id", "save_operation_id", "created_at_utc", "updated_at_utc"),
         new("closing_rule_history", "id", "effective_from_year_month", "closing_day", "is_end_of_month", "created_at_utc"),
         new("monthly_allowance", "id", "payroll_period_year_month", "display_name", "amount_yen", "created_at_utc", "updated_at_utc"),
+        new("annual_summary_setting", "id", "closing_month", "created_at_utc", "updated_at_utc"),
         new("setting_month", "year_month", "snapshot_id", "created_at_utc", "updated_at_utc"),
     ];
 
@@ -1070,6 +1217,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     private static readonly string[] DeleteOrder =
     [
         "work_record", "basic_shift", "service_preset", "monthly_allowance", "closing_rule_history",
+        "annual_summary_setting",
         "setting_month", "snapshot_premium_weekday", "snapshot_premium_date", "snapshot_premium_service",
         "snapshot_count_bonus_service", "snapshot_rate", "snapshot_time_category", "snapshot_service",
         "snapshot_premium", "snapshot_count_bonus", "setting_snapshot", "holiday_date",
@@ -1159,6 +1307,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             ["work_record"] = DataTransferSection.WorkRecords,
             ["holiday_calendar_version"] = DataTransferSection.Holidays,
             ["holiday_date"] = DataTransferSection.Holidays,
+            ["annual_summary_setting"] = DataTransferSection.AnnualSummarySettings,
         };
 
     private sealed record TableSpec(string Name, params string[] Columns);

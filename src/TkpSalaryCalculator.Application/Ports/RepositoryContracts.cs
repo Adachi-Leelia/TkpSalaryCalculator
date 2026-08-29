@@ -45,19 +45,11 @@ public interface IServicePresetRepository
     Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken);
 }
 
-/// <summary>勤務入力候補の全履歴統計と、直近に確定した勤務を保持します。</summary>
-public sealed record WorkInputHistory(
-    IReadOnlyDictionary<ServicePresetId, long> ServicePresetUsageCounts,
-    WorkRecordDto? MostRecent);
-
 /// <summary>ストレージ技術を公開せずに、正規化済み勤務記録を保存します。</summary>
 public interface IWorkRecordRepository
 {
     /// <summary>保存済み勤務記録が 1 件以上存在するかどうかを判定します。</summary>
     Task<bool> AnyAsync(CancellationToken cancellationToken);
-
-    /// <summary>候補作成に必要なプリセット別使用件数と直近勤務を、1 回の読取コンテキストで取得します。</summary>
-    Task<WorkInputHistory> GetInputHistoryAsync(CancellationToken cancellationToken);
 
     /// <summary>識別子で勤務記録を 1 件検索します。</summary>
     Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken);
@@ -137,12 +129,28 @@ public interface IClosingRuleRepository
         CancellationToken cancellationToken);
 }
 
+/// <summary>年間給与見込み累計の現在設定を単一行で保存します。</summary>
+public interface IAnnualSummarySettingRepository
+{
+    /// <summary>保存済みの年間締め月を取得します。行が欠落している場合はデータ不整合として失敗します。</summary>
+    Task<AnnualClosingMonth> GetClosingMonthAsync(CancellationToken cancellationToken);
+
+    /// <summary>現在のトランザクション内で年間締め月を保存します。</summary>
+    Task SaveClosingMonthAsync(AnnualClosingMonth closingMonth, CancellationToken cancellationToken);
+}
+
 /// <summary>給与期間に直接適用する手当を保存します。</summary>
 public interface IMonthlyAllowanceRepository
 {
     /// <summary>1 期間分の手当を取得します。</summary>
     Task<IReadOnlyList<MonthlyAllowance>> GetForPeriodAsync(
         PayrollPeriodKey payrollPeriodKey,
+        CancellationToken cancellationToken);
+
+    /// <summary>両端を含む給与期間キー範囲の手当を給与期間順にまとめて取得します。</summary>
+    Task<IReadOnlyList<MonthlyAllowance>> GetForRangeAsync(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end,
         CancellationToken cancellationToken);
 
     /// <summary>現在のトランザクション内で手当を保存します。</summary>

@@ -105,8 +105,18 @@ public interface ISalaryQueryUseCase
     /// <summary>指定日 1 日分の詳細な給与結果を取得します。</summary>
     Task<DailySalaryDto> GetDayAsync(DateOnly workDate, CancellationToken cancellationToken);
 
+    /// <summary>指定した勤務記録 1 件と、その勤務日を含む給与期間の境界だけを取得します。</summary>
+    Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+        WorkRecordId workRecordId,
+        CancellationToken cancellationToken);
+
     /// <summary>直接適用する月額手当を含む給与期間の概要を取得します。</summary>
     Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(
+        PayrollPeriodKey payrollPeriodKey,
+        CancellationToken cancellationToken);
+
+    /// <summary>選択中の給与期間について、月次サマリーと年間累計を同じ一括読取から取得します。</summary>
+    Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
         PayrollPeriodKey payrollPeriodKey,
         CancellationToken cancellationToken);
 }
@@ -195,6 +205,18 @@ public interface IPayrollPeriodSettingsUseCase
 
     /// <summary>給与期間の手当を 1 件削除します。</summary>
     Task DeleteAllowanceAsync(MonthlyAllowanceId id, CancellationToken cancellationToken);
+}
+
+/// <summary>年間給与見込み累計の現在設定をプレゼンテーション層へ公開します。</summary>
+public interface IAnnualSummarySettingsUseCase
+{
+    /// <summary>保存済みの年間締め月を取得します。</summary>
+    Task<AnnualSummarySettingDto> GetAsync(CancellationToken cancellationToken);
+
+    /// <summary>1 月から 12 月までの年間締め月を原子的に保存します。</summary>
+    Task<AnnualSummarySettingDto> SaveAsync(
+        SaveAnnualSummarySettingCommand command,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>バックアップ通知の表示状態と延期操作をプレゼンテーション層へ公開します。</summary>

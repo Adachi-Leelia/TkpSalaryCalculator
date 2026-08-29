@@ -21,7 +21,7 @@ public sealed partial class InfrastructureResilienceTests
         "app_metadata", "setting_month", "setting_snapshot", "snapshot_service", "snapshot_time_category",
         "snapshot_rate", "snapshot_premium", "snapshot_premium_weekday", "snapshot_premium_date",
         "snapshot_premium_service", "snapshot_count_bonus", "snapshot_count_bonus_service", "service_preset",
-        "basic_shift", "work_record", "closing_rule_history", "monthly_allowance", "holiday_calendar_version",
+        "basic_shift", "work_record", "closing_rule_history", "monthly_allowance", "annual_summary_setting", "holiday_calendar_version",
         "holiday_date", "service_definition", "time_category_definition", "premium_definition",
         "count_bonus_definition",
     ];
@@ -31,6 +31,8 @@ public sealed partial class InfrastructureResilienceTests
     {
         await using var source = await TestDatabase.CreateCompleteAsync(1);
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 0, 0, TimeSpan.Zero));
+        await new SqliteAnnualSummarySettingRepository(source.Database, clock)
+            .SaveClosingMonthAsync(new AnnualClosingMonth(3), default);
         var beforeSalary = await ReadSalaryProjectionAsync(source, clock);
         Assert.Equal(1200, beforeSalary.BasePay);
         Assert.Equal(300, beforeSalary.Premium);
@@ -70,6 +72,8 @@ public sealed partial class InfrastructureResilienceTests
             $"Deep transfer mismatch.\nSource: {sourceJson}\nDestination: {destinationJson}");
         Assert.Equal(InitialSetupStatus.Completed,
             (await new SqliteAppMetadataRepository(destination.Database, clock).GetAsync(default)).InitialSetupStatus);
+        Assert.Equal(3, (await new SqliteAnnualSummarySettingRepository(destination.Database, clock)
+            .GetClosingMonthAsync(default)).Value);
         await using (var imported = await destination.OpenAsync())
             Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(imported,
                 "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
@@ -201,7 +205,8 @@ public sealed partial class InfrastructureResilienceTests
             new SqliteClosingRuleRepository(database.Database, clock),
             new SqliteMonthlyAllowanceRepository(database.Database, clock),
             new SqliteBasicShiftRepository(database.Database, clock),
-            new SalaryCalculator(), new PayrollPeriodCalculator());
+            new SalaryCalculator(), new PayrollPeriodCalculator(),
+            new SqliteAnnualSummarySettingRepository(database.Database, clock));
         var summary = await query.GetPayrollPeriodAsync(new PayrollPeriodKey(new YearMonth(2026, 8)), default);
         var day = Assert.Single(summary.Days);
         var record = Assert.Single(day.Records).Calculation;
@@ -266,7 +271,7 @@ public sealed partial class InfrastructureResilienceTests
                 INSERT INTO monthly_allowance VALUES($allowance, 202608, 'Complete Allowance', 1000, $now, $now);
                 INSERT INTO setting_month VALUES(202608, $snapshot, $now, $now);
                 UPDATE app_metadata SET initial_setup_status = 'Completed', initial_setup_step = NULL,
-                    initial_snapshot_id = $snapshot, export_format_version = 1, created_at_utc = $now,
+                    initial_snapshot_id = $snapshot, export_format_version = 2, created_at_utc = $now,
                     updated_at_utc = $now WHERE id = 1;
                 """;
             Add(command, "$holiday", "40000000-0000-4000-8000-000000000004");

@@ -32,21 +32,33 @@ public sealed class CalculationDetailViewModelTests
         Assert.Equal("300円", Assert.Single(viewModel.PremiumTotals).AmountText);
         Assert.Equal("交通手当", Assert.Single(viewModel.Allowances).DisplayName);
 
-        var day = Assert.Single(viewModel.Days);
+        Assert.Collection(
+            viewModel.Rows,
+            row => Assert.IsType<CalculationSectionHeaderRowViewModel>(row),
+            row => Assert.IsType<CalculationPremiumTotalRowViewModel>(row),
+            row => Assert.IsType<CalculationSectionHeaderRowViewModel>(row),
+            row => Assert.IsType<CalculationAllowanceRowViewModel>(row),
+            row => Assert.IsType<CalculationDayRowViewModel>(row),
+            row => Assert.IsType<CalculationWorkRecordRowViewModel>(row),
+            row => Assert.IsType<CalculationPremiumRowViewModel>(row),
+            row => Assert.IsType<CalculationCountBonusRowViewModel>(row),
+            row => Assert.IsType<CalculationWorkRecordTotalRowViewModel>(row));
+        var day = Assert.Single(viewModel.Rows.OfType<CalculationDayRowViewModel>());
         Assert.Equal("1,600円", day.TotalText);
-        var record = Assert.Single(day.Records);
+        var record = Assert.Single(viewModel.Rows.OfType<CalculationWorkRecordRowViewModel>());
         Assert.Equal("訪問介護 / 60分", record.DisplayName);
         Assert.Equal("09:00～10:00 / 1時間", record.WorkTimeText);
         Assert.Equal("時給 1,200円", record.AppliedRateText);
-        Assert.Equal("1,600円", record.TotalText);
-        Assert.Equal("設定対象年月: 2026年8月", record.SettingMonthText);
-        Assert.Equal("夜間割増", Assert.Single(record.Premiums).DisplayName);
-        Assert.Equal("30分", Assert.Single(record.Premiums).ApplicableTimeText);
-        Assert.Equal("訪問件数", Assert.Single(record.CountBonuses).DisplayName);
+        var total = Assert.Single(viewModel.Rows.OfType<CalculationWorkRecordTotalRowViewModel>());
+        Assert.Equal("1,600円", total.TotalText);
+        Assert.Equal("設定対象年月: 2026年8月", total.SettingMonthText);
+        Assert.Equal("夜間割増", Assert.Single(viewModel.Rows.OfType<CalculationPremiumRowViewModel>()).DisplayName);
+        Assert.Equal("30分", Assert.Single(viewModel.Rows.OfType<CalculationPremiumRowViewModel>()).ApplicableTimeText);
+        Assert.Equal("訪問件数", Assert.Single(viewModel.Rows.OfType<CalculationCountBonusRowViewModel>()).DisplayName);
     }
 
     [Fact]
-    public async Task SCRCALC01_RecordEntryShowsOnlyTheSelectedRecordWithoutPeriodTotals()
+    public async Task RSP004_RecordEntryUsesSingleRecordQueryWithoutPeriodTotals()
     {
         var selected = CalculatedRecord(RecordId);
         var uncalculated = UncalculatedRecord(OtherRecordId);
@@ -60,21 +72,21 @@ public sealed class CalculationDetailViewModelTests
             UncalculatedCount = 1,
         };
         var salary = new SalaryStub { Summary = summary };
-        var periods = new PayrollPeriodStub();
-        var viewModel = CreateViewModel(salary, periods);
+        var viewModel = CreateViewModel(salary);
         viewModel.SetWorkRecord(WorkDate, RecordId);
 
         await viewModel.LoadAsync();
 
-        Assert.Equal(WorkDate, periods.RequestedDate);
+        Assert.Equal(RecordId, salary.RequestedWorkRecordId);
+        Assert.Null(salary.RequestedKey);
         Assert.False(viewModel.ShowsPayrollPeriodBreakdown);
         Assert.False(viewModel.HasPeriodUncalculated);
         Assert.False(viewModel.HasPremiumTotals);
         Assert.False(viewModel.HasAllowances);
-        var day = Assert.Single(viewModel.Days);
+        var day = Assert.Single(viewModel.Rows.OfType<CalculationDayRowViewModel>());
         Assert.False(day.HasDaySubtotal);
         Assert.False(day.HasUncalculated);
-        var record = Assert.Single(day.Records);
+        var record = Assert.Single(viewModel.Rows.OfType<CalculationWorkRecordRowViewModel>());
         Assert.Equal("訪問介護 / 60分", record.DisplayName);
     }
 
@@ -106,18 +118,54 @@ public sealed class CalculationDetailViewModelTests
 
         Assert.True(viewModel.HasUncalculated);
         Assert.Equal("計算済み分の小計", viewModel.TotalLabel);
-        var row = Assert.Single(Assert.Single(viewModel.Days).Records);
+        var row = Assert.Single(viewModel.Rows.OfType<CalculationWorkRecordTotalRowViewModel>());
         Assert.True(row.HasMissingReason);
         Assert.Contains("基本単価", row.MissingReasonText);
         Assert.Contains("サービス・単価", row.MissingReasonText);
         Assert.Equal("未計算", row.TotalText);
     }
 
-    private static CalculationDetailViewModel CreateViewModel(
-        SalaryStub salary,
-        PayrollPeriodStub? periods = null) => new(
+    [Fact]
+    public async Task RSP003_DisplayRowTransformationRunsOutsideCapturedUiContext()
+    {
+        var context = new TrackingSynchronizationContext();
+        var days = new ContextTrackingReadOnlyList<DailySalaryDto>(
+            Summary([CalculatedRecord(RecordId)]).Days,
+            context);
+        var salary = new SalaryStub
+        {
+            Summary = Summary([CalculatedRecord(RecordId)]) with { Days = days },
+        };
+        var viewModel = CreateViewModel(salary);
+        viewModel.SetPayrollPeriod(PeriodKey);
+        var rowsPublishedOnUiContext = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(CalculationDetailViewModel.Rows))
+                rowsPublishedOnUiContext = ReferenceEquals(SynchronizationContext.Current, context);
+        };
+
+        await Task.Run(async () =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            try
+            {
+                await viewModel.LoadAsync();
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+
+        Assert.True(days.AccessCount > 0);
+        Assert.Equal(0, days.UiContextAccessCount);
+        Assert.True(rowsPublishedOnUiContext);
+        Assert.NotEmpty(viewModel.Rows);
+    }
+
+    private static CalculationDetailViewModel CreateViewModel(SalaryStub salary) => new(
         salary,
-        periods ?? new PayrollPeriodStub(),
         new JapaneseDisplayFormatter(),
         new UserErrorPresenter(),
         new AppSessionState(new DateOnly(2026, 8, 21)));
@@ -166,8 +214,13 @@ public sealed class CalculationDetailViewModelTests
 
     private sealed class SalaryStub : ISalaryQueryUseCase
     {
+        public Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
+            PayrollPeriodKey payrollPeriodKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public required PayrollPeriodSummaryDto Summary { get; init; }
         public PayrollPeriodKey? RequestedKey { get; private set; }
+        public WorkRecordId? RequestedWorkRecordId { get; private set; }
 
         public Task<CalendarMonthScreenDto> GetCalendarMonthScreenAsync(
             YearMonth yearMonth, DateOnly selectedDate, CancellationToken cancellationToken) =>
@@ -186,26 +239,79 @@ public sealed class CalculationDetailViewModelTests
             throw new NotSupportedException();
         public Task<DailySalaryDto> GetDayAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-    }
 
-    private sealed class PayrollPeriodStub : IPayrollPeriodSettingsUseCase
-    {
-        public DateOnly? RequestedDate { get; private set; }
-
-        public Task<PayrollPeriod> FindPeriodAsync(DateOnly localDate, CancellationToken cancellationToken)
+        public Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+            WorkRecordId workRecordId,
+            CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RequestedDate = localDate;
-            return Task.FromResult(new PayrollPeriod(PeriodKey, new DateOnly(2026, 7, 21), new DateOnly(2026, 8, 20)));
+            RequestedWorkRecordId = workRecordId;
+            var record = Summary.Days.SelectMany(x => x.Records)
+                .Single(x => x.WorkRecord.Id == workRecordId);
+            return Task.FromResult(new WorkRecordCalculationDto(Summary.Period, record));
+        }
+    }
+
+    private sealed class ContextTrackingReadOnlyList<T>(
+        IReadOnlyList<T> items,
+        SynchronizationContext uiContext) : IReadOnlyList<T>
+    {
+        private int accessCount;
+        private int uiContextAccessCount;
+
+        public int AccessCount => Volatile.Read(ref accessCount);
+        public int UiContextAccessCount => Volatile.Read(ref uiContextAccessCount);
+        public int Count
+        {
+            get
+            {
+                TrackAccess();
+                return items.Count;
+            }
         }
 
-        public Task<MonthlyAllowancePeriodDto> GetMonthlyAllowancePeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public T this[int index]
+        {
+            get
+            {
+                TrackAccess();
+                return items[index];
+            }
+        }
 
-        public Task<ClosingRuleReplacementPreviewDto> PreviewClosingRuleReplacementAsync(ReplaceClosingRuleCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<EffectiveClosingRuleDto?> GetClosingRuleAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task ReplaceClosingRuleAsync(ReplaceClosingRuleCommand command, ClosingRuleReplacementConfirmationToken confirmationToken, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<IReadOnlyList<MonthlyAllowanceDto>> GetAllowancesAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<MonthlyAllowanceDto> SaveAllowanceAsync(SaveMonthlyAllowanceCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task DeleteAllowanceAsync(MonthlyAllowanceId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public IEnumerator<T> GetEnumerator()
+        {
+            TrackAccess();
+            return items.GetEnumerator();
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        private void TrackAccess()
+        {
+            Interlocked.Increment(ref accessCount);
+            if (ReferenceEquals(SynchronizationContext.Current, uiContext))
+                Interlocked.Increment(ref uiContextAccessCount);
+        }
+    }
+
+    private sealed class TrackingSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var previous = Current;
+                SetSynchronizationContext(this);
+                try
+                {
+                    callback(state);
+                }
+                finally
+                {
+                    SetSynchronizationContext(previous);
+                }
+            });
+        }
     }
 }

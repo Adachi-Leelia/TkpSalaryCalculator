@@ -36,6 +36,9 @@ public sealed class ShellSettingsNavigator : ISettingsNavigator
     public Task OpenPayrollPeriodAsync(CancellationToken cancellationToken) =>
         NavigateAsync(NavigationRoutes.PayrollPeriodSettings, null, cancellationToken);
 
+    public Task OpenAnnualSummarySettingsAsync(CancellationToken cancellationToken) =>
+        NavigateAsync(NavigationRoutes.AnnualSummarySettings, null, cancellationToken);
+
     public Task OpenMonthlyAllowancesAsync(CancellationToken cancellationToken) =>
         NavigateAsync(NavigationRoutes.MonthlyAllowances, null, cancellationToken);
 
@@ -102,6 +105,7 @@ internal static class SettingsRouteRegistration
         Routing.RegisterRoute(NavigationRoutes.CountBonusSettings, typeof(CountBonusSettingsPage));
         Routing.RegisterRoute(NavigationRoutes.CountBonusSettingsEditor, typeof(CountBonusSettingsEditorPage));
         Routing.RegisterRoute(NavigationRoutes.PayrollPeriodSettings, typeof(PayrollPeriodSettingsPage));
+        Routing.RegisterRoute(NavigationRoutes.AnnualSummarySettings, typeof(AnnualSummarySettingsPage));
         Routing.RegisterRoute(NavigationRoutes.MonthlyAllowances, typeof(MonthlyAllowancePage));
         Routing.RegisterRoute(NavigationRoutes.MonthlyAllowanceEditor, typeof(MonthlyAllowanceEditorPage));
         Routing.RegisterRoute(NavigationRoutes.BasicShifts, typeof(BasicShiftPage));

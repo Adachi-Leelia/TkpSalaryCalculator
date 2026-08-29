@@ -78,6 +78,27 @@
                             <Label Grid.Row="3" Text="月額手当" />
                             <Label Grid.Row="3" Grid.Column="1" Text="{Binding AllowanceText}" />
                         </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource Outline}" />
+                        <VerticalStackLayout
+                            AutomationId="Home.AnnualSalarySummary"
+                            SemanticProperties.Description="{Binding AnnualAccessibilityText}"
+                            Spacing="4">
+                            <Label
+                                Style="{StaticResource SupportingTextStyle}"
+                                Text="年間給与見込み累計" />
+                            <Label
+                                Style="{StaticResource SupportingTextStyle}"
+                                Text="{Binding AnnualRangeText}" />
+                            <Label
+                                FontAttributes="Bold"
+                                FontSize="22"
+                                Text="{Binding AnnualTotalText}" />
+                            <Label
+                                IsVisible="{Binding HasAnnualUncalculatedRecords}"
+                                Style="{StaticResource SupportingTextStyle}"
+                                Text="{Binding AnnualUncalculatedText}"
+                                TextColor="{StaticResource Warning}" />
+                        </VerticalStackLayout>
                         <Button
                             Command="{Binding CalculationDetailsCommand}"
                             SemanticProperties.Description="選択中の給与期間の計算内訳を開く"

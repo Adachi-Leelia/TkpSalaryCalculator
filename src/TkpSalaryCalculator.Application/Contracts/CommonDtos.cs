@@ -65,14 +65,10 @@ public sealed record SaveWorkRecordCommand(
 /// <summary>勤務入力用のサービスプリセット候補を表します。</summary>
 /// <param name="Preset">現在の入力補助プリセット。</param>
 /// <param name="IsAvailable">選択日の設定スナップショットで、変換せずにプリセットを使用できるかどうか。</param>
-/// <param name="UsageCount">プリセットから作成され、保存された勤務記録の件数。</param>
-/// <param name="IsMostRecentlyUsed">直近で確定した勤務記録に使用されたプリセットかどうか。</param>
 /// <param name="Issues">利用できない候補を使用できない理由、または処理を妨げないその他の案内。</param>
 public sealed record ServicePresetCandidateDto(
     ServicePresetDto Preset,
     bool IsAvailable,
-    long UsageCount,
-    bool IsMostRecentlyUsed,
     IReadOnlyList<IssueDto> Issues);
 
 /// <summary>1 日分の勤務入力を開くために必要な設定と順序付け済み候補をすべて保持します。</summary>
@@ -120,6 +116,13 @@ public sealed record WorkRecordSalaryDto(
     string? ServiceDisplayName = null,
     string? TimeCategoryDisplayName = null,
     YearMonth? SettingMonth = null);
+
+/// <summary>勤務記録 1 件の計算内訳画面に必要なデータだけを保持します。</summary>
+/// <param name="Period">勤務日を含む、両端の日付を含む給与期間。</param>
+/// <param name="Record">指定された勤務記録と、その計算根拠および結果。</param>
+public sealed record WorkRecordCalculationDto(
+    PayrollPeriod Period,
+    WorkRecordSalaryDto Record);
 
 /// <summary>1 日分の計算詳細を保持します。</summary>
 /// <param name="Date">現地日付。</param>
@@ -205,6 +208,26 @@ public sealed record PayrollPeriodSummaryDto(
     YenAmount AllowanceSubtotal,
     YenAmount CalculatedSubtotal,
     int UncalculatedCount);
+
+/// <summary>ホーム画面向けの年間給与見込み累計を保持します。</summary>
+/// <param name="PeriodStart">年間区分の開始給与期間。</param>
+/// <param name="PeriodEnd">年間区分の終了給与期間。</param>
+/// <param name="AccumulationEnd">実際に累計した最後の給与期間。</param>
+/// <param name="CalculatedSubtotal">年間給与見込み累計。</param>
+/// <param name="UncalculatedCount">年間範囲内の未計算勤務記録数。</param>
+public sealed record AnnualSalarySummaryDto(
+    PayrollPeriodKey PeriodStart,
+    PayrollPeriodKey PeriodEnd,
+    PayrollPeriodKey AccumulationEnd,
+    YenAmount CalculatedSubtotal,
+    int UncalculatedCount);
+
+/// <summary>同じ一括読取から生成したホーム画面の月次・年間サマリーを保持します。</summary>
+/// <param name="MonthlySummary">選択中の給与期間サマリー。</param>
+/// <param name="AnnualSummary">選択中の給与期間までの年間サマリー。</param>
+public sealed record HomeSalarySummaryDto(
+    PayrollPeriodSummaryDto MonthlySummary,
+    AnnualSalarySummaryDto AnnualSummary);
 
 /// <summary>暦日 1 日分の読み取りモデルを保持します。</summary>
 /// <param name="Date">現地日付。</param>
