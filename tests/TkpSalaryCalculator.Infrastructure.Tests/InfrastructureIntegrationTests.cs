@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -429,6 +430,67 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
+    public async Task DB016_ActualVersionFourSchemaMigratesAnnualSettingAndPreservesExistingSalaryData()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 7, 0, 0, TimeSpan.Zero));
+        var allowance = new MonthlyAllowance(
+            new MonthlyAllowanceId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(2026, 8)),
+            "移行前手当",
+            new YenAmount(12_345));
+        await new SqliteMonthlyAllowanceRepository(fixture.Database, clock).UpsertAsync(allowance, default);
+        await using (var versionFour = await fixture.OpenRawAsync())
+        {
+            await ExecuteAsync(versionFour, """
+                DROP TABLE annual_summary_setting;
+                UPDATE app_metadata SET export_format_version = 1 WHERE id = 1;
+                PRAGMA user_version = 4;
+                """);
+        }
+
+        var migrated = new SqliteDatabase(fixture.DatabasePath);
+        await migrated.InitializeAsync();
+
+        await using var connection = await fixture.OpenRawAsync();
+        Assert.Equal(5L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(1L, await ScalarLongAsync(connection,
+            "SELECT COUNT(*) FROM annual_summary_setting WHERE id = 1 AND closing_month = 12;"));
+        Assert.Equal(2L, await ScalarLongAsync(connection,
+            "SELECT export_format_version FROM app_metadata WHERE id = 1;"));
+        Assert.Equal(allowance, Assert.Single(await new SqliteMonthlyAllowanceRepository(migrated, clock)
+            .GetForPeriodAsync(allowance.PayrollPeriodKey, default)));
+        Assert.Equal(1L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM closing_rule_history;"));
+        Assert.Equal(2L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM setting_month;"));
+    }
+
+    [Fact]
+    public async Task DB016_MigrationFailureRollsBackCreatedAnnualTableAndSchemaVersion()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        await using (var versionFour = await fixture.OpenRawAsync())
+        {
+            await ExecuteAsync(versionFour, """
+                DROP TABLE annual_summary_setting;
+                DELETE FROM app_metadata WHERE id = 1;
+                PRAGMA user_version = 4;
+                """);
+        }
+
+        var migrated = new SqliteDatabase(fixture.DatabasePath);
+        await Assert.ThrowsAsync<InvalidDataException>(() => migrated.InitializeAsync());
+
+        await using var connection = await fixture.OpenRawAsync();
+        Assert.Equal(4L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(0L, await ScalarLongAsync(connection, """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'table' AND name = 'annual_summary_setting';
+            """));
+        Assert.Equal(1L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM closing_rule_history;"));
+        Assert.Equal(2L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM setting_month;"));
+    }
+
+    [Fact]
     public async Task RepositoryPortsPersistCurrentTemplatesRulesAndAllowances()
     {
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
@@ -503,6 +565,109 @@ public sealed class InfrastructureIntegrationTests
             new PayrollPeriodKey(new YearMonth(2026, 8)),
             new PayrollPeriodKey(new YearMonth(2026, 1)),
             default));
+    }
+
+    [Fact]
+    public async Task PERF008_HomeMonthlyAndAnnualSummaryCompletesWithinTwoSecondsOnLargeIndexedDatabase()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 8, 0, 0, TimeSpan.Zero));
+        await using (var connection = await fixture.OpenRawAsync())
+        {
+            var snapshotId = Assert.IsType<string>(await ScalarAsync(connection,
+                "SELECT initial_snapshot_id FROM app_metadata WHERE id = 1;"));
+            var serviceId = Assert.IsType<string>(await ScalarAsync(connection,
+                $"SELECT service_id FROM snapshot_service WHERE snapshot_id = '{snapshotId}' ORDER BY display_order LIMIT 1;"));
+            await ExecuteParameterizedAsync(connection, """
+                BEGIN IMMEDIATE;
+                INSERT INTO snapshot_rate(snapshot_id, service_id, time_category_id, rate_type, amount_yen)
+                VALUES($snapshot, $service, NULL, 'Hourly', 1000);
+                INSERT INTO setting_month(year_month, snapshot_id, created_at_utc, updated_at_utc)
+                VALUES(199609, $snapshot, $now, $now);
+                INSERT INTO closing_rule_history(id, effective_from_year_month, closing_day, is_end_of_month, created_at_utc)
+                VALUES($closing, 100001, NULL, 1, $now);
+                WITH RECURSIVE
+                dates(work_date) AS (
+                    VALUES('1996-09-01')
+                    UNION ALL
+                    SELECT date(work_date, '+1 day') FROM dates WHERE work_date < '2026-08-31'
+                ),
+                visits(visit_number) AS (
+                    VALUES(1)
+                    UNION ALL
+                    SELECT visit_number + 1 FROM visits WHERE visit_number < 20
+                )
+                INSERT INTO work_record(
+                    id, work_date, service_id, time_category_id, input_mode, work_minutes,
+                    start_time_minutes, end_time_minutes, source_service_preset_id,
+                    source_basic_shift_id, source_work_record_id, save_operation_id,
+                    created_at_utc, updated_at_utc)
+                SELECT
+                    printf('20000000-0000-4000-8000-%012x',
+                        CAST(julianday(work_date) - julianday('1996-09-01') AS INTEGER) * 20 + visit_number),
+                    work_date, $service, NULL, 'Duration', 60,
+                    NULL, NULL, NULL, NULL, NULL, NULL, $now, $now
+                FROM dates CROSS JOIN visits;
+                UPDATE app_metadata
+                SET initial_setup_status = 'Completed', updated_at_utc = $now
+                WHERE id = 1;
+                ANALYZE;
+                COMMIT;
+                """, new Dictionary<string, object?>
+            {
+                ["$snapshot"] = snapshotId,
+                ["$service"] = serviceId,
+                ["$closing"] = Guid.NewGuid().ToString("D"),
+                ["$now"] = "2026-08-29T08:00:00.0000000Z",
+            });
+
+            Assert.InRange(await ScalarLongAsync(connection, "SELECT COUNT(*) FROM work_record;"),
+                219_000, 220_000);
+            var workPlan = await ReadQueryPlanAsync(connection, """
+                SELECT id FROM work_record
+                WHERE work_date BETWEEN '2026-01-01' AND '2026-08-31'
+                ORDER BY work_date, id;
+                """);
+            Assert.Contains(workPlan, detail => detail.Contains("ix_work_record_date", StringComparison.Ordinal));
+            var allowancePlan = await ReadQueryPlanAsync(connection, """
+                SELECT id FROM monthly_allowance
+                WHERE payroll_period_year_month BETWEEN 202601 AND 202608
+                ORDER BY payroll_period_year_month, created_at_utc, id;
+                """);
+            Assert.Contains(allowancePlan,
+                detail => detail.Contains("ix_monthly_allowance_period", StringComparison.Ordinal));
+        }
+
+        var query = new SalaryQueryUseCase(
+            new SqliteWorkRecordRepository(fixture.Database, clock),
+            new SqliteSettingSnapshotRepository(fixture.Database, clock),
+            new SqliteHolidayCalendarRepository(fixture.Database),
+            new SqliteClosingRuleRepository(fixture.Database, clock),
+            new SqliteMonthlyAllowanceRepository(fixture.Database, clock),
+            new SqliteBasicShiftRepository(fixture.Database, clock),
+            new Domain.Services.SalaryCalculator(),
+            new Domain.Services.PayrollPeriodCalculator(),
+            new Domain.Services.AnnualSalaryCalculator(),
+            new SqliteAnnualSummarySettingRepository(fixture.Database, clock));
+        var selected = new PayrollPeriodKey(new YearMonth(2026, 8));
+        _ = await query.GetHomeSalarySummaryAsync(selected, default);
+
+        var measurements = new List<TimeSpan>();
+        HomeSalarySummaryDto? result = null;
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            result = await query.GetHomeSalarySummaryAsync(selected, default);
+            stopwatch.Stop();
+            measurements.Add(stopwatch.Elapsed);
+        }
+
+        Assert.NotNull(result);
+        Assert.Equal(4_860_000, result.AnnualSummary.CalculatedSubtotal.Value);
+        Assert.Equal(620_000, result.MonthlySummary.CalculatedSubtotal.Value);
+        var worst = measurements.Max();
+        Assert.True(worst < TimeSpan.FromSeconds(2),
+            $"PERF-008 exceeded two seconds. Measurements: {string.Join(", ", measurements.Select(value => value.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture)))} ms.");
     }
 
     [Fact]
@@ -945,6 +1110,29 @@ public sealed class InfrastructureIntegrationTests
 
     private static async Task<long> ScalarLongAsync(SqliteConnection connection, string sql) =>
         Convert.ToInt64(await ScalarAsync(connection, sql), CultureInfo.InvariantCulture);
+
+    private static async Task<IReadOnlyList<string>> ReadQueryPlanAsync(
+        SqliteConnection connection,
+        string sql)
+    {
+        var details = new List<string>();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"EXPLAIN QUERY PLAN {sql}";
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) details.Add(reader.GetString(3));
+        return details;
+    }
+
+    private static async Task ExecuteParameterizedAsync(
+        SqliteConnection connection,
+        string sql,
+        IReadOnlyDictionary<string, object?> values)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var pair in values) command.Parameters.AddWithValue(pair.Key, pair.Value ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync();
+    }
 
     private static async Task ExecuteAsync(SqliteConnection connection, string sql)
     {

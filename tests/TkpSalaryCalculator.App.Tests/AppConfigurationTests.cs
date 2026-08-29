@@ -197,6 +197,7 @@ public sealed class AppConfigurationTests
         AssertControlUsesCompiledBinding(page);
         Assert.Contains(page.Descendants(), element =>
             element.Name.LocalName == "Picker" &&
+            AttributeValue(element, "AutomationId") == "AnnualSummarySettings.ClosingMonth" &&
             AttributeValue(element, "ItemsSource") == "{Binding ClosingMonths}" &&
             AttributeValue(element, "SelectedItem") == "{Binding SelectedClosingMonth}");
         Assert.Contains(page.Descendants(), element =>
@@ -207,6 +208,15 @@ public sealed class AppConfigurationTests
             AttributeValue(element, "Text").Contains(
                 "年間累計の区切りだけを変更し、給与額や勤務記録は変更しません",
                 StringComparison.Ordinal));
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "ScrollView");
+        Assert.DoesNotContain(page.Descendants(), element =>
+            HasAttribute(element, "HeightRequest"));
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "Label" &&
+            AttributeValue(element, "AutomationId") == "AnnualSummarySettings.PeriodExample" &&
+            AttributeValue(element, "Text") == "{Binding AnnualPeriodExample}" &&
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding AnnualPeriodExample}");
     }
 
     [Fact]

@@ -13,6 +13,7 @@
                 <Label Style="{StaticResource PageTitleStyle}" Text="年間累計設定" />
                 <Label Text="年間締め月" />
                 <Picker
+                    AutomationId="AnnualSummarySettings.ClosingMonth"
                     ItemDisplayBinding="{Binding DisplayName}"
                     ItemsSource="{Binding ClosingMonths}"
                     SelectedItem="{Binding SelectedClosingMonth}" />
@@ -22,6 +23,7 @@
                     Stroke="{StaticResource Primary}"
                     StrokeShape="RoundRectangle 10">
                     <Label
+                        AutomationId="AnnualSummarySettings.PeriodExample"
                         SemanticProperties.Description="{Binding AnnualPeriodExample}"
                         Text="{Binding AnnualPeriodExample}" />
                 </Border>

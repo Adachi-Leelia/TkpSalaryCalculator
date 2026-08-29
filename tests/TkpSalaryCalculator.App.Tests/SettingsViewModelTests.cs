@@ -358,6 +358,72 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task UI017_AnnualSummaryEditorShowsEveryClosingMonthExampleAndGuardsUnsavedChanges()
+    {
+        var dialogs = new DialogStub { Result = false };
+        var viewModel = new AnnualSummarySettingsViewModel(
+            new AnnualSummarySettingsStub(),
+            new SettingsNavigatorStub(),
+            new AppSessionState(new DateOnly(2026, 8, 29)),
+            dialogs,
+            new UserErrorPresenter());
+        await viewModel.LoadAsync();
+
+        Assert.Equal(12, viewModel.ClosingMonths.Count);
+        foreach (var option in viewModel.ClosingMonths)
+        {
+            viewModel.SelectedClosingMonth = option;
+            var expected = option.Value == 12
+                ? "年間区分の例: 1月分～12月分"
+                : $"年間区分の例: 前年{option.Value + 1}月分～当年{option.Value}月分";
+            Assert.Equal(expected, viewModel.AnnualPeriodExample);
+        }
+
+        Assert.True(viewModel.IsDirty);
+        Assert.False(await viewModel.CanLeaveAsync());
+        Assert.Equal(1, dialogs.DiscardCalls);
+        dialogs.Result = true;
+        Assert.True(await viewModel.CanLeaveAsync());
+        Assert.Equal(2, dialogs.DiscardCalls);
+    }
+
+    [Fact]
+    public async Task UI017_AnnualSummarySaveFailureKeepsEditsAndRetryNotifiesAfterSuccessOnly()
+    {
+        var settings = new AnnualSummarySettingsStub
+        {
+            SaveFailure = new InvalidOperationException("save failure"),
+        };
+        var navigator = new SettingsNavigatorStub();
+        var session = new AppSessionState(new DateOnly(2026, 8, 29));
+        var annualBefore = session.GetDataGeneration(AppDataChangeKind.AnnualSummarySettings);
+        var backupBefore = session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+        var viewModel = new AnnualSummarySettingsViewModel(
+            settings, navigator, session, new DialogStub(), new UserErrorPresenter());
+        await viewModel.LoadAsync();
+        viewModel.SelectedClosingMonth = AnnualClosingMonthOption.All.Single(option => option.Value == 3);
+
+        await viewModel.SaveAsync();
+
+        Assert.True(viewModel.HasError);
+        Assert.True(viewModel.IsDirty);
+        Assert.Null(navigator.SuccessMessage);
+        Assert.Equal(annualBefore, session.GetDataGeneration(AppDataChangeKind.AnnualSummarySettings));
+        Assert.Equal(backupBefore, session.GetDataGeneration(AppDataChangeKind.BackupStatus));
+
+        settings.SaveFailure = null;
+        await viewModel.SaveAsync();
+
+        Assert.False(viewModel.HasError);
+        Assert.False(viewModel.IsDirty);
+        Assert.Equal(2, settings.SaveCalls);
+        Assert.Equal(3, settings.Value.ClosingMonth.Value);
+        Assert.Equal("年間累計設定を保存しました。", navigator.SuccessMessage);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.AnnualSummarySettings) > annualBefore);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupBefore);
+    }
+
+    [Fact]
     public async Task PERF09_MonthlyAllowanceListLoadsPeriodScreenWithoutSalaryCalculationAndMovesPeriods()
     {
         var augustKey = new PayrollPeriodKey(August);
@@ -777,6 +843,8 @@ public sealed class SettingsViewModelTests
     {
         public AnnualSummarySettingDto Value { get; private set; } =
             new(new AnnualClosingMonth(12));
+        public Exception? SaveFailure { get; set; }
+        public int SaveCalls { get; private set; }
 
         public Task<AnnualSummarySettingDto> GetAsync(CancellationToken cancellationToken)
         {
@@ -789,6 +857,8 @@ public sealed class SettingsViewModelTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            SaveCalls++;
+            if (SaveFailure is { } failure) return Task.FromException<AnnualSummarySettingDto>(failure);
             Value = new AnnualSummarySettingDto(new AnnualClosingMonth(command.ClosingMonth));
             return Task.FromResult(Value);
         }
@@ -796,10 +866,15 @@ public sealed class SettingsViewModelTests
 
     private sealed class DialogStub : IConfirmationDialogService
     {
-        public bool Result { get; init; }
+        public bool Result { get; set; }
         public string? LastMessage { get; private set; }
         public List<string>? SharedEvents { get; init; }
-        public Task<bool> ConfirmDiscardChangesAsync(CancellationToken cancellationToken = default) => Task.FromResult(Result);
+        public int DiscardCalls { get; private set; }
+        public Task<bool> ConfirmDiscardChangesAsync(CancellationToken cancellationToken = default)
+        {
+            DiscardCalls++;
+            return Task.FromResult(Result);
+        }
         public Task<bool> ConfirmAsync(string title, string message, string acceptText, string cancelText, CancellationToken cancellationToken = default)
         { SharedEvents?.Add("dialog"); LastMessage = message; return Task.FromResult(Result); }
     }

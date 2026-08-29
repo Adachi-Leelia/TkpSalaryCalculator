@@ -158,6 +158,24 @@ public sealed class HomeViewModelTests
     }
 
     [Fact]
+    public async Task UI017_AnnualSettingGenerationReloadsHomeWithTheNewAnnualPeriod()
+    {
+        var fixture = new HomeFixture();
+        var summary = Summary(2026, 8, 10_000, 10_000, 0, 0, 0, 0);
+        fixture.Salary.Add(summary, Annual(2026, 1, 2026, 12, 2026, 8, 10_000, 0));
+        await fixture.ViewModel.LoadIfNeededAsync();
+        Assert.Equal("2026年1月分～8月分", fixture.ViewModel.AnnualRangeText);
+
+        fixture.Salary.SetAnnual(summary.Period.Key, Annual(2026, 4, 2027, 3, 2026, 8, 5_000, 0));
+        fixture.Session.NotifyDataChanged(AppDataChangeKind.AnnualSummarySettings);
+        await fixture.ViewModel.LoadIfNeededAsync();
+
+        Assert.Equal(2, fixture.Salary.RequestedKeys.Count);
+        Assert.Equal("2026年4月分～8月分", fixture.ViewModel.AnnualRangeText);
+        Assert.Equal("5,000円", fixture.ViewModel.AnnualTotalText);
+    }
+
+    [Fact]
     public async Task LoadAsync_AfterCancellationQueuesTheLatestRequestAndIgnoresTheOldResult()
     {
         var fixture = new HomeFixture();
@@ -412,6 +430,9 @@ public sealed class HomeViewModelTests
                 summary.CalculatedSubtotal.Value,
                 summary.UncalculatedCount));
         }
+
+        public void SetAnnual(PayrollPeriodKey key, AnnualSalarySummaryDto annual) =>
+            annualSummaries[key] = annual;
 
         public Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(
             PayrollPeriodKey payrollPeriodKey,
