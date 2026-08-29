@@ -39,6 +39,10 @@ ScaffoldingReadMe.txt
 # dotenv environment variables file
 .env
 
+# Android distribution signing material -- never commit these files.
+signing/
+eng/release-signing.local.ps1
+
 # Others
 ~$*
 *~
@@ -55,4 +59,3 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
-

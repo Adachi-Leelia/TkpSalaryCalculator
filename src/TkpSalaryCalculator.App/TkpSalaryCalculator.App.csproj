@@ -18,6 +18,41 @@
     <NeutralLanguage>ja-JP</NeutralLanguage>
   </PropertyGroup>
 
+  <!--
+    A Release APK must always use the distribution key.  The key and its
+    passwords are deliberately supplied outside source control, through the
+    TKP_ANDROID_* environment variables (or equivalent MSBuild properties).
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <AndroidKeyStore>true</AndroidKeyStore>
+    <AndroidSigningKeyStore Condition="'$(AndroidSigningKeyStore)' == ''">$(TKP_ANDROID_KEYSTORE_PATH)</AndroidSigningKeyStore>
+    <AndroidSigningStorePass Condition="'$(AndroidSigningStorePass)' == ''">$(TKP_ANDROID_KEYSTORE_PASSWORD)</AndroidSigningStorePass>
+    <AndroidSigningKeyAlias Condition="'$(AndroidSigningKeyAlias)' == ''">$(TKP_ANDROID_KEY_ALIAS)</AndroidSigningKeyAlias>
+    <AndroidSigningKeyPass Condition="'$(AndroidSigningKeyPass)' == ''">$(TKP_ANDROID_KEY_PASSWORD)</AndroidSigningKeyPass>
+  </PropertyGroup>
+
+  <Target Name="RequireReleaseSigningConfiguration"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(Configuration)' == 'Release'">
+    <Error Condition="'$(AndroidSigningKeyStore)' == ''"
+           Text="Release APK signing is required. Set TKP_ANDROID_KEYSTORE_PATH (or AndroidSigningKeyStore)." />
+    <Error Condition="'$(AndroidSigningStorePass)' == ''"
+           Text="Release APK signing is required. Set TKP_ANDROID_KEYSTORE_PASSWORD (or AndroidSigningStorePass)." />
+    <Error Condition="'$(AndroidSigningKeyAlias)' == ''"
+           Text="Release APK signing is required. Set TKP_ANDROID_KEY_ALIAS (or AndroidSigningKeyAlias)." />
+    <Error Condition="'$(AndroidSigningKeyPass)' == ''"
+           Text="Release APK signing is required. Set TKP_ANDROID_KEY_PASSWORD (or AndroidSigningKeyPass)." />
+  </Target>
+
+  <!-- Android's incremental signing target does not include key properties in
+       its inputs. Remove a stale output so a changed/new signing key is never
+       mistaken for a valid existing signature. -->
+  <Target Name="InvalidateReleaseSigningOutput"
+          BeforeTargets="_Sign"
+          Condition="'$(Configuration)' == 'Release'">
+    <Delete Files="$(ApkFileSigned)" />
+  </Target>
+
   <ItemGroup>
     <MauiIcon Include="Resources\AppIcon\appicon.png" BaseSize="128,128" />
     <MauiSplashScreen Include="Resources\Splash\splash.png" Color="#ff78d4" BaseSize="128,128" />
