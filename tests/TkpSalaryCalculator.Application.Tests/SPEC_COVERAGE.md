@@ -64,6 +64,7 @@ or orchestration coverage that complements the end-to-end specification case.
 | `SalaryQuery_UsesEachWorkDatesCalendarMonthAndAddsAllowanceOnce` | HIST-003, CALC-010 |
 | `ANNUALAPP001_HomeSummaryBatchesAnnualRangeAndBuildsMonthlyFromTheSameRead` | ANNUAL-001, ANNUAL-004, ANNUAL-006, ANNUAL-008, ANNUAL-010, DB-015 |
 | `ANNUALAPP002_HomeSummaryIncludesAllowanceOnlyPeriodsAndReturnsZeroWithoutData` | ANNUAL-007, ANNUAL-008 |
+| `ANNUALAPP003_HomeSummaryUsesClosingHistoryWithoutBoundaryGapsOrDuplicates` | ANNUAL-005, ANNUAL-010 |
 | `CalendarDayAndMonthQueries_UseOrchestratedApplicationModels` | APP-SALARY-QUERY, SHIFT-002 |
 | `ClosingRuleReplacement_PreservesHistoryAndAllowanceIsPeriodScoped` | CALC-009, CALC-010 |
 | `FirstClosingRule_IsPersistedAsBaselineAndUsedForPeriodCalculation` | CALC-009 |

@@ -396,6 +396,49 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task ANNUALAPP003_HomeSummaryUsesClosingHistoryWithoutBoundaryGapsOrDuplicates()
+    {
+        var context = new TestContext();
+        var selected = new PayrollPeriodKey(new YearMonth(2026, 8));
+        context.Closing.Values.AddRange([
+            new ClosingRule(
+                new ClosingRuleId(Guid.NewGuid()),
+                new PayrollPeriodKey(new YearMonth(1, 1)),
+                20),
+            new ClosingRule(
+                new ClosingRuleId(Guid.NewGuid()),
+                new PayrollPeriodKey(new YearMonth(2026, 4)),
+                null),
+        ]);
+        context.Works.Values.AddRange([
+            TestData.Work(new DateOnly(2026, 3, 20)),
+            TestData.Work(new DateOnly(2026, 3, 21)),
+            TestData.Work(new DateOnly(2026, 4, 30)),
+            TestData.Work(new DateOnly(2026, 5, 1)),
+        ]);
+        var useCase = new SalaryQueryUseCase(
+            context.Works,
+            context.Settings,
+            context.Holidays,
+            context.Closing,
+            context.Allowances,
+            context.Shifts,
+            context.Salary,
+            context.Periods,
+            new AnnualSalaryCalculator());
+
+        var result = await useCase.GetHomeSalarySummaryAsync(selected, default);
+
+        Assert.Equal(4_000, result.AnnualSummary.CalculatedSubtotal.Value);
+        Assert.Equal(0, result.AnnualSummary.UncalculatedCount);
+        Assert.Equal(0, result.MonthlySummary.CalculatedSubtotal.Value);
+        Assert.Equal((new DateOnly(2025, 12, 21), new DateOnly(2026, 8, 31)),
+            Assert.Single(context.Works.StreamRanges));
+        Assert.Equal(1, context.Works.StreamRangeCalls);
+        Assert.Equal(1, context.Closing.GetHistoryCalls);
+    }
+
+    [Fact]
     public async Task SalaryQuery_UsesHolidayVersionSelectedByEachCalendarMonth()
     {
         var context = new TestContext();

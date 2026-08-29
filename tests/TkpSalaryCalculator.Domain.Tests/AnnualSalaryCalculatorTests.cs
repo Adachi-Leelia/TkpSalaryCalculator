@@ -57,6 +57,33 @@ public sealed class AnnualSalaryCalculatorTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new AnnualClosingMonth(value));
     }
 
+    [Theory]
+    [InlineData(1, 1, 3)]
+    [InlineData(9999, 4, 3)]
+    public void AnnualPeriodOutsideRepresentableYearRangeIsRejectedExplicitly(
+        int selectedYear,
+        int selectedMonth,
+        int closingMonth)
+    {
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => annual.GetPeriodRange(
+            Key(selectedYear, selectedMonth),
+            new AnnualClosingMonth(closingMonth)));
+
+        Assert.Equal("selected", exception.ParamName);
+    }
+
+    [Fact]
+    public void RepresentableMinimumAndMaximumAnnualPeriodsRemainAvailable()
+    {
+        var minimum = annual.GetPeriodRange(Key(1, 4), new AnnualClosingMonth(3));
+        var maximum = annual.GetPeriodRange(Key(9999, 3), new AnnualClosingMonth(3));
+
+        Assert.Equal(new YearMonth(1, 4), minimum.Start.Value);
+        Assert.Equal(new YearMonth(2, 3), minimum.End.Value);
+        Assert.Equal(new YearMonth(9998, 4), maximum.Start.Value);
+        Assert.Equal(new YearMonth(9999, 3), maximum.End.Value);
+    }
+
     [Fact]
     public void AggregateAddsPeriodTotalsAndUncalculatedCounts()
     {
@@ -67,6 +94,21 @@ public sealed class AnnualSalaryCalculatorTests
 
         Assert.Equal(350, result.CalculatedSubtotal.Value);
         Assert.Equal(3, result.UncalculatedCount);
+    }
+
+    [Fact]
+    public void AggregateUsesExistingPeriodResultsWithoutRecalculatingTheirBreakdowns()
+    {
+        var period = PeriodCalculation(2026, 1, 100, uncalculatedCount: 1) with
+        {
+            CalculatedSubtotal = new YenAmount(175),
+            UncalculatedCount = 2,
+        };
+
+        var result = annual.Aggregate([period]);
+
+        Assert.Equal(175, result.CalculatedSubtotal.Value);
+        Assert.Equal(2, result.UncalculatedCount);
     }
 
     [Fact]
