@@ -172,6 +172,32 @@ internal sealed class FakeMetadataRepository : IAppMetadataRepository, ITransact
 
 }
 
+internal sealed class FakeAnnualSummarySettingRepository : IAnnualSummarySettingRepository, ITransactionalFakeState
+{
+    public AnnualClosingMonth Value { get; set; } = AnnualClosingMonth.Default;
+    public int GetCalls { get; private set; }
+    public int SaveCalls { get; private set; }
+
+    public Task<AnnualClosingMonth> GetClosingMonthAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        GetCalls++;
+        return Task.FromResult(Value);
+    }
+
+    public Task SaveClosingMonthAsync(AnnualClosingMonth closingMonth, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SaveCalls++;
+        Value = closingMonth;
+        return Task.CompletedTask;
+    }
+
+    public object CaptureState() => Value;
+
+    public void RestoreState(object snapshot) => Value = (AnnualClosingMonth)snapshot;
+}
+
 internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactionalFakeState
 {
     private readonly Dictionary<Guid, WorkRecordId> operations = [];
@@ -526,13 +552,15 @@ internal sealed class TestContext
     public FakeShiftRepository Shifts { get; } = new();
     public FakeClosingRepository Closing { get; } = new();
     public FakeAllowanceRepository Allowances { get; } = new();
+    public FakeAnnualSummarySettingRepository AnnualSettings { get; } = new();
     public FakeMetadataRepository Metadata { get; } = new();
     public FakeTransactionRunner Transactions { get; } = new();
     public FakeClock Clock { get; } = new(new DateTimeOffset(2026, 8, 15, 0, 0, 0, TimeSpan.Zero));
     public SalaryCalculator Salary { get; } = new();
     public PayrollPeriodCalculator Periods { get; } = new();
 
-    public TestContext() => Transactions.Register(Works, Settings, Presets, Shifts, Closing, Allowances, Metadata);
+    public TestContext() => Transactions.Register(
+        Works, Settings, Presets, Shifts, Closing, Allowances, AnnualSettings, Metadata);
 
     public WorkRecordUseCase WorkUseCase()
     {

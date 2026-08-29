@@ -62,14 +62,16 @@ public enum AppDataChangeKind
     MonthlyAllowances = 1 << 3,
     BasicShifts = 1 << 4,
     BackupStatus = 1 << 5,
-    All = WorkRecords | Settings | ClosingRules | MonthlyAllowances | BasicShifts | BackupStatus,
+    AnnualSummarySettings = 1 << 6,
+    All = WorkRecords | Settings | ClosingRules | MonthlyAllowances | BasicShifts | BackupStatus |
+        AnnualSummarySettings,
 }
 
 /// <summary>Android の一時的な画面再生成をまたいで、ルート選択と表示対象を保持します。</summary>
 public sealed class AppSessionState(DateOnly localToday) : IAppSessionState
 {
     private string selectedRootRoute = NavigationRoutes.Home;
-    private readonly long[] dataGenerations = new long[6];
+    private readonly long[] dataGenerations = new long[7];
     private long nextDataGeneration;
 
     public InitialSetupStateDto? InitialSetupState { get; set; }

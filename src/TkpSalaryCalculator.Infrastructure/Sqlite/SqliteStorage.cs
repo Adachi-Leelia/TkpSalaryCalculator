@@ -41,9 +41,9 @@ public sealed class TimeZoneLocalDateConverter(TimeZoneInfo timeZone) : ILocalDa
 /// <summary>接続設定、スキーマ更新および Ambient トランザクションを所有します。</summary>
 public sealed class SqliteDatabase
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
     public const int CurrentSettingSnapshotSchemaVersion = 1;
-    public const int CurrentExportFormatVersion = 1;
+    public const int CurrentExportFormatVersion = 2;
     public const int CurrentBundledBootstrapVersion = 1;
 
     private readonly string connectionString;
@@ -271,8 +271,63 @@ public sealed class SqliteDatabase
             1 => await MigrateFromOneToTwoAsync(connection, cancellationToken).ConfigureAwait(false),
             2 => await MigrateFromTwoToThreeAsync(connection, cancellationToken).ConfigureAwait(false),
             3 => await MigrateFromThreeToFourAsync(connection, cancellationToken).ConfigureAwait(false),
+            4 => await MigrateFromFourToFiveAsync(connection, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"No migration from schema version {fromVersion} is available."),
         };
+    }
+
+    private static async Task<int> MigrateFromFourToFiveAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, transaction, """
+                CREATE TABLE IF NOT EXISTS annual_summary_setting (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    closing_month INTEGER NOT NULL DEFAULT 12 CHECK(closing_month BETWEEN 1 AND 12),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+                """, cancellationToken).ConfigureAwait(false);
+
+            var now = SqliteValue.Utc(DateTimeOffset.UtcNow);
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT OR IGNORE INTO annual_summary_setting(id, closing_month, created_at_utc, updated_at_utc)
+                    VALUES(1, 12, $now, $now);
+                    """;
+                command.Parameters.AddWithValue("$now", now);
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE app_metadata
+                    SET export_format_version = $format, updated_at_utc = $now
+                    WHERE id = 1;
+                    """;
+                command.Parameters.AddWithValue("$now", now);
+                command.Parameters.AddWithValue("$format", CurrentExportFormatVersion);
+                if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+                    throw new InvalidDataException("The required app_metadata row is missing.");
+            }
+
+            await ExecuteNonQueryAsync(connection, transaction, "PRAGMA user_version = 5;", cancellationToken)
+                .ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 5;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async Task<int> MigrateFromThreeToFourAsync(

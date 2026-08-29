@@ -90,6 +90,44 @@ public sealed class SqliteAppMetadataRepository(SqliteDatabase database, IUtcClo
         }, cancellationToken);
 }
 
+public sealed class SqliteAnnualSummarySettingRepository(SqliteDatabase database, IUtcClock clock)
+    : IAnnualSummarySettingRepository
+{
+    private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
+
+    public Task<AnnualClosingMonth> GetClosingMonthAsync(CancellationToken cancellationToken) =>
+        database.ReadAsync(async (connection, transaction, token) =>
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT closing_month FROM annual_summary_setting WHERE id = 1;";
+            var value = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            if (value is null or DBNull)
+                throw new InvalidDataException("The required annual_summary_setting row is missing.");
+            return new AnnualClosingMonth(Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
+        }, cancellationToken);
+
+    public Task SaveClosingMonthAsync(
+        AnnualClosingMonth closingMonth,
+        CancellationToken cancellationToken) =>
+        database.WriteAsync(async (connection, transaction, token) =>
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE annual_summary_setting
+                SET closing_month = $closingMonth, updated_at_utc = $now
+                WHERE id = 1;
+                """;
+            command.Parameters.AddValue("$closingMonth", closingMonth.Value);
+            command.Parameters.AddValue("$now", SqliteValue.Utc(clock.UtcNow));
+            if (await command.ExecuteNonQueryAsync(token).ConfigureAwait(false) != 1)
+                throw new InvalidDataException("The required annual_summary_setting row is missing.");
+            return true;
+        }, cancellationToken);
+}
+
 public sealed class SqliteServicePresetRepository(SqliteDatabase database, IUtcClock clock) : IServicePresetRepository
 {
     private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));

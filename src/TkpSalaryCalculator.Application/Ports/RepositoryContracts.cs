@@ -129,6 +129,16 @@ public interface IClosingRuleRepository
         CancellationToken cancellationToken);
 }
 
+/// <summary>年間給与見込み累計の現在設定を単一行で保存します。</summary>
+public interface IAnnualSummarySettingRepository
+{
+    /// <summary>保存済みの年間締め月を取得します。行が欠落している場合はデータ不整合として失敗します。</summary>
+    Task<AnnualClosingMonth> GetClosingMonthAsync(CancellationToken cancellationToken);
+
+    /// <summary>現在のトランザクション内で年間締め月を保存します。</summary>
+    Task SaveClosingMonthAsync(AnnualClosingMonth closingMonth, CancellationToken cancellationToken);
+}
+
 /// <summary>給与期間に直接適用する手当を保存します。</summary>
 public interface IMonthlyAllowanceRepository
 {

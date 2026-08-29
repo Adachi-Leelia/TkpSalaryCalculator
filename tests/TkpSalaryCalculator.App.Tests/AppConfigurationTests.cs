@@ -163,6 +163,8 @@ public sealed class AppConfigurationTests
             "AddSingleton<IApplicationDatabaseInitializer, SqliteDatabaseInitializer>()",
             "AddSingleton<IInitialSetupUseCase, InitialSetupUseCase>()",
             "AddSingleton<IPayrollPeriodSettingsUseCase, PayrollPeriodSettingsUseCase>()",
+            "AddSingleton<IAnnualSummarySettingRepository, SqliteAnnualSummarySettingRepository>()",
+            "AddSingleton<IAnnualSummarySettingsUseCase, AnnualSummarySettingsUseCase>()",
             "AddSingleton<IAppSessionState>",
             "AddSingleton<AppStartupCoordinator>()",
             "AddSingleton<IConfirmationDialogService, ConfirmationDialogService>()",
@@ -174,6 +176,7 @@ public sealed class AppConfigurationTests
             "AddTransient<HomePage>()",
             "AddTransient<CalendarPage>()",
             "AddTransient<SettingsMenuPage>()",
+            "AddTransient<AnnualSummarySettingsPage>()",
         };
 
         foreach (var registration in requiredRegistrations)
@@ -184,6 +187,26 @@ public sealed class AppConfigurationTests
         var app = File.ReadAllText(AppPath("App.xaml.cs"));
         Assert.Contains("rootNavigator.Attach(window)", app, StringComparison.Ordinal);
         Assert.Contains("startupViewModel.SetStartupOperation(startupCoordinator.StartAsync)", app, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnnualSummarySettingsPageUsesPickerFixedSaveBarAndRequiredExplanation()
+    {
+        var page = XDocument.Load(AppPath(
+            "Presentation", "Features", "Settings", "AnnualSummarySettingsPage.xaml"));
+        AssertControlUsesCompiledBinding(page);
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "Picker" &&
+            AttributeValue(element, "ItemsSource") == "{Binding ClosingMonths}" &&
+            AttributeValue(element, "SelectedItem") == "{Binding SelectedClosingMonth}");
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "FixedSaveBar" &&
+            AttributeValue(element, "SaveCommand") == "{Binding SaveCommand}");
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "Label" &&
+            AttributeValue(element, "Text").Contains(
+                "年間累計の区切りだけを変更し、給与額や勤務記録は変更しません",
+                StringComparison.Ordinal));
     }
 
     [Fact]

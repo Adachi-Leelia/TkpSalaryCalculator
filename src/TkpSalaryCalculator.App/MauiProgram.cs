@@ -58,6 +58,7 @@ public static class MauiProgram
         services.AddSingleton<IWorkRecordRepository, SqliteWorkRecordRepository>();
         services.AddSingleton<ISettingSnapshotRepository, SqliteSettingSnapshotRepository>();
         services.AddSingleton<IClosingRuleRepository, SqliteClosingRuleRepository>();
+        services.AddSingleton<IAnnualSummarySettingRepository, SqliteAnnualSummarySettingRepository>();
         services.AddSingleton<IMonthlyAllowanceRepository, SqliteMonthlyAllowanceRepository>();
         services.AddSingleton<IBasicShiftRepository, SqliteBasicShiftRepository>();
         services.AddSingleton<IHolidayCalendarRepository, SqliteHolidayCalendarRepository>();
@@ -86,6 +87,7 @@ public static class MauiProgram
         services.AddSingleton<ISalaryQueryUseCase, SalaryQueryUseCase>();
         services.AddSingleton<IMonthSettingsUseCase, MonthSettingsUseCase>();
         services.AddSingleton<IPayrollPeriodSettingsUseCase, PayrollPeriodSettingsUseCase>();
+        services.AddSingleton<IAnnualSummarySettingsUseCase, AnnualSummarySettingsUseCase>();
         services.AddSingleton<IBackupReminderUseCase, BackupReminderUseCase>();
         services.AddSingleton<IBasicShiftUseCase, BasicShiftUseCase>();
         services.AddSingleton<IDataTransferUseCase, DataTransferUseCase>();
@@ -144,6 +146,8 @@ public static class MauiProgram
         services.AddTransient<CountBonusSettingsEditorPage>();
         services.AddTransient<PayrollPeriodSettingsViewModel>();
         services.AddTransient<PayrollPeriodSettingsPage>();
+        services.AddTransient<AnnualSummarySettingsViewModel>();
+        services.AddTransient<AnnualSummarySettingsPage>();
         services.AddTransient<MonthlyAllowanceViewModel>();
         services.AddTransient<MonthlyAllowancePage>();
         services.AddTransient<MonthlyAllowanceEditorViewModel>();

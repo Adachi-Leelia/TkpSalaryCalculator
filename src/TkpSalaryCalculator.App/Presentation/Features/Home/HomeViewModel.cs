@@ -171,7 +171,8 @@ public sealed class HomeViewModel : ViewModelBase
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         TrackDataChanges(sessionState,
             AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.ClosingRules |
-            AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BackupStatus);
+            AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BackupStatus |
+            AppDataChangeKind.AnnualSummarySettings);
 
         PeriodHeader = new PayrollPeriodHeaderViewModel(MoveByAsync, MoveToCurrentAsync, formatter, PresentError);
         BackupReminder = new BackupReminderViewModel(backupReminder, GetLocalToday, PresentError);

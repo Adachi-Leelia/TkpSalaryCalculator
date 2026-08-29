@@ -34,7 +34,7 @@ public sealed class InfrastructureIntegrationTests
             "app_metadata", "setting_month", "setting_snapshot", "snapshot_service", "snapshot_time_category",
             "snapshot_rate", "snapshot_premium", "snapshot_premium_weekday", "snapshot_premium_date",
             "snapshot_premium_service", "snapshot_count_bonus", "snapshot_count_bonus_service", "service_preset",
-            "basic_shift", "work_record", "closing_rule_history", "monthly_allowance", "holiday_calendar_version",
+            "basic_shift", "work_record", "closing_rule_history", "monthly_allowance", "annual_summary_setting", "holiday_calendar_version",
             "holiday_date", "service_definition", "time_category_definition", "premium_definition",
             "count_bonus_definition",
         };
@@ -122,6 +122,26 @@ public sealed class InfrastructureIntegrationTests
             .GetManyAsync([snapshot.HolidayCalendarVersionId], default);
         Assert.Equal(calendar.Holidays, calendars[snapshot.HolidayCalendarVersionId].Holidays);
         Assert.Empty(await new SqliteClosingRuleRepository(fixture.Database, clock).GetHistoryAsync(default));
+        var annualSummary = new SqliteAnnualSummarySettingRepository(fixture.Database, clock);
+        Assert.Equal(12, (await annualSummary.GetClosingMonthAsync(default)).Value);
+    }
+
+    [Fact]
+    public async Task AnnualSummarySettingPersistsValidMonthAndDatabaseRejectsInvalidMonth()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 4, 0, 0, TimeSpan.Zero));
+        var repository = new SqliteAnnualSummarySettingRepository(fixture.Database, clock);
+
+        await repository.SaveClosingMonthAsync(new AnnualClosingMonth(3), default);
+
+        Assert.Equal(3, (await repository.GetClosingMonthAsync(default)).Value);
+        await using var connection = await fixture.OpenRawAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "UPDATE annual_summary_setting SET closing_month = 13 WHERE id = 1;";
+        await Assert.ThrowsAsync<SqliteException>(() => command.ExecuteNonQueryAsync());
+        Assert.Equal(3L, await ScalarLongAsync(connection,
+            "SELECT closing_month FROM annual_summary_setting WHERE id = 1;"));
     }
 
     [Fact]
@@ -149,6 +169,10 @@ public sealed class InfrastructureIntegrationTests
                 "SELECT COUNT(*) FROM app_metadata WHERE initial_snapshot_id IS NOT NULL;"));
             Assert.Equal(5L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM service_preset;"));
             Assert.Equal(35L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM holiday_date;"));
+            Assert.Equal(12L, await ScalarLongAsync(connection,
+                "SELECT closing_month FROM annual_summary_setting WHERE id = 1;"));
+            Assert.Equal(2L, await ScalarLongAsync(connection,
+                "SELECT export_format_version FROM app_metadata WHERE id = 1;"));
         }
         finally
         {
@@ -634,6 +658,35 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
+    public async Task LegacyVersionOneImportBackfillsDecemberAnnualClosingMonth()
+    {
+        await using var source = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 5, 0, 0, TimeSpan.Zero));
+        await new SqliteAnnualSummarySettingRepository(source.Database, clock)
+            .SaveClosingMonthAsync(new AnnualClosingMonth(3), default);
+        var exported = new MemoryStream();
+        await CreateTransferUseCase(source.Database, source.StagingPath, clock)
+            .ExportAsync(exported, "2.0.0", default);
+        var root = JsonNode.Parse(exported.ToArray())!.AsObject();
+        root["formatVersion"] = 1;
+        var data = root["data"]!.AsArray();
+        FindValue(data, "app_metadata")["export_format_version"] = 1;
+        RemoveRecords(data, "annual_summary_setting");
+
+        await using var destination = await DatabaseFixture.CreateSeededAsync();
+        var transfer = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
+        var preview = await transfer.PrepareImportAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(root.ToJsonString())), default);
+        await transfer.CommitImportAsync(preview.Id, default);
+
+        Assert.Equal(1, preview.FormatVersion);
+        Assert.Equal(12, (await new SqliteAnnualSummarySettingRepository(destination.Database, clock)
+            .GetClosingMonthAsync(default)).Value);
+        Assert.Equal(2, (await new SqliteAppMetadataRepository(destination.Database, clock)
+            .GetAsync(default)).ExportFormatVersion);
+    }
+
+    [Fact]
     public async Task DATA004_DATA005_ImportRejectsIncompleteVersionsAndMalformedIdsWithoutChangingLiveData()
     {
         await using var source = await DatabaseFixture.CreateSeededAsync();
@@ -659,9 +712,17 @@ public sealed class InfrastructureIntegrationTests
         {
             // No closing rule means the forced Completed state would be inconsistent.
             data => RemoveRecords(data, "closing_rule_history"),
+            data => RemoveRecords(data, "annual_summary_setting"),
+            data => FindValue(data, "annual_summary_setting")["closing_month"] = 13,
+            data =>
+            {
+                var duplicate = data.Single(item =>
+                    item!["value"]!["type"]!.GetValue<string>() == "annual_summary_setting")!.DeepClone();
+                data.Add(duplicate);
+            },
             // Initial snapshot has no applicable rate after this removal.
             data => RemoveRecords(data, "snapshot_rate"),
-            data => FindValue(data, "app_metadata")["export_format_version"] = 2,
+            data => FindValue(data, "app_metadata")["export_format_version"] = 3,
             data => FindValue(data, "setting_snapshot")["schema_version"] = 2,
             // Unreferenced holiday IDs must also be canonical UUIDs.
             data => data.Add(new JsonObject

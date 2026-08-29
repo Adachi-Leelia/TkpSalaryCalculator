@@ -55,6 +55,8 @@ public enum DataTransferSection
     WorkRecords,
     /// <summary>祝日カレンダーのバージョンと日付。</summary>
     Holidays,
+    /// <summary>年間給与見込み累計の現在設定。</summary>
+    AnnualSummarySettings,
 }
 
 /// <summary>論理ストリーミングレコードの非ジェネリック基底型を提供します。</summary>

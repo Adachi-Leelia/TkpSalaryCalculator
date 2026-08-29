@@ -323,6 +323,41 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task AnnualSummaryEditorLoadsExampleAndNotifiesOnlyAnnualAndBackupChangesAfterSave()
+    {
+        var settings = new AnnualSummarySettingsStub();
+        var navigator = new SettingsNavigatorStub();
+        var session = new AppSessionState(new DateOnly(2026, 8, 29));
+        var unrelatedBefore = session.GetDataGeneration(
+            AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.ClosingRules |
+            AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BasicShifts);
+        var annualBefore = session.GetDataGeneration(AppDataChangeKind.AnnualSummarySettings);
+        var backupBefore = session.GetDataGeneration(AppDataChangeKind.BackupStatus);
+        var viewModel = new AnnualSummarySettingsViewModel(
+            settings, navigator, session, new DialogStub(), new UserErrorPresenter());
+
+        await viewModel.LoadAsync();
+        Assert.Equal(12, viewModel.SelectedClosingMonth.Value);
+        Assert.Equal("年間区分の例: 1月分～12月分", viewModel.AnnualPeriodExample);
+        Assert.False(viewModel.IsDirty);
+
+        viewModel.SelectedClosingMonth = AnnualClosingMonthOption.All.Single(option => option.Value == 3);
+        Assert.Equal("年間区分の例: 前年4月分～当年3月分", viewModel.AnnualPeriodExample);
+        Assert.True(viewModel.IsDirty);
+
+        await viewModel.SaveAsync();
+
+        Assert.Equal(3, settings.Value.ClosingMonth.Value);
+        Assert.Equal("年間累計設定を保存しました。", navigator.SuccessMessage);
+        Assert.False(viewModel.IsDirty);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.AnnualSummarySettings) > annualBefore);
+        Assert.True(session.GetDataGeneration(AppDataChangeKind.BackupStatus) > backupBefore);
+        Assert.Equal(unrelatedBefore, session.GetDataGeneration(
+            AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.ClosingRules |
+            AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BasicShifts));
+    }
+
+    [Fact]
     public async Task PERF09_MonthlyAllowanceListLoadsPeriodScreenWithoutSalaryCalculationAndMovesPeriods()
     {
         var augustKey = new PayrollPeriodKey(August);
@@ -729,12 +764,34 @@ public sealed class SettingsViewModelTests
         public Task OpenCountBonusesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenCountBonusEditorAsync(Guid? countBonusId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenPayrollPeriodAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task OpenAnnualSummarySettingsAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenMonthlyAllowancesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenMonthlyAllowanceEditorAsync(PayrollPeriodKey payrollPeriodKey, Guid? allowanceId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenBasicShiftsAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenBasicShiftEditorAsync(Guid? basicShiftId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenDataManagementAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task OpenAppInformationAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class AnnualSummarySettingsStub : IAnnualSummarySettingsUseCase
+    {
+        public AnnualSummarySettingDto Value { get; private set; } =
+            new(new AnnualClosingMonth(12));
+
+        public Task<AnnualSummarySettingDto> GetAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(Value);
+        }
+
+        public Task<AnnualSummarySettingDto> SaveAsync(
+            SaveAnnualSummarySettingCommand command,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Value = new AnnualSummarySettingDto(new AnnualClosingMonth(command.ClosingMonth));
+            return Task.FromResult(Value);
+        }
     }
 
     private sealed class DialogStub : IConfirmationDialogService

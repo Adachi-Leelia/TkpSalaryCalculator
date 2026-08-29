@@ -102,6 +102,7 @@ PRAGMA synchronous = FULL;
 | --- | --- |
 | `closing_rule_history` | 締め日の適用開始月履歴 |
 | `monthly_allowance` | 給与期間単位の月額手当 |
+| `annual_summary_setting` | 年間給与見込み累計の現在の締め月 |
 | `holiday_calendar_version` | 国民の祝日データの版 |
 | `holiday_date` | 版ごとの祝日 |
 
@@ -127,7 +128,7 @@ PRAGMA synchronous = FULL;
 
 `CHECK(id = 1)`を設ける。`initial_setup_status = 'Completed'`の場合、初期スナップショット、締め日および計算に必要な設定が存在することはアプリケーション層でも検証する。
 
-`last_data_changed_at_utc`は設定、基本シフト、月額手当または勤務記録を確定変更するトランザクション内で更新する。エクスポート成功と案内延期だけでは更新しない。バックアップ案内の状態と`bundled_bootstrap_version`は給与計算の再現に不要な端末設定であるため、エクスポート対象外とする。新規DBおよび`bootstrapDefaults: false`で作るインポート候補DBでは版を0（未適用）で初期化し、同梱データの投入成功と同じトランザクションで現行版へ更新する。
+`last_data_changed_at_utc`は設定、年間締め月、基本シフト、月額手当または勤務記録を確定変更するトランザクション内で更新する。エクスポート成功と案内延期だけでは更新しない。バックアップ案内の状態と`bundled_bootstrap_version`は給与計算の再現に不要な端末設定であるため、エクスポート対象外とする。新規DBおよび`bootstrapDefaults: false`で作るインポート候補DBでは版を0（未適用）で初期化し、同梱データの投入成功と同じトランザクションで現行版へ更新する。
 
 ### 5.2 `setting_snapshot`
 
@@ -371,7 +372,20 @@ WHERE source_basic_shift_id IS NOT NULL;
 
 同じ給与期間へ複数登録できる。勤務記録または日単位へ配賦しない。
 
-### 5.15 祝日テーブル
+### 5.15 `annual_summary_setting`
+
+現在値を1行だけ保持し、行の欠落はデータ不整合として扱う。
+
+| 列 | 型 | NULL | 制約・内容 |
+| --- | --- | --- | --- |
+| `id` | `INTEGER` | 不可 | 主キー。`CHECK(id = 1)` |
+| `closing_month` | `INTEGER` | 不可 | 1～12。既定値12 |
+| `created_at_utc` | `TEXT` | 不可 | 作成日時 |
+| `updated_at_utc` | `TEXT` | 不可 | 更新日時 |
+
+年間締め月の変更は設定スナップショットまたは締め日履歴を作成せず、この行だけを更新する。同じトランザクションで`app_metadata.last_data_changed_at_utc`を更新する。
+
+### 5.16 祝日テーブル
 
 #### `holiday_calendar_version`
 
@@ -522,7 +536,7 @@ Start(period_key) <= work_date <= End(period_key)
 ```json
 {
   "format": "TkpSalaryCalculator.Export",
-  "formatVersion": 1,
+  "formatVersion": 2,
   "createdAtUtc": "2026-08-15T00:00:00Z",
   "appVersion": "1.0.0",
   "data": {
@@ -531,6 +545,7 @@ Start(period_key) <= work_date <= End(period_key)
     "settingSnapshots": [],
     "closingRuleHistory": [],
     "monthlyAllowances": [],
+    "annualSummarySetting": { "closingMonth": 12 },
     "serviceDefinitions": [],
     "timeCategoryDefinitions": [],
     "premiumDefinitions": [],
@@ -544,7 +559,9 @@ Start(period_key) <= work_date <= End(period_key)
 }
 ```
 
-`settingSnapshots`の各要素には、サービス種類、時間区分、単価、割増とその条件、件数加算とその条件を子要素として含める。エクスポートには初期スナップショット、年月から参照中のスナップショット、参照される論理ID、およびそれらが参照する祝日データ版に属するすべての祝日日付を含める。内部のSQLite行番号、バックアップ案内状態、`bundled_bootstrap_version`および再生成可能なキャッシュは含めない。将来フィールドを追加した場合に旧版で安全に拒否または無視できるよう、形式版ごとの互換規則を定義する。
+`settingSnapshots`の各要素には、サービス種類、時間区分、単価、割増とその条件、件数加算とその条件を子要素として含める。エクスポートには初期スナップショット、年月から参照中のスナップショット、参照される論理ID、年間締め月、およびそれらが参照する祝日データ版に属するすべての祝日日付を含める。内部のSQLite行番号、バックアップ案内状態、`bundled_bootstrap_version`および再生成可能なキャッシュは含めない。
+
+形式バージョン2は年間締め月を必須の単一レコードとして含め、欠落、不正値または重複を確認前に拒否する。形式バージョン1は引き続き受け入れ、年間締め月へ12月を補う。形式バージョン3以降およびその他の非対応版は既存データを変更せず拒否する。
 
 エクスポートとインポートは逐次読み書きし、約21.9万件の勤務記録を全件メモリへ保持しない。
 
@@ -564,6 +581,8 @@ Start(period_key) <= work_date <= End(period_key)
 
 スキーマバージョン4では、画面で使用しない入力候補の全履歴使用回数集計を廃止したことに伴い、`ix_work_record_source_preset`を削除する。勤務記録の内容は変更しない。
 
+スキーマバージョン5では、`annual_summary_setting`を追加して12月締めの行を投入し、`app_metadata.export_format_version`を2へ更新する。勤務記録、給与設定、締め日履歴および月額手当は変更しない。
+
 ## 13. 性能方針
 
 - カレンダーは表示月の日付範囲だけを`work_record.work_date`で検索する。
@@ -571,7 +590,7 @@ Start(period_key) <= work_date <= End(period_key)
 - 年間給与見込み累計は、年間区分の開始給与期間の開始日から選択中給与期間の終了日までを`work_record.work_date`で1回範囲検索する。
 - 年間範囲の月額手当は`monthly_allowance.payroll_period_year_month`の両端を含む範囲検索で1回取得し、`ix_monthly_allowance_period`を使用する。
 - 勤務記録、設定スナップショットおよび祝日データを必要な単位でまとめて読み込み、勤務記録ごとのN+1クエリを避ける。
-- 初期リリースでは日別合計、給与期間合計および年間給与見込み累計を正本として保存しない。段階1では年間締め月のテーブルを追加せず、12月締めの既定値をアプリケーションで使用する。
+- 初期リリースでは日別合計、給与期間合計および年間給与見込み累計を正本として保存しない。年間締め月だけを`annual_summary_setting`へ保存し、各ホーム要求の開始時に1回取得する。
 - 約21.9万件の勤務記録を持つデータベースで、保存後再計算、カレンダー表示および給与期間集計を代表端末上で2秒以内に完了させる。
 - 性能条件を満たさないことを計測で確認した場合だけ、再構築可能な集計キャッシュを追加する。
 

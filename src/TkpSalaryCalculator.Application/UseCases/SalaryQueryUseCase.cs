@@ -14,7 +14,8 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
     IHolidayCalendarRepository holidays, IClosingRuleRepository closingRules,
     IMonthlyAllowanceRepository allowances, IBasicShiftRepository shifts,
     ISalaryCalculator calculator, IPayrollPeriodCalculator periodCalculator,
-    IAnnualSalaryCalculator annualCalculator) : ISalaryQueryUseCase
+    IAnnualSalaryCalculator annualCalculator,
+    IAnnualSummarySettingRepository annualSummarySettings) : ISalaryQueryUseCase
 {
     private readonly IWorkRecordRepository records = records ?? throw new ArgumentNullException(nameof(records));
     private readonly ISettingSnapshotRepository settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -25,6 +26,8 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
     private readonly ISalaryCalculator calculator = calculator ?? throw new ArgumentNullException(nameof(calculator));
     private readonly IPayrollPeriodCalculator periodCalculator = periodCalculator ?? throw new ArgumentNullException(nameof(periodCalculator));
     private readonly IAnnualSalaryCalculator annualCalculator = annualCalculator ?? throw new ArgumentNullException(nameof(annualCalculator));
+    private readonly IAnnualSummarySettingRepository annualSummarySettings =
+        annualSummarySettings ?? throw new ArgumentNullException(nameof(annualSummarySettings));
 
     /// <summary>年間集計サービスの標準実装を使用して生成します。</summary>
     public SalaryQueryUseCase(
@@ -35,9 +38,10 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
         IMonthlyAllowanceRepository allowances,
         IBasicShiftRepository shifts,
         ISalaryCalculator calculator,
-        IPayrollPeriodCalculator periodCalculator)
+        IPayrollPeriodCalculator periodCalculator,
+        IAnnualSummarySettingRepository annualSummarySettings)
         : this(records, settings, holidays, closingRules, allowances, shifts, calculator, periodCalculator,
-            new Domain.Services.AnnualSalaryCalculator())
+            new Domain.Services.AnnualSalaryCalculator(), annualSummarySettings)
     {
     }
 
@@ -217,7 +221,8 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
         ApplicationSupport.ValidatePayrollPeriodKey(payrollPeriodKey, nameof(payrollPeriodKey));
         cancellationToken.ThrowIfCancellationRequested();
 
-        var annualRange = annualCalculator.GetPeriodRange(payrollPeriodKey, AnnualClosingMonth.Default);
+        var closingMonth = await annualSummarySettings.GetClosingMonthAsync(cancellationToken).ConfigureAwait(false);
+        var annualRange = annualCalculator.GetPeriodRange(payrollPeriodKey, closingMonth);
         var history = ClosingRuleHistorySupport.ForCalculation(
             await closingRules.GetHistoryAsync(cancellationToken).ConfigureAwait(false));
         var periodKeys = GetPeriodKeys(annualRange.Start, annualRange.AccumulationEnd);

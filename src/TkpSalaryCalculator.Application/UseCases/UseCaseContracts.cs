@@ -207,6 +207,18 @@ public interface IPayrollPeriodSettingsUseCase
     Task DeleteAllowanceAsync(MonthlyAllowanceId id, CancellationToken cancellationToken);
 }
 
+/// <summary>年間給与見込み累計の現在設定をプレゼンテーション層へ公開します。</summary>
+public interface IAnnualSummarySettingsUseCase
+{
+    /// <summary>保存済みの年間締め月を取得します。</summary>
+    Task<AnnualSummarySettingDto> GetAsync(CancellationToken cancellationToken);
+
+    /// <summary>1 月から 12 月までの年間締め月を原子的に保存します。</summary>
+    Task<AnnualSummarySettingDto> SaveAsync(
+        SaveAnnualSummarySettingCommand command,
+        CancellationToken cancellationToken);
+}
+
 /// <summary>バックアップ通知の表示状態と延期操作をプレゼンテーション層へ公開します。</summary>
 public interface IBackupReminderUseCase
 {

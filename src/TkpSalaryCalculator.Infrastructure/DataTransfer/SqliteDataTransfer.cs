@@ -226,6 +226,10 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
             SELECT id, payroll_period_year_month, display_name, amount_yen, created_at_utc, updated_at_utc
             FROM monthly_allowance ORDER BY payroll_period_year_month, id;
             """),
+        new(DataTransferSection.AnnualSummarySettings, 0, "annual_summary_setting", """
+            SELECT id, closing_month, created_at_utc, updated_at_utc
+            FROM annual_summary_setting WHERE id = 1;
+            """),
         new(DataTransferSection.Definitions, 0, "service_definition", SnapshotSet + """
             SELECT d.id, d.created_at_utc FROM service_definition d WHERE d.id IN (
                 SELECT service_id FROM snapshot_service WHERE snapshot_id IN (SELECT id FROM exported_snapshot)
@@ -283,7 +287,8 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
 public sealed class SqliteImportStagingRepository : IImportStagingRepository
 {
     private const string FormatName = "tkp-salary-calculator";
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
+    private const int LegacyFormatVersion = 1;
     private readonly SqliteDatabase liveDatabase;
     private readonly string stagingDirectory;
     private readonly IUtcClock clock;
@@ -398,7 +403,9 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         if (RequiredString(header, "format") != FormatName)
             throw new InvalidDataException("The import format is not supported.");
         var version = RequiredInt32(header, "formatVersion");
-        if (version != FormatVersion) throw new InvalidDataException($"Export format version {version} is not supported.");
+        if (version is not LegacyFormatVersion and not FormatVersion)
+            throw new InvalidDataException($"Export format version {version} is not supported.");
+        await ValidateAnnualSummarySettingRecordAsync(stage, version, cancellationToken).ConfigureAwait(false);
         var exportCreated = SqliteValue.Utc(RequiredString(header, "createdAtUtc"));
 
         // The candidate must contain only imported rows. Default bootstrap data would otherwise
@@ -410,6 +417,11 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             var context = candidate.AmbientTransaction!;
             await SqliteDatabase.ExecuteNonQueryAsync(context.Connection, context.Transaction,
                 "PRAGMA defer_foreign_keys = ON;", token).ConfigureAwait(false);
+            if (version == FormatVersion)
+            {
+                await SqliteDatabase.ExecuteNonQueryAsync(context.Connection, context.Transaction,
+                    "DELETE FROM annual_summary_setting;", token).ConfigureAwait(false);
+            }
             foreach (var table in InsertOrder)
                 await InsertStagedTableAsync(stage, context.Connection, context.Transaction, table, token)
                     .ConfigureAwait(false);
@@ -725,6 +737,22 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         return result;
     }
 
+    private static async Task ValidateAnnualSummarySettingRecordAsync(
+        SqliteConnection stage,
+        int formatVersion,
+        CancellationToken cancellationToken)
+    {
+        await using var command = stage.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM staged_record WHERE record_type = 'annual_summary_setting';";
+        var count = Convert.ToInt64(
+            await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+            CultureInfo.InvariantCulture);
+        if (formatVersion == LegacyFormatVersion && count != 0)
+            throw new InvalidDataException("Export format version 1 cannot contain an annual summary setting.");
+        if (formatVersion == FormatVersion && count != 1)
+            throw new InvalidDataException("Export format version 2 requires exactly one annual summary setting.");
+    }
+
     private static async Task InsertStagedTableAsync(SqliteConnection stage, SqliteConnection candidate,
         SqliteTransaction transaction, TableSpec table, CancellationToken cancellationToken)
     {
@@ -826,9 +854,10 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
                 throw new InvalidDataException("The initial setting snapshot is missing.");
             initialSnapshotId = reader.GetString(0);
             var metadataVersion = reader.GetInt32(1);
-            if (metadataVersion != expectedFormatVersion || metadataVersion != FormatVersion)
+            if (metadataVersion != expectedFormatVersion ||
+                expectedFormatVersion is not LegacyFormatVersion and not FormatVersion)
                 throw new InvalidDataException(
-                    $"Metadata export format version {metadataVersion} does not match supported header version {FormatVersion}.");
+                    $"Metadata export format version {metadataVersion} does not match header version {expectedFormatVersion}.");
         }
 
         await using (var versions = connection.CreateCommand())
@@ -1024,13 +1053,12 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         SqliteTransaction transaction, DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {
         await using var read = source.CreateCommand();
-        read.CommandText = "SELECT initial_snapshot_id, export_format_version, created_at_utc FROM app_metadata WHERE id = 1;";
+        read.CommandText = "SELECT initial_snapshot_id, created_at_utc FROM app_metadata WHERE id = 1;";
         await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             throw new InvalidDataException("Imported metadata is missing.");
         var initial = reader.GetString(0);
-        var version = reader.GetInt32(1);
-        var created = reader.GetString(2);
+        var created = reader.GetString(1);
         await reader.DisposeAsync().ConfigureAwait(false);
         await using var update = destination.CreateCommand();
         update.Transaction = transaction;
@@ -1043,7 +1071,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             WHERE id = 1;
             """;
         update.Parameters.AddWithValue("$initial", initial);
-        update.Parameters.AddWithValue("$version", version);
+        update.Parameters.AddWithValue("$version", SqliteDatabase.CurrentExportFormatVersion);
         update.Parameters.AddWithValue("$now", SqliteValue.Utc(importedAtUtc));
         update.Parameters.AddWithValue("$created", created);
         await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -1140,6 +1168,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         new("work_record", "id", "work_date", "service_id", "time_category_id", "input_mode", "work_minutes", "start_time_minutes", "end_time_minutes", "source_service_preset_id", "source_basic_shift_id", "source_work_record_id", "save_operation_id", "created_at_utc", "updated_at_utc"),
         new("closing_rule_history", "id", "effective_from_year_month", "closing_day", "is_end_of_month", "created_at_utc"),
         new("monthly_allowance", "id", "payroll_period_year_month", "display_name", "amount_yen", "created_at_utc", "updated_at_utc"),
+        new("annual_summary_setting", "id", "closing_month", "created_at_utc", "updated_at_utc"),
         new("setting_month", "year_month", "snapshot_id", "created_at_utc", "updated_at_utc"),
     ];
 
@@ -1153,6 +1182,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     private static readonly string[] DeleteOrder =
     [
         "work_record", "basic_shift", "service_preset", "monthly_allowance", "closing_rule_history",
+        "annual_summary_setting",
         "setting_month", "snapshot_premium_weekday", "snapshot_premium_date", "snapshot_premium_service",
         "snapshot_count_bonus_service", "snapshot_rate", "snapshot_time_category", "snapshot_service",
         "snapshot_premium", "snapshot_count_bonus", "setting_snapshot", "holiday_date",
@@ -1242,6 +1272,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             ["work_record"] = DataTransferSection.WorkRecords,
             ["holiday_calendar_version"] = DataTransferSection.Holidays,
             ["holiday_date"] = DataTransferSection.Holidays,
+            ["annual_summary_setting"] = DataTransferSection.AnnualSummarySettings,
         };
 
     private sealed record TableSpec(string Name, params string[] Columns);

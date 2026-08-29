@@ -295,7 +295,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         context.Closing.Values.Add(new ClosingRule(new ClosingRuleId(Guid.NewGuid()), new(new(2020, 1)), 20));
         context.Allowances.Values.Add(new MonthlyAllowance(new MonthlyAllowanceId(Guid.NewGuid()), key, "手当", new YenAmount(5000)));
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var result = await useCase.GetPayrollPeriodAsync(key, default);
 
@@ -337,7 +337,8 @@ public sealed class SettingsAndSalaryUseCaseTests
             context.Shifts,
             context.Salary,
             context.Periods,
-            new AnnualSalaryCalculator());
+            new AnnualSalaryCalculator(),
+            context.AnnualSettings);
 
         var result = await useCase.GetHomeSalarySummaryAsync(selected, default);
 
@@ -382,7 +383,8 @@ public sealed class SettingsAndSalaryUseCaseTests
             context.Shifts,
             context.Salary,
             context.Periods,
-            new AnnualSalaryCalculator());
+            new AnnualSalaryCalculator(),
+            context.AnnualSettings);
 
         var withAllowance = await useCase.GetHomeSalarySummaryAsync(selected, default);
         context.Allowances.Values.Clear();
@@ -393,6 +395,39 @@ public sealed class SettingsAndSalaryUseCaseTests
         Assert.Equal(0, withoutData.AnnualSummary.CalculatedSubtotal.Value);
         Assert.Equal(0, withoutData.AnnualSummary.UncalculatedCount);
         Assert.Empty(withoutData.MonthlySummary.Days);
+    }
+
+    [Fact]
+    public async Task AnnualSummaryUsesSavedClosingMonthOncePerHomeRequest()
+    {
+        var context = new TestContext();
+        var selected = new PayrollPeriodKey(new YearMonth(2027, 1));
+        context.Closing.Values.Add(new ClosingRule(
+            new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)),
+            null));
+        var annualSettings = new FakeAnnualSummarySettingRepository
+        {
+            Value = new AnnualClosingMonth(3),
+        };
+        var useCase = new SalaryQueryUseCase(
+            context.Works,
+            context.Settings,
+            context.Holidays,
+            context.Closing,
+            context.Allowances,
+            context.Shifts,
+            context.Salary,
+            context.Periods,
+            new AnnualSalaryCalculator(),
+            annualSettings);
+
+        var result = await useCase.GetHomeSalarySummaryAsync(selected, default);
+
+        Assert.Equal(new YearMonth(2026, 4), result.AnnualSummary.PeriodStart.Value);
+        Assert.Equal(new YearMonth(2027, 3), result.AnnualSummary.PeriodEnd.Value);
+        Assert.Equal(new YearMonth(2027, 1), result.AnnualSummary.AccumulationEnd.Value);
+        Assert.Equal(1, annualSettings.GetCalls);
     }
 
     [Fact]
@@ -425,7 +460,8 @@ public sealed class SettingsAndSalaryUseCaseTests
             context.Shifts,
             context.Salary,
             context.Periods,
-            new AnnualSalaryCalculator());
+            new AnnualSalaryCalculator(),
+            context.AnnualSettings);
 
         var result = await useCase.GetHomeSalarySummaryAsync(selected, default);
 
@@ -464,7 +500,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         context.Closing.Values.Add(new ClosingRule(new ClosingRuleId(Guid.NewGuid()),
             new PayrollPeriodKey(new YearMonth(1, 1)), 20));
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var result = await useCase.GetPayrollPeriodAsync(key, default);
 
@@ -494,7 +530,7 @@ public sealed class SettingsAndSalaryUseCaseTests
             "交通手当",
             new YenAmount(5_000)));
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var result = await useCase.GetWorkRecordCalculationAsync(selected.Id, default);
 
@@ -522,7 +558,7 @@ public sealed class SettingsAndSalaryUseCaseTests
             TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration, new WorkMinutes(60), null, null,
             new DisplayOrder(0), true));
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var day = await useCase.GetDayAsync(date, default);
         var month = await useCase.GetCalendarMonthAsync(new(2026, 8), default);
@@ -549,7 +585,7 @@ public sealed class SettingsAndSalaryUseCaseTests
             TestData.Work(selectedDate.AddDays(1)),
         ]);
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var screen = await useCase.GetCalendarMonthScreenAsync(month, selectedDate, default);
 
@@ -582,7 +618,7 @@ public sealed class SettingsAndSalaryUseCaseTests
             new DisplayOrder(0), true);
         context.Shifts.Values.Add(shift);
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var screen = await useCase.GetDayScreenAsync(date, default);
 
@@ -609,7 +645,7 @@ public sealed class SettingsAndSalaryUseCaseTests
     {
         var context = new TestContext();
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var month = await useCase.GetCalendarMonthAsync(new YearMonth(2026, 8), default);
 
@@ -633,7 +669,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         var context = new TestContext();
         var calculator = new RecordingSalaryCalculator();
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, calculator, context.Periods);
+            context.Allowances, context.Shifts, calculator, context.Periods, context.AnnualSettings);
         var callingContext = new SynchronizationContext();
         var previous = SynchronizationContext.Current;
         Task<IReadOnlyList<CalendarDayDto>> operation;
@@ -667,7 +703,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
         var calculator = new RecordingSalaryCalculator();
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, calculator, context.Periods);
+            context.Allowances, context.Shifts, calculator, context.Periods, context.AnnualSettings);
 
         var month = await useCase.GetCalendarMonthAsync(new YearMonth(2026, 8), default);
 
@@ -708,7 +744,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         for (var date = new DateOnly(2026, 7, 2); date <= new DateOnly(2026, 8, 31); date = date.AddDays(1))
             for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var result = await useCase.GetPayrollPeriodAsync(key, default);
 
@@ -737,7 +773,7 @@ public sealed class SettingsAndSalaryUseCaseTests
             current.Services, current.TimeCategories, [], current.Premiums, current.CountBonuses);
         context.Works.Values.Add(TestData.Work(new DateOnly(2026, 8, 1)));
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var result = await useCase.GetCalendarMonthAsync(month, default);
 
@@ -802,7 +838,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         var preview = await settingsUseCase.PreviewClosingRuleReplacementAsync(new(key, 20), default);
         await settingsUseCase.ReplaceClosingRuleAsync(new(key, 20), preview.ConfirmationToken, default);
         var query = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
-            context.Allowances, context.Shifts, context.Salary, context.Periods);
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
         var result = await query.GetPayrollPeriodAsync(key, default);
 
