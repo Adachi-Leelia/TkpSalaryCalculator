@@ -94,12 +94,14 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
                     foreach (var query in ExportQueries)
                     {
                         if (!nextSequence.TryGetValue(query.Section, out var sequence)) sequence = query.FirstSequence;
+                        var rowCount = 0;
                         await using var command = connection.CreateCommand();
                         command.Transaction = transaction;
                         command.CommandText = query.Sql;
                         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
                         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                         {
+                            rowCount++;
                             var values = new Dictionary<string, object?>(StringComparer.Ordinal)
                             {
                                 ["type"] = query.Type,
@@ -111,6 +113,9 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
                                 new DataTransferRecord<JsonElement>(query.Section, sequence++, element),
                                 cancellationToken).ConfigureAwait(false);
                         }
+                        if (query.RequiredRowCount is { } requiredRowCount && rowCount != requiredRowCount)
+                            throw new InvalidDataException(
+                                $"Export record '{query.Type}' must occur exactly {requiredRowCount} time(s).");
                         nextSequence[query.Section] = sequence;
                     }
                     records.Writer.TryComplete();
@@ -229,7 +234,7 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
         new(DataTransferSection.AnnualSummarySettings, 0, "annual_summary_setting", """
             SELECT id, closing_month, created_at_utc, updated_at_utc
             FROM annual_summary_setting WHERE id = 1;
-            """),
+            """, RequiredRowCount: 1),
         new(DataTransferSection.Definitions, 0, "service_definition", SnapshotSet + """
             SELECT d.id, d.created_at_utc FROM service_definition d WHERE d.id IN (
                 SELECT service_id FROM snapshot_service WHERE snapshot_id IN (SELECT id FROM exported_snapshot)
@@ -280,7 +285,12 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
             """),
     ];
 
-    private sealed record ExportQuery(DataTransferSection Section, long FirstSequence, string Type, string Sql);
+    private sealed record ExportQuery(
+        DataTransferSection Section,
+        long FirstSequence,
+        string Type,
+        string Sql,
+        int? RequiredRowCount = null);
 }
 
 /// <summary>インポートを一時 SQLite へ格納し、確認前の検証と確認後の全置換を行います。</summary>
@@ -751,6 +761,17 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             throw new InvalidDataException("Export format version 1 cannot contain an annual summary setting.");
         if (formatVersion == FormatVersion && count != 1)
             throw new InvalidDataException("Export format version 2 requires exactly one annual summary setting.");
+        if (formatVersion != FormatVersion) return;
+
+        var setting = await ReadSingleRecordAsync(stage, "annual_summary_setting", cancellationToken)
+            .ConfigureAwait(false);
+        if (RequiredInt32(setting, "id") != 1)
+            throw new InvalidDataException("The annual summary setting id must be the integer 1.");
+        var closingMonth = RequiredInt32(setting, "closing_month");
+        if (closingMonth is < 1 or > 12)
+            throw new InvalidDataException("The annual summary closing month must be an integer from 1 through 12.");
+        ValidateUtcString(setting, "created_at_utc");
+        ValidateUtcString(setting, "updated_at_utc");
     }
 
     private static async Task InsertStagedTableAsync(SqliteConnection stage, SqliteConnection candidate,
@@ -1098,9 +1119,23 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             : throw new InvalidDataException($"Required property '{propertyName}' is missing.");
 
     private static int RequiredInt32(JsonElement element, string propertyName) =>
-        element.TryGetProperty(propertyName, out var property) && property.TryGetInt32(out var value)
+        element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number &&
+        property.TryGetInt32(out var value)
             ? value
             : throw new InvalidDataException($"Required property '{propertyName}' is missing.");
+
+    private static void ValidateUtcString(JsonElement element, string propertyName)
+    {
+        var value = RequiredString(element, propertyName);
+        try
+        {
+            _ = SqliteValue.Utc(value);
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidDataException($"Property '{propertyName}' is not a valid UTC timestamp.", exception);
+        }
+    }
 
     private static async Task ExecuteAsync(SqliteConnection connection, SqliteTransaction? transaction, string sql,
         CancellationToken cancellationToken)

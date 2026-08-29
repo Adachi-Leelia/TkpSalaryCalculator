@@ -531,6 +531,23 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
+    public async Task DATA001_ExportRejectsMissingAnnualSummarySettingWithoutMarkingSuccess()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 6, 0, 0, TimeSpan.Zero));
+        var metadata = new SqliteAppMetadataRepository(fixture.Database, clock);
+        Assert.Null((await metadata.GetAsync(default)).LastExportedAtUtc);
+        await using (var connection = await fixture.OpenRawAsync())
+            await ExecuteAsync(connection, "DELETE FROM annual_summary_setting;");
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CreateTransferUseCase(fixture.Database, fixture.StagingPath, clock)
+                .ExportAsync(new MemoryStream(), "2.0.0", default));
+
+        Assert.Null((await metadata.GetAsync(default)).LastExportedAtUtc);
+    }
+
+    [Fact]
     public async Task StreamingJsonRoundTripSupportsTokensLargerThanPrevious128KiBLimit()
     {
         var largeText = new string('x', 256 * 1024);
@@ -714,6 +731,8 @@ public sealed class InfrastructureIntegrationTests
             data => RemoveRecords(data, "closing_rule_history"),
             data => RemoveRecords(data, "annual_summary_setting"),
             data => FindValue(data, "annual_summary_setting")["closing_month"] = 13,
+            data => FindValue(data, "annual_summary_setting")["closing_month"] = true,
+            data => FindValue(data, "annual_summary_setting")["closing_month"] = "3",
             data =>
             {
                 var duplicate = data.Single(item =>
