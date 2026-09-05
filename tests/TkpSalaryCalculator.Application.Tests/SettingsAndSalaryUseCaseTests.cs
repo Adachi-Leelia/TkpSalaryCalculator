@@ -347,7 +347,7 @@ public sealed class SettingsAndSalaryUseCaseTests
             20));
         context.Works.Values.AddRange([
             TestData.Work(new DateOnly(2026, 1, 1)),
-            TestData.Work(new DateOnly(2026, 2, 1)) with { ServiceId = new ServiceId(Guid.NewGuid()) },
+            WithService(TestData.Work(new DateOnly(2026, 2, 1)), new ServiceId(Guid.NewGuid())),
             TestData.Work(new DateOnly(2026, 8, 1)),
             TestData.Work(new DateOnly(2026, 9, 1)),
         ]);
@@ -670,8 +670,8 @@ public sealed class SettingsAndSalaryUseCaseTests
         var month = await useCase.GetCalendarMonthAsync(new(2026, 8), default);
 
         Assert.Single(day.Records);
-        Assert.Equal("訪問", day.Records[0].ServiceDisplayName);
-        Assert.Equal("60分", day.Records[0].TimeCategoryDisplayName);
+        Assert.Equal("訪問", Assert.Single(day.Records[0].Tasks).ServiceDisplayName);
+        Assert.Equal("60分", Assert.Single(day.Records[0].Tasks).TimeCategoryDisplayName);
         Assert.Equal(new YearMonth(2026, 8), day.Records[0].SettingMonth);
         Assert.Equal(1000, day.CalculatedSubtotal.Value);
         Assert.Equal(31, month.Count);
@@ -1108,4 +1108,11 @@ public sealed class SettingsAndSalaryUseCaseTests
         public Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("preset delete failed");
     }
+
+    private static WorkRecordDto WithService(WorkRecordDto record, ServiceId serviceId) =>
+        record with
+        {
+            Tasks = record.Tasks.Select((task, index) =>
+                index == 0 ? task with { ServiceId = serviceId } : task).ToArray(),
+        };
 }

@@ -27,8 +27,13 @@ internal static class TestData
     public static WorkRecordDto Work(DateOnly date, WorkRecordId? id = null, BasicShiftId? shiftId = null,
         WorkMinutes? minutes = null)
     {
-        return new(id ?? new WorkRecordId(Guid.NewGuid()), date, ServiceId, CategoryId,
-        WorkInputMode.Duration, minutes ?? new WorkMinutes(60), null, null, null, shiftId, null);
+        var recordId = id ?? new WorkRecordId(Guid.NewGuid());
+        return new(recordId, date,
+        [
+            new WorkTaskDto(new WorkTaskId(recordId.Value), ServiceId, CategoryId,
+                WorkInputMode.Duration, minutes ?? new WorkMinutes(60), null, null,
+                new DisplayOrder(0), null),
+        ], shiftId, null);
     }
 
 

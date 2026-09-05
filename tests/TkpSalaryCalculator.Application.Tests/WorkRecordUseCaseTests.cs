@@ -12,7 +12,7 @@ public sealed class WorkRecordUseCaseTests
         var result = await context.WorkUseCase().PreviewAsync(command, default);
 
         Assert.True(result.CanSave);
-        Assert.Equal(120, result.NormalizedWorkMinutes!.Value.Value);
+        Assert.Equal(120, Assert.Single(result.Tasks).NormalizedWorkMinutes!.Value.Value);
         Assert.Empty(context.Works.Values);
         Assert.Equal(0, context.Settings.EnsureCalls);
         Assert.Equal(0, context.Transactions.Calls);
@@ -31,7 +31,7 @@ public sealed class WorkRecordUseCaseTests
         Assert.False(missing.CanSave);
         Assert.Contains(missing.Issues, x => x.Code == "WORK_START_REQUIRED_FOR_PREMIUM");
         Assert.True(valid.CanSave);
-        Assert.Equal(30, valid.NormalizedEndTime!.Value.Value);
+        Assert.Equal(30, Assert.Single(valid.Tasks).NormalizedEndTime!.Value.Value);
     }
 
     [Fact]
@@ -367,9 +367,9 @@ public sealed class WorkRecordUseCaseTests
         var recent = frequent with { Id = new ServicePresetId(Guid.NewGuid()), DisplayName = "直近", DisplayOrder = new DisplayOrder(2) };
         context.Presets.Values.AddRange([frequent, recent]);
         context.Works.Values.AddRange([
-            TestData.Work(new(2026, 7, 1)) with { SourceServicePresetId = frequent.Id },
-            TestData.Work(new(2026, 7, 2)) with { SourceServicePresetId = frequent.Id },
-            TestData.Work(new(2026, 7, 3)) with { SourceServicePresetId = recent.Id }]);
+            WithSourcePreset(TestData.Work(new(2026, 7, 1)), frequent.Id),
+            WithSourcePreset(TestData.Work(new(2026, 7, 2)), frequent.Id),
+            WithSourcePreset(TestData.Work(new(2026, 7, 3)), recent.Id)]);
 
         var result = await context.WorkUseCase().GetInputOptionsAsync(new(2026, 8, 1), default);
 
@@ -395,7 +395,9 @@ public sealed class WorkRecordUseCaseTests
 
         Assert.Equal(target, screen.ExistingRecord);
         Assert.True(first.CanSave);
-        Assert.Equal(first.NormalizedWorkMinutes, second.NormalizedWorkMinutes);
+        Assert.Equal(
+            Assert.Single(first.Tasks).NormalizedWorkMinutes,
+            Assert.Single(second.Tasks).NormalizedWorkMinutes);
         Assert.Equal(first.Calculation?.WorkRecordId, second.Calculation?.WorkRecordId);
         Assert.Equal(first.Calculation?.Total, second.Calculation?.Total);
         Assert.Equal(1, context.Works.FindCalls);
@@ -466,7 +468,7 @@ public sealed class WorkRecordUseCaseTests
         var preset = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "現在は利用不可", TestData.ServiceId,
             TestData.CategoryId, new WorkMinutes(60), new DisplayOrder(0), true);
         context.Presets.Values.Add(preset);
-        context.Works.Values.Add(TestData.Work(new(2026, 7, 31)) with { SourceServicePresetId = preset.Id });
+        context.Works.Values.Add(WithSourcePreset(TestData.Work(new(2026, 7, 31)), preset.Id));
 
         var result = await context.WorkUseCase().GetInputOptionsAsync(new(2026, 8, 1), default);
 
@@ -651,4 +653,11 @@ public sealed class WorkRecordUseCaseTests
         Assert.Empty(source.Tasks.Select(static task => task.Id).Intersect(
             copied.Tasks.Select(static task => task.Id)));
     }
+
+    private static WorkRecordDto WithSourcePreset(WorkRecordDto record, ServicePresetId presetId) =>
+        record with
+        {
+            Tasks = record.Tasks.Select((task, index) =>
+                index == 0 ? task with { SourceServicePresetId = presetId } : task).ToArray(),
+        };
 }

@@ -79,7 +79,7 @@ public sealed class CalculationDetailViewModelTests
             [new AppliedCountBonus(new CountBonusId(Guid.NewGuid()), "訪問件数", new YenAmount(150))],
             new YenAmount(1_950), []);
         var visit = new WorkRecordDto(RecordId, WorkDate, [firstTask, secondTask], null, null);
-        var salaryRecord = new WorkRecordSalaryDto(visit, visitCalculation, null, null, new YearMonth(2026, 8),
+        var salaryRecord = new WorkRecordSalaryDto(visit, visitCalculation, new YearMonth(2026, 8),
         [
             new WorkTaskSalaryDto(firstTask, firstCalculation, "身体1", null),
             new WorkTaskSalaryDto(secondTask, secondCalculation, "生活3", null),
@@ -148,10 +148,14 @@ public sealed class CalculationDetailViewModelTests
     public async Task UI010_UncalculatedRecordShowsExactMissingSettingAndRepairDestination()
     {
         var work = Record(RecordId);
+        var task = Assert.Single(work.Tasks);
+        var missing = new MissingCalculationRequirement(
+            task.Id, MissingCalculationRequirementCodes.Rate, ServiceId.Value);
         var calculation = new WorkSalaryCalculation(
-            RecordId, SalaryCalculationStatus.Uncalculated, null, null, [], [], null,
-            [new MissingCalculationRequirement(MissingCalculationRequirementCodes.Rate, ServiceId.Value)]);
-        var record = new WorkRecordSalaryDto(work, calculation, "訪問介護", "60分", new YearMonth(2026, 8));
+            RecordId, SalaryCalculationStatus.Uncalculated,
+            [new TaskSalaryCalculation(task.Id, SalaryCalculationStatus.Uncalculated,
+                null, null, [], null, [missing])], [], null, [missing]);
+        var record = SalaryRecord(work, calculation);
         var summary = Summary([record]) with
         {
             Days =
@@ -208,7 +212,7 @@ public sealed class CalculationDetailViewModelTests
         var calculation = new WorkSalaryCalculation(
             RecordId, SalaryCalculationStatus.Uncalculated, [firstCalculation, secondCalculation], [], null, [missing]);
         var work = new WorkRecordDto(RecordId, WorkDate, [firstTask, secondTask], null, null);
-        var record = new WorkRecordSalaryDto(work, calculation, null, null, new YearMonth(2026, 8),
+        var record = new WorkRecordSalaryDto(work, calculation, new YearMonth(2026, 8),
         [
             new WorkTaskSalaryDto(firstTask, firstCalculation, "身体1", null),
             new WorkTaskSalaryDto(secondTask, secondCalculation, "生活3", null),
@@ -296,29 +300,51 @@ public sealed class CalculationDetailViewModelTests
             "夜間割増", PremiumCalculationType.Percentage, new BasisPoints(2_500), null,
             new MinuteOfDay(1320), new MinuteOfDay(300), false,
             new HashSet<DayOfWeek>(), new HashSet<DateOnly>(), new HashSet<ServiceId>(), true);
-        var calculation = new WorkSalaryCalculation(
-            id,
-            SalaryCalculationStatus.Calculated,
+        var work = Record(id);
+        var task = Assert.Single(work.Tasks);
+        var taskCalculation = new TaskSalaryCalculation(
+            task.Id, SalaryCalculationStatus.Calculated,
             new SnapshotRate(ServiceId, CategoryId, RateType.Hourly, new YenAmount(1_200)),
             new YenAmount(1_200),
             [new AppliedPremium(premium, new WorkMinutes(30), new YenAmount(300))],
+            new YenAmount(1_500), []);
+        var calculation = new WorkSalaryCalculation(
+            id, SalaryCalculationStatus.Calculated, [taskCalculation],
             [new AppliedCountBonus(new CountBonusId(Guid.NewGuid()), "訪問件数", new YenAmount(100))],
-            new YenAmount(1_600),
-            []);
-        return new WorkRecordSalaryDto(Record(id), calculation, "訪問介護", "60分", new YearMonth(2026, 8));
+            new YenAmount(1_600), []);
+        return SalaryRecord(work, calculation);
     }
 
     private static WorkRecordSalaryDto UncalculatedRecord(WorkRecordId id)
     {
+        var work = Record(id);
+        var task = Assert.Single(work.Tasks);
+        var missing = new MissingCalculationRequirement(
+            task.Id, MissingCalculationRequirementCodes.Rate, ServiceId.Value);
         var calculation = new WorkSalaryCalculation(
-            id, SalaryCalculationStatus.Uncalculated, null, null, [], [], null,
-            [new MissingCalculationRequirement(MissingCalculationRequirementCodes.Rate, ServiceId.Value)]);
-        return new WorkRecordSalaryDto(Record(id), calculation, "訪問介護", "60分", new YearMonth(2026, 8));
+            id, SalaryCalculationStatus.Uncalculated,
+            [new TaskSalaryCalculation(task.Id, SalaryCalculationStatus.Uncalculated,
+                null, null, [], null, [missing])], [], null, [missing]);
+        return SalaryRecord(work, calculation);
     }
 
     private static WorkRecordDto Record(WorkRecordId id) => new(
-        id, WorkDate, ServiceId, CategoryId, WorkInputMode.TimeRange, new WorkMinutes(60),
-        new MinuteOfDay(540), new MinuteOfDay(600), null, null, null);
+        id, WorkDate,
+        [
+            new WorkTaskDto(new WorkTaskId(id.Value), ServiceId, CategoryId,
+                WorkInputMode.TimeRange, new WorkMinutes(60), new MinuteOfDay(540),
+                new MinuteOfDay(600), new DisplayOrder(0), null),
+        ], null, null);
+
+    private static WorkRecordSalaryDto SalaryRecord(
+        WorkRecordDto work,
+        WorkSalaryCalculation calculation)
+    {
+        var calculations = calculation.TaskCalculations.ToDictionary(static value => value.WorkTaskId);
+        return new WorkRecordSalaryDto(work, calculation, new YearMonth(2026, 8),
+            work.Tasks.Select(task => new WorkTaskSalaryDto(
+                task, calculations[task.Id], "訪問介護", "60分")).ToArray());
+    }
 
     private sealed class SalaryStub : ISalaryQueryUseCase
     {

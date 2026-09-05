@@ -163,24 +163,6 @@ public sealed record WorkRecord
         this.Tasks = new ReadOnlyCollection<WorkTask>(ordered);
     }
 
-    /// <summary>旧1タスク契約を訪問集約へ変換します。</summary>
-    public WorkRecord(
-        WorkRecordId Id,
-        DateOnly WorkDate,
-        ServiceId ServiceId,
-        TimeCategoryId? TimeCategoryId,
-        WorkInputMode InputMode,
-        WorkMinutes WorkMinutes,
-        MinuteOfDay? StartTime,
-        MinuteOfDay? EndTime)
-        : this(Id, WorkDate,
-        [
-            new WorkTask(new WorkTaskId(Id.Value), ServiceId, TimeCategoryId, InputMode, WorkMinutes,
-                StartTime, EndTime, new DisplayOrder(0)),
-        ])
-    {
-    }
-
     /// <summary>訪問識別子を取得します。</summary>
     public WorkRecordId Id { get; }
 
@@ -190,19 +172,6 @@ public sealed record WorkRecord
     /// <summary>表示順に並んだ勤務タスクを取得します。</summary>
     public IReadOnlyList<WorkTask> Tasks { get; }
 
-    // タスク3まで旧1タスク呼出し元をコンパイル可能に保つ一時アダプター。
-    /// <summary>先頭タスクのサービス識別子を取得します。</summary>
-    public ServiceId ServiceId => Tasks[0].ServiceId;
-    /// <summary>先頭タスクの時間区分識別子を取得します。</summary>
-    public TimeCategoryId? TimeCategoryId => Tasks[0].TimeCategoryId;
-    /// <summary>先頭タスクの入力方式を取得します。</summary>
-    public WorkInputMode InputMode => Tasks[0].InputMode;
-    /// <summary>先頭タスクの勤務分数を取得します。</summary>
-    public WorkMinutes WorkMinutes => Tasks[0].WorkMinutes;
-    /// <summary>先頭タスクの開始時刻を取得します。</summary>
-    public MinuteOfDay? StartTime => Tasks[0].StartTime;
-    /// <summary>先頭タスクの終了時刻を取得します。</summary>
-    public MinuteOfDay? EndTime => Tasks[0].EndTime;
 }
 
 /// <summary>設定スナップショット内のサービスを表します。</summary>

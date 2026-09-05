@@ -87,7 +87,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             OnPropertyChanged(nameof(SettingsMonthChangeWarningText));
             OnPropertyChanged(nameof(HasSettingsMonthChangeWarning));
             foreach (var task in Tasks) task.RefreshDateRules();
-            NotifyFirstTaskProperties();
             InputChanged();
         }
     }
@@ -169,27 +168,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         get => firstInvalidTask;
         private set => SetProperty(ref firstInvalidTask, value);
     }
-
-    // 既存の1タスク画面テストと呼出し元を段階的に移行できるよう、先頭タスクを明示的に公開します。
-    private WorkTaskEditorViewModel FirstTask => Tasks[0];
-    public PresetOptionViewModel? SelectedPreset { get => FirstTask.SelectedPreset; set => FirstTask.SelectedPreset = value; }
-    public ServiceOptionViewModel? SelectedService { get => FirstTask.SelectedService; set => FirstTask.SelectedService = value; }
-    public IReadOnlyList<TimeCategoryOptionViewModel> TimeCategories => FirstTask.TimeCategories;
-    public TimeCategoryOptionViewModel? SelectedTimeCategory { get => FirstTask.SelectedTimeCategory; set => FirstTask.SelectedTimeCategory = value; }
-    public WorkInputModeOption SelectedInputMode { get => FirstTask.SelectedInputMode; set => FirstTask.SelectedInputMode = value; }
-    public bool HasTimeCategories => FirstTask.HasTimeCategories;
-    public bool ShowDuration => FirstTask.ShowDuration;
-    public bool ShowStartTime => FirstTask.ShowStartTime;
-    public bool ShowEndTime => FirstTask.ShowEndTime;
-    public string WorkMinutesText { get => FirstTask.WorkMinutesText; set => FirstTask.WorkMinutesText = value; }
-    public TimeSpan StartTime { get => FirstTask.StartTime; set => FirstTask.StartTime = value; }
-    public TimeSpan EndTime { get => FirstTask.EndTime; set => FirstTask.EndTime = value; }
-    public string ServiceError => FirstTask.ServiceError;
-    public string TimeCategoryError => FirstTask.TimeCategoryError;
-    public string WorkMinutesError => FirstTask.WorkMinutesError;
-    public string StartTimeError => FirstTask.StartTimeError;
-    public string EndTimeError => FirstTask.EndTimeError;
-    public string NormalizedTimeText => FirstTask.NormalizedTimeText;
 
     public void Initialize(DateOnly date, WorkRecordId? id)
     {
@@ -390,7 +368,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         {
             isInitializing = false;
         }
-        NotifyFirstTaskProperties();
     }
 
     private void PopulateOptions(WorkInputOptionsDto options, HolidayCalendar calendar, WorkRecordDto? existing)
@@ -454,10 +431,9 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         UpdateTaskPositions();
     }
 
-    private void OnTaskInputChanged(WorkTaskEditorViewModel task)
+    private void OnTaskInputChanged(WorkTaskEditorViewModel _)
     {
         if (isInitializing) return;
-        if (ReferenceEquals(task, FirstTask)) NotifyFirstTaskProperties();
         InputChanged();
     }
 
@@ -468,7 +444,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         OnPropertyChanged(nameof(HasMultipleTasks));
         OnPropertyChanged(nameof(TaskCountText));
         OnPropertyChanged(nameof(HasIssues));
-        NotifyFirstTaskProperties();
     }
 
     private bool HasApplicableTimedPremium(ServiceId serviceId)
@@ -544,10 +519,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         {
             var task = Tasks[index];
             WorkTaskPreviewDto? normalized = normalizedById.GetValueOrDefault(task.Id);
-            if (normalized is null && preview.Tasks.Count == 1 && Tasks.Count == 1) normalized = preview.Tasks[0];
             TaskSalaryCalculation? calculation = calculationById.GetValueOrDefault(task.Id);
-            if (calculation is null && preview.Calculation?.TaskCalculations.Count == 1 && Tasks.Count == 1)
-                calculation = preview.Calculation.TaskCalculations[0];
             task.ApplyPreview(normalized, calculation, formatter);
         }
 
@@ -572,7 +544,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             VisitTotalText = string.Empty;
             PreviewText = "入力を修正すると訪問全体の給与をプレビューできます。";
         }
-        OnPropertyChanged(nameof(NormalizedTimeText));
     }
 
     private void ApplySavedNormalization(WorkRecordDto record)
@@ -582,7 +553,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         {
             if (byId.TryGetValue(task.Id, out var saved)) task.ApplyNormalized(saved, formatter);
         }
-        OnPropertyChanged(nameof(NormalizedTimeText));
     }
 
     private void PresentIssues(IReadOnlyList<IssueDto> issues)
@@ -612,7 +582,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
 
         IssueMessage = issuePresenter.Present(screenIssues).ScreenMessage ?? string.Empty;
         OnPropertyChanged(nameof(HasIssues));
-        NotifyFirstTaskProperties();
     }
 
     private static bool TryParseTaskField(string? value, out WorkTaskId taskId, out string field)
@@ -646,7 +615,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         FirstInvalidTask = null;
         FirstInvalidField = null;
         OnPropertyChanged(nameof(HasIssues));
-        OnPropertyChanged(nameof(NormalizedTimeText));
         PreviewCommand.NotifyCanExecuteChanged();
         SaveCommand.NotifyCanExecuteChanged();
     }
@@ -658,29 +626,6 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         PreviewCommand.NotifyCanExecuteChanged();
         SaveCommand.NotifyCanExecuteChanged();
         foreach (var task in Tasks) task.NotifyCommands();
-    }
-
-    private void NotifyFirstTaskProperties()
-    {
-        if (Tasks.Count == 0) return;
-        OnPropertyChanged(nameof(SelectedPreset));
-        OnPropertyChanged(nameof(SelectedService));
-        OnPropertyChanged(nameof(TimeCategories));
-        OnPropertyChanged(nameof(SelectedTimeCategory));
-        OnPropertyChanged(nameof(SelectedInputMode));
-        OnPropertyChanged(nameof(HasTimeCategories));
-        OnPropertyChanged(nameof(ShowDuration));
-        OnPropertyChanged(nameof(ShowStartTime));
-        OnPropertyChanged(nameof(ShowEndTime));
-        OnPropertyChanged(nameof(WorkMinutesText));
-        OnPropertyChanged(nameof(StartTime));
-        OnPropertyChanged(nameof(EndTime));
-        OnPropertyChanged(nameof(ServiceError));
-        OnPropertyChanged(nameof(TimeCategoryError));
-        OnPropertyChanged(nameof(WorkMinutesError));
-        OnPropertyChanged(nameof(StartTimeError));
-        OnPropertyChanged(nameof(EndTimeError));
-        OnPropertyChanged(nameof(NormalizedTimeText));
     }
 
     private static MinuteOfDay ToMinuteOfDay(TimeSpan value) => new((int)value.TotalMinutes);

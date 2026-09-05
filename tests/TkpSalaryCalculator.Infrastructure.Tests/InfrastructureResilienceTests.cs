@@ -383,9 +383,13 @@ public sealed partial class InfrastructureResilienceTests
 
     private static async Task<WorkRecordDto> AddLiveMarkerAsync(TestDatabase database, IUtcClock clock)
     {
-        var marker = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
-            new ServiceId(database.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null,
-            null, null, null);
+        var id = new WorkRecordId(Guid.NewGuid());
+        var marker = new WorkRecordDto(id, new DateOnly(2026, 8, 15),
+        [
+            new WorkTaskDto(new WorkTaskId(id.Value), new ServiceId(database.ServiceId), null,
+                WorkInputMode.Duration, new WorkMinutes(45), null, null,
+                new DisplayOrder(0), null),
+        ], null, null);
         await new SqliteWorkRecordRepository(database.Database, clock).UpsertAsync(marker, default);
         return marker;
     }

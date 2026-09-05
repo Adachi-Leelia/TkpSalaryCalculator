@@ -36,14 +36,35 @@ public sealed class ParentChildSqliteTests
         Assert.Equal([original], await repository.StreamRangeAsync(
             original.WorkDate, original.WorkDate, default).ToListAsync());
 
+        await using (var connection = await fixture.OpenAsync())
+        {
+            var retainedId = original.Tasks[1].Id.Value;
+            Assert.Equal(SqliteUtc(Now), await ScalarStringAsync(connection,
+                $"SELECT created_at_utc FROM work_task WHERE id = '{retainedId:D}';"));
+        }
+
         var replacement = WorkRecord(
             original.Id,
             original.WorkDate.AddDays(1),
-            WorkTask(services[1], 0, 60),
+            original.Tasks[1] with { DisplayOrder = new DisplayOrder(0), WorkMinutes = new WorkMinutes(60) },
             WorkTask(services[0], 1, 90));
+        repository = new SqliteWorkRecordRepository(fixture.Database, new FixedClock(Now.AddHours(1)));
         await repository.UpsertAsync(replacement, default);
         Assert.Equal(replacement, await repository.FindAsync(original.Id, default));
         Assert.Equal(replacement, await repository.FindBySaveOperationIdAsync(operationId, default));
+        await using (var connection = await fixture.OpenAsync())
+        {
+            var retainedId = replacement.Tasks[0].Id.Value;
+            var addedId = replacement.Tasks[1].Id.Value;
+            Assert.Equal(SqliteUtc(Now), await ScalarStringAsync(connection,
+                $"SELECT created_at_utc FROM work_task WHERE id = '{retainedId:D}';"));
+            Assert.Equal(SqliteUtc(Now.AddHours(1)), await ScalarStringAsync(connection,
+                $"SELECT updated_at_utc FROM work_task WHERE id = '{retainedId:D}';"));
+            Assert.Equal(SqliteUtc(Now.AddHours(1)), await ScalarStringAsync(connection,
+                $"SELECT created_at_utc FROM work_task WHERE id = '{addedId:D}';"));
+            Assert.Equal(0L, await ScalarLongAsync(connection,
+                $"SELECT COUNT(*) FROM work_task WHERE id = '{original.Tasks[0].Id.Value:D}';"));
+        }
 
         var invalid = WorkRecord(
             original.Id,
@@ -54,8 +75,8 @@ public sealed class ParentChildSqliteTests
 
         await repository.DeleteAsync(original.Id, default);
         Assert.Null(await repository.FindAsync(original.Id, default));
-        await using var connection = await fixture.OpenAsync();
-        Assert.Equal(0L, await ScalarLongAsync(connection,
+        await using var finalConnection = await fixture.OpenAsync();
+        Assert.Equal(0L, await ScalarLongAsync(finalConnection,
             $"SELECT COUNT(*) FROM work_task WHERE work_record_id = '{original.Id.Value:D}';"));
     }
 
@@ -84,20 +105,41 @@ public sealed class ParentChildSqliteTests
         Assert.Equal(original, Assert.Single(bulk[DayOfWeek.Monday]));
         Assert.Empty(bulk[DayOfWeek.Tuesday]);
 
+        await using (var connection = await fixture.OpenAsync())
+        {
+            Assert.Equal(SqliteUtc(Now), await ScalarStringAsync(connection,
+                $"SELECT created_at_utc FROM basic_shift_task WHERE id = '{original.Tasks[1].Id.Value:D}';"));
+        }
+
         var replacement = new BasicShiftDto(
             shiftId,
             DayOfWeek.Tuesday,
-            [BasicShiftTask(services[1], 0, 90)],
+            [
+                original.Tasks[1] with { DisplayOrder = new DisplayOrder(0), WorkMinutes = new WorkMinutes(90) },
+                BasicShiftTask(services[0], 1, 30),
+            ],
             new DisplayOrder(1),
             false);
+        repository = new SqliteBasicShiftRepository(fixture.Database, new FixedClock(Now.AddHours(1)));
         await repository.UpsertAsync(replacement, default);
         Assert.Empty(await repository.GetForWeekdayAsync(DayOfWeek.Monday, default));
         Assert.Equal(replacement, Assert.Single(await repository.GetForWeekdayAsync(DayOfWeek.Tuesday, default)));
+        await using (var connection = await fixture.OpenAsync())
+        {
+            Assert.Equal(SqliteUtc(Now), await ScalarStringAsync(connection,
+                $"SELECT created_at_utc FROM basic_shift_task WHERE id = '{replacement.Tasks[0].Id.Value:D}';"));
+            Assert.Equal(SqliteUtc(Now.AddHours(1)), await ScalarStringAsync(connection,
+                $"SELECT updated_at_utc FROM basic_shift_task WHERE id = '{replacement.Tasks[0].Id.Value:D}';"));
+            Assert.Equal(SqliteUtc(Now.AddHours(1)), await ScalarStringAsync(connection,
+                $"SELECT created_at_utc FROM basic_shift_task WHERE id = '{replacement.Tasks[1].Id.Value:D}';"));
+            Assert.Equal(0L, await ScalarLongAsync(connection,
+                $"SELECT COUNT(*) FROM basic_shift_task WHERE id = '{original.Tasks[0].Id.Value:D}';"));
+        }
 
         await repository.DeleteAsync(shiftId, default);
         Assert.Null(await repository.FindAsync(shiftId, default));
-        await using var connection = await fixture.OpenAsync();
-        Assert.Equal(0L, await ScalarLongAsync(connection,
+        await using var finalConnection = await fixture.OpenAsync();
+        Assert.Equal(0L, await ScalarLongAsync(finalConnection,
             $"SELECT COUNT(*) FROM basic_shift_task WHERE basic_shift_id = '{shiftId.Value:D}';"));
     }
 
@@ -142,12 +184,11 @@ public sealed class ParentChildSqliteTests
         var beforeRecord = new WorkRecord(
             new WorkRecordId(recordId),
             new DateOnly(2026, 8, 31),
-            serviceId,
-            null,
-            WorkInputMode.Duration,
-            new WorkMinutes(60),
-            null,
-            null);
+            [
+                new WorkTask(new WorkTaskId(recordId), serviceId, null,
+                    WorkInputMode.Duration, new WorkMinutes(60), null, null,
+                    new DisplayOrder(0)),
+            ]);
         var beforeSalary = Calculate(beforeRecord, serviceId);
 
         var migrated = new SqliteDatabase(fixture.DatabasePath);
@@ -289,6 +330,10 @@ public sealed class ParentChildSqliteTests
 
     private static async Task<string> ScalarStringAsync(SqliteConnection connection, string sql) =>
         Convert.ToString(await ScalarAsync(connection, sql))!;
+
+    private static string SqliteUtc(DateTimeOffset value) =>
+        value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'",
+            System.Globalization.CultureInfo.InvariantCulture);
 
     private static async Task<object?> ScalarAsync(SqliteConnection connection, string sql)
     {

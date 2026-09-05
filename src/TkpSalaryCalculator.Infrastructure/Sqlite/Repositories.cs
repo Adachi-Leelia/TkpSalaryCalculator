@@ -286,9 +286,8 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
             BindParent(command, snapshot, now);
             await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
 
-            await DeleteTasksAsync(connection, transaction, snapshot.Id, token).ConfigureAwait(false);
-            foreach (var task in snapshot.Tasks)
-                await InsertTaskAsync(connection, transaction, snapshot.Id, task, now, token).ConfigureAwait(false);
+            await UpsertTasksAsync(connection, transaction, snapshot.Id, snapshot.Tasks, now, token)
+                .ConfigureAwait(false);
             return true;
         }, cancellationToken);
     }
@@ -333,14 +332,71 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
         command.Parameters.AddValue("$now", now);
     }
 
-    private static async Task DeleteTasksAsync(SqliteConnection connection, SqliteTransaction transaction,
-        BasicShiftId id, CancellationToken cancellationToken)
+    private static async Task UpsertTasksAsync(SqliteConnection connection, SqliteTransaction transaction,
+        BasicShiftId parentId, IReadOnlyList<BasicShiftTaskDto> tasks, string now,
+        CancellationToken cancellationToken)
+    {
+        var existingIds = new HashSet<BasicShiftTaskId>();
+        var maxExistingOrder = -1;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT id, display_order FROM basic_shift_task WHERE basic_shift_id = $parent;";
+            read.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                existingIds.Add(new BasicShiftTaskId(SqliteValue.Guid(reader.GetString(0))));
+                maxExistingOrder = Math.Max(maxExistingOrder, reader.GetInt32(1));
+            }
+        }
+
+        if (existingIds.Count != 0)
+        {
+            var maxDesiredOrder = tasks.Count == 0 ? -1 : tasks.Max(static task => task.DisplayOrder.Value);
+            await using var move = connection.CreateCommand();
+            move.Transaction = transaction;
+            move.CommandText = "UPDATE basic_shift_task SET display_order = display_order + $offset WHERE basic_shift_id = $parent;";
+            move.Parameters.AddValue("$offset", (long)maxExistingOrder + maxDesiredOrder + 2L);
+            move.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await move.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var desiredIds = tasks.Select(static task => task.Id).ToHashSet();
+        foreach (var removedId in existingIds.Where(id => !desiredIds.Contains(id)))
+        {
+            await using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM basic_shift_task WHERE basic_shift_id = $parent AND id = $id;";
+            delete.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            delete.Parameters.AddValue("$id", SqliteValue.Id(removedId.Value));
+            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var task in tasks)
+        {
+            if (existingIds.Contains(task.Id))
+                await UpdateTaskAsync(connection, transaction, task, now, cancellationToken).ConfigureAwait(false);
+            else
+                await InsertTaskAsync(connection, transaction, parentId, task, now, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task UpdateTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
+        BasicShiftTaskDto task, string now, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "DELETE FROM basic_shift_task WHERE basic_shift_id = $id;";
-        command.Parameters.AddValue("$id", SqliteValue.Id(id.Value));
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        command.CommandText = """
+            UPDATE basic_shift_task SET service_preset_id = $preset, service_id = $service,
+                time_category_id = $category, input_mode = $mode, work_minutes = $minutes,
+                start_time_minutes = $start, end_time_minutes = $end, display_order = $order,
+                updated_at_utc = $now
+            WHERE id = $id;
+            """;
+        BindTask(command, task, now);
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+            throw new InvalidDataException($"Basic shift task {task.Id.Value:D} was not found during update.");
     }
 
     private static async Task InsertTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
@@ -356,8 +412,14 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
             VALUES($id, $parent, $preset, $service, $category, $mode, $minutes, $start, $end,
                 $order, $now, $now);
             """;
-        command.Parameters.AddValue("$id", SqliteValue.Id(task.Id.Value));
         command.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+        BindTask(command, task, now);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void BindTask(SqliteCommand command, BasicShiftTaskDto task, string now)
+    {
+        command.Parameters.AddValue("$id", SqliteValue.Id(task.Id.Value));
         command.Parameters.AddValue("$preset", task.ServicePresetId is { } preset ? SqliteValue.Id(preset.Value) : null);
         command.Parameters.AddValue("$service", SqliteValue.Id(task.ServiceId.Value));
         command.Parameters.AddValue("$category", task.TimeCategoryId is { } category ? SqliteValue.Id(category.Value) : null);
@@ -367,7 +429,6 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
         command.Parameters.AddValue("$end", task.EndTime?.Value);
         command.Parameters.AddValue("$order", task.DisplayOrder.Value);
         command.Parameters.AddValue("$now", now);
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<IReadOnlyList<BasicShiftDto>> ReadManyAsync(
@@ -542,10 +603,8 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await DeleteTasksAsync(connection, transaction, value.Id, cancellationToken).ConfigureAwait(false);
-        foreach (var task in value.Tasks)
-            await InsertTaskAsync(connection, transaction, value.Id, task, now, cancellationToken)
-                .ConfigureAwait(false);
+        await UpsertTasksAsync(connection, transaction, value.Id, value.Tasks, now, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private Task<WorkRecordDto?> FindBySqlAsync(string sql, string? value, CancellationToken cancellationToken) =>
@@ -583,14 +642,71 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         command.Parameters.AddValue("$now", now);
     }
 
-    private static async Task DeleteTasksAsync(SqliteConnection connection, SqliteTransaction transaction,
-        WorkRecordId id, CancellationToken cancellationToken)
+    private static async Task UpsertTasksAsync(SqliteConnection connection, SqliteTransaction transaction,
+        WorkRecordId parentId, IReadOnlyList<WorkTaskDto> tasks, string now,
+        CancellationToken cancellationToken)
+    {
+        var existingIds = new HashSet<WorkTaskId>();
+        var maxExistingOrder = -1;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT id, display_order FROM work_task WHERE work_record_id = $parent;";
+            read.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                existingIds.Add(new WorkTaskId(SqliteValue.Guid(reader.GetString(0))));
+                maxExistingOrder = Math.Max(maxExistingOrder, reader.GetInt32(1));
+            }
+        }
+
+        if (existingIds.Count != 0)
+        {
+            var maxDesiredOrder = tasks.Count == 0 ? -1 : tasks.Max(static task => task.DisplayOrder.Value);
+            await using var move = connection.CreateCommand();
+            move.Transaction = transaction;
+            move.CommandText = "UPDATE work_task SET display_order = display_order + $offset WHERE work_record_id = $parent;";
+            move.Parameters.AddValue("$offset", (long)maxExistingOrder + maxDesiredOrder + 2L);
+            move.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await move.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var desiredIds = tasks.Select(static task => task.Id).ToHashSet();
+        foreach (var removedId in existingIds.Where(id => !desiredIds.Contains(id)))
+        {
+            await using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM work_task WHERE work_record_id = $parent AND id = $id;";
+            delete.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            delete.Parameters.AddValue("$id", SqliteValue.Id(removedId.Value));
+            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var task in tasks)
+        {
+            if (existingIds.Contains(task.Id))
+                await UpdateTaskAsync(connection, transaction, task, now, cancellationToken).ConfigureAwait(false);
+            else
+                await InsertTaskAsync(connection, transaction, parentId, task, now, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task UpdateTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
+        WorkTaskDto task, string now, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "DELETE FROM work_task WHERE work_record_id = $id;";
-        command.Parameters.AddValue("$id", SqliteValue.Id(id.Value));
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        command.CommandText = """
+            UPDATE work_task SET service_id = $service, time_category_id = $category,
+                input_mode = $mode, work_minutes = $minutes, start_time_minutes = $start,
+                end_time_minutes = $end, display_order = $order, source_service_preset_id = $preset,
+                updated_at_utc = $now
+            WHERE id = $id;
+            """;
+        BindTask(command, task, now);
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+            throw new InvalidDataException($"Work task {task.Id.Value:D} was not found during update.");
     }
 
     private static async Task InsertTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
@@ -606,8 +722,14 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
             VALUES($id, $parent, $service, $category, $mode, $minutes, $start, $end,
                 $order, $preset, $now, $now);
             """;
-        command.Parameters.AddValue("$id", SqliteValue.Id(task.Id.Value));
         command.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+        BindTask(command, task, now);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void BindTask(SqliteCommand command, WorkTaskDto task, string now)
+    {
+        command.Parameters.AddValue("$id", SqliteValue.Id(task.Id.Value));
         command.Parameters.AddValue("$service", SqliteValue.Id(task.ServiceId.Value));
         command.Parameters.AddValue("$category", task.TimeCategoryId is { } category ? SqliteValue.Id(category.Value) : null);
         command.Parameters.AddValue("$mode", task.InputMode.ToString());
@@ -617,7 +739,6 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         command.Parameters.AddValue("$order", task.DisplayOrder.Value);
         command.Parameters.AddValue("$preset", task.SourceServicePresetId is { } preset ? SqliteValue.Id(preset.Value) : null);
         command.Parameters.AddValue("$now", now);
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<IReadOnlyList<WorkRecordDto>> ReadManyAsync(
@@ -681,24 +802,6 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         FROM work_record AS wr
         LEFT JOIN work_task AS task ON task.work_record_id = wr.id
         """;
-
-    // Export format 2 is replaced by task 4. Keep its flat-row adapter compile-compatible until then.
-    internal static WorkRecordDto Read(SqliteDataReader reader) => new(
-        new WorkRecordId(SqliteValue.Guid(reader.GetString("id"))),
-        SqliteValue.Date(reader.GetString("work_date")),
-        new ServiceId(SqliteValue.Guid(reader.GetString("service_id"))),
-        reader.GetNullableString("time_category_id") is { } category
-            ? new TimeCategoryId(SqliteValue.Guid(category)) : null,
-        Enum.Parse<WorkInputMode>(reader.GetString("input_mode"), false),
-        new WorkMinutes(reader.GetInt32("work_minutes")),
-        reader.GetNullableInt32("start_time_minutes") is { } start ? new MinuteOfDay(start) : null,
-        reader.GetNullableInt32("end_time_minutes") is { } end ? new MinuteOfDay(end) : null,
-        reader.GetNullableString("source_service_preset_id") is { } preset
-            ? new ServicePresetId(SqliteValue.Guid(preset)) : null,
-        reader.GetNullableString("source_basic_shift_id") is { } shift
-            ? new BasicShiftId(SqliteValue.Guid(shift)) : null,
-        reader.GetNullableString("source_work_record_id") is { } source
-            ? new WorkRecordId(SqliteValue.Guid(source)) : null);
 
     private sealed record WorkRecordBuilder(
         WorkRecordId Id,

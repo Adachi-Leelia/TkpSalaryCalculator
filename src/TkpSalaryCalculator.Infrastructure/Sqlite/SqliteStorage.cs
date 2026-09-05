@@ -489,13 +489,16 @@ public sealed class SqliteDatabase
                     _ = new WorkRecord(
                         new WorkRecordId(id),
                         SqliteValue.Date(reader.GetString(1)),
-                        new ServiceId(RequiredNonEmptyGuid(reader.GetString(2), "work_record.service_id")),
-                        reader.IsDBNull(3) ? null : new TimeCategoryId(
-                            RequiredNonEmptyGuid(reader.GetString(3), "work_record.time_category_id")),
-                        Enum.Parse<WorkInputMode>(reader.GetString(4), false),
-                        new WorkMinutes(reader.GetInt32(5)),
-                        reader.IsDBNull(6) ? null : new MinuteOfDay(reader.GetInt32(6)),
-                        reader.IsDBNull(7) ? null : new MinuteOfDay(reader.GetInt32(7)));
+                        [new WorkTask(
+                            new WorkTaskId(id),
+                            new ServiceId(RequiredNonEmptyGuid(reader.GetString(2), "work_record.service_id")),
+                            reader.IsDBNull(3) ? null : new TimeCategoryId(
+                                RequiredNonEmptyGuid(reader.GetString(3), "work_record.time_category_id")),
+                            Enum.Parse<WorkInputMode>(reader.GetString(4), false),
+                            new WorkMinutes(reader.GetInt32(5)),
+                            reader.IsDBNull(6) ? null : new MinuteOfDay(reader.GetInt32(6)),
+                            reader.IsDBNull(7) ? null : new MinuteOfDay(reader.GetInt32(7)),
+                            new DisplayOrder(0))]);
                     ValidateOptionalNonEmptyGuid(reader, 8, "work_record.source_service_preset_id");
                     ValidateOptionalNonEmptyGuid(reader, 9, "work_record.source_basic_shift_id");
                     ValidateOptionalNonEmptyGuid(reader, 10, "work_record.source_work_record_id");
@@ -518,13 +521,16 @@ public sealed class SqliteDatabase
                 _ = new WorkRecord(
                     new WorkRecordId(id),
                     new DateOnly(2000, 1, 1),
-                    new ServiceId(RequiredNonEmptyGuid(shiftReader.GetString(2), "basic_shift.service_id")),
-                    shiftReader.IsDBNull(3) ? null : new TimeCategoryId(
-                        RequiredNonEmptyGuid(shiftReader.GetString(3), "basic_shift.time_category_id")),
-                    Enum.Parse<WorkInputMode>(shiftReader.GetString(4), false),
-                    new WorkMinutes(shiftReader.GetInt32(5)),
-                    shiftReader.IsDBNull(6) ? null : new MinuteOfDay(shiftReader.GetInt32(6)),
-                    shiftReader.IsDBNull(7) ? null : new MinuteOfDay(shiftReader.GetInt32(7)));
+                    [new WorkTask(
+                        new WorkTaskId(id),
+                        new ServiceId(RequiredNonEmptyGuid(shiftReader.GetString(2), "basic_shift.service_id")),
+                        shiftReader.IsDBNull(3) ? null : new TimeCategoryId(
+                            RequiredNonEmptyGuid(shiftReader.GetString(3), "basic_shift.time_category_id")),
+                        Enum.Parse<WorkInputMode>(shiftReader.GetString(4), false),
+                        new WorkMinutes(shiftReader.GetInt32(5)),
+                        shiftReader.IsDBNull(6) ? null : new MinuteOfDay(shiftReader.GetInt32(6)),
+                        shiftReader.IsDBNull(7) ? null : new MinuteOfDay(shiftReader.GetInt32(7)),
+                        new DisplayOrder(0))]);
             }
         }
         catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)

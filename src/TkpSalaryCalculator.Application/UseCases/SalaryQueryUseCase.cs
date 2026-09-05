@@ -391,9 +391,7 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
             serviceNames.GetValueOrDefault(task.ServiceId),
             task.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null))
             .ToArray();
-        var first = taskDetails[0];
-        return new WorkRecordSalaryDto(record, calculation, first.ServiceDisplayName,
-            first.TimeCategoryDisplayName, settingMonth, taskDetails);
+        return new WorkRecordSalaryDto(record, calculation, settingMonth, taskDetails);
     }
 
     private static Task<T> RunCalculationAsync<T>(Func<T> calculation, CancellationToken cancellationToken)

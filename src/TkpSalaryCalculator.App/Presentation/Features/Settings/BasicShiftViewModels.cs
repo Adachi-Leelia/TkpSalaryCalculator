@@ -351,10 +351,17 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         });
     }
 
-    private bool HasApplicableTimedPremium(ServiceId serviceId) => premiums.Any(x =>
-        x.IsEnabled && x.StartTime is not null &&
-        (x.ServiceIds.Count == 0 || x.ServiceIds.Contains(serviceId)) &&
-        (x.Weekdays.Count == 0 || x.Weekdays.Contains(SelectedWeekday.Value)));
+    private bool HasApplicableTimedPremium(ServiceId serviceId) => premiums.Any(premium =>
+    {
+        if (!premium.IsEnabled || premium.StartTime is null ||
+            (premium.ServiceIds.Count != 0 && !premium.ServiceIds.Contains(serviceId))) return false;
+
+        var hasDateCondition = premium.Weekdays.Count != 0 || premium.UsesNationalHolidays || premium.Dates.Count != 0;
+        return !hasDateCondition ||
+            premium.Weekdays.Contains(SelectedWeekday.Value) ||
+            premium.UsesNationalHolidays ||
+            premium.Dates.Any(date => date.DayOfWeek == SelectedWeekday.Value);
+    });
 
     protected override void OnErrorPresented(Exception exception)
     {

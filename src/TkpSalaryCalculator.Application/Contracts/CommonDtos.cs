@@ -39,66 +39,8 @@ public sealed record WorkRecordDto(
     BasicShiftId? SourceBasicShiftId,
     WorkRecordId? SourceWorkRecordId)
 {
-    /// <summary>旧1タスク契約を親子DTOへ変換する一時互換コンストラクターです。</summary>
-    public WorkRecordDto(
-        WorkRecordId Id,
-        DateOnly WorkDate,
-        ServiceId ServiceId,
-        TimeCategoryId? TimeCategoryId,
-        WorkInputMode InputMode,
-        WorkMinutes WorkMinutes,
-        MinuteOfDay? StartTime,
-        MinuteOfDay? EndTime,
-        ServicePresetId? SourceServicePresetId,
-        BasicShiftId? SourceBasicShiftId,
-        WorkRecordId? SourceWorkRecordId)
-        : this(Id, WorkDate,
-        [
-            new WorkTaskDto(new WorkTaskId(Id.Value), ServiceId, TimeCategoryId, InputMode, WorkMinutes,
-                StartTime, EndTime, new DisplayOrder(0), SourceServicePresetId),
-        ], SourceBasicShiftId, SourceWorkRecordId)
-    {
-    }
-
     /// <summary>由来情報を除いたDomain訪問集約へ明示的に変換します。</summary>
     public WorkRecord ToDomain() => new(Id, WorkDate, Tasks.Select(static task => task.ToDomain()).ToArray());
-
-    // タスク3まで旧1タスク呼出し元をコンパイル可能に保つ一時アダプター。
-    public ServiceId ServiceId
-    {
-        get => Tasks[0].ServiceId;
-        init => Tasks = ReplaceFirstTask(Tasks, task => task with { ServiceId = value });
-    }
-    public TimeCategoryId? TimeCategoryId
-    {
-        get => Tasks[0].TimeCategoryId;
-        init => Tasks = ReplaceFirstTask(Tasks, task => task with { TimeCategoryId = value });
-    }
-    public WorkInputMode InputMode
-    {
-        get => Tasks[0].InputMode;
-        init => Tasks = ReplaceFirstTask(Tasks, task => task with { InputMode = value });
-    }
-    public WorkMinutes WorkMinutes
-    {
-        get => Tasks[0].WorkMinutes;
-        init => Tasks = ReplaceFirstTask(Tasks, task => task with { WorkMinutes = value });
-    }
-    public MinuteOfDay? StartTime
-    {
-        get => Tasks[0].StartTime;
-        init => Tasks = ReplaceFirstTask(Tasks, task => task with { StartTime = value });
-    }
-    public MinuteOfDay? EndTime
-    {
-        get => Tasks[0].EndTime;
-        init => Tasks = ReplaceFirstTask(Tasks, task => task with { EndTime = value });
-    }
-    public ServicePresetId? SourceServicePresetId
-    {
-        get => Tasks[0].SourceServicePresetId;
-        init => Tasks = ReplaceFirstTask(Tasks, task => task with { SourceServicePresetId = value });
-    }
 
     /// <summary>親情報と全タスクの値を構造的に比較します。</summary>
     public bool Equals(WorkRecordDto? other)
@@ -124,22 +66,6 @@ public sealed record WorkRecordDto(
             hash.Add(task);
         }
         return hash.ToHashCode();
-    }
-
-    private static IReadOnlyList<WorkTaskDto> ReplaceFirstTask(
-        IReadOnlyList<WorkTaskDto> tasks,
-        Func<WorkTaskDto, WorkTaskDto> replace)
-    {
-        ArgumentNullException.ThrowIfNull(tasks);
-        ArgumentNullException.ThrowIfNull(replace);
-        if (tasks.Count == 0)
-        {
-            throw new ArgumentException("訪問には1件以上のタスクが必要です。", nameof(tasks));
-        }
-
-        var updated = tasks.ToArray();
-        updated[0] = replace(updated[0]);
-        return updated;
     }
 }
 
@@ -220,30 +146,7 @@ public sealed record WorkRecordPreviewDto(
     IReadOnlyList<WorkTaskPreviewDto> Tasks,
     WorkSalaryCalculation? Calculation,
     bool CanSave,
-    IReadOnlyList<IssueDto> Issues)
-{
-    /// <summary>旧1タスク画面向けの一時互換コンストラクターです。</summary>
-    public WorkRecordPreviewDto(
-        WorkMinutes? normalizedWorkMinutes,
-        MinuteOfDay? normalizedStartTime,
-        MinuteOfDay? normalizedEndTime,
-        WorkSalaryCalculation? calculation,
-        bool canSave,
-        IReadOnlyList<IssueDto> issues)
-        : this(
-            [new WorkTaskPreviewDto(default, normalizedWorkMinutes, normalizedStartTime,
-                normalizedEndTime, canSave, issues)],
-            calculation,
-            canSave,
-            issues)
-    {
-    }
-
-    // タスク5まで旧1タスク画面をコンパイル可能に保つ一時アダプター。
-    public WorkMinutes? NormalizedWorkMinutes => Tasks.Count == 1 ? Tasks[0].NormalizedWorkMinutes : null;
-    public MinuteOfDay? NormalizedStartTime => Tasks.Count == 1 ? Tasks[0].NormalizedStartTime : null;
-    public MinuteOfDay? NormalizedEndTime => Tasks.Count == 1 ? Tasks[0].NormalizedEndTime : null;
-}
+    IReadOnlyList<IssueDto> Issues);
 
 /// <summary>保存済み記録と、その時点での給与状態を保持します。</summary>
 /// <param name="WorkRecord">正規化された保存済み記録。</param>
@@ -269,10 +172,8 @@ public sealed record WorkTaskSalaryDto(
 public sealed record WorkRecordSalaryDto(
     WorkRecordDto WorkRecord,
     WorkSalaryCalculation Calculation,
-    string? ServiceDisplayName = null,
-    string? TimeCategoryDisplayName = null,
-    YearMonth? SettingMonth = null,
-    IReadOnlyList<WorkTaskSalaryDto>? Tasks = null);
+    YearMonth SettingMonth,
+    IReadOnlyList<WorkTaskSalaryDto> Tasks);
 
 /// <summary>勤務記録 1 件の計算内訳画面に必要なデータだけを保持します。</summary>
 /// <param name="Period">勤務日を含む、両端の日付を含む給与期間。</param>

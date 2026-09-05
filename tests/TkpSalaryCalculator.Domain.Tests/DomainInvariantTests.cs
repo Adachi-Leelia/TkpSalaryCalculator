@@ -45,7 +45,7 @@ public sealed class DomainInvariantTests
     public void DefaultStructValuesAreRejectedAtModelBoundary()
     {
         Assert.Throws<ArgumentException>(() => new PayrollPeriodKey(default));
-        Assert.Throws<ArgumentException>(() => new WorkRecord(
+        Assert.Throws<ArgumentException>(() => TestData.CreateWorkRecord(
             default,
             new DateOnly(2026, 8, 15),
             TestData.ServiceId,
@@ -85,7 +85,7 @@ public sealed class DomainInvariantTests
     [Fact]
     public void TimeRangeMustMatchWorkMinutes()
     {
-        Assert.Throws<ArgumentException>(() => new WorkRecord(
+        Assert.Throws<ArgumentException>(() => TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 15),
             TestData.ServiceId,

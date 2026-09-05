@@ -43,7 +43,7 @@ public sealed class ModelInvariantReviewTests
     [Fact]
     public void UndefinedWorkAndPremiumEnumsAreRejected()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new WorkRecord(
+        Assert.Throws<ArgumentOutOfRangeException>(() => TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 15),
             TestData.ServiceId,
@@ -114,7 +114,7 @@ public sealed class ModelInvariantReviewTests
     [Fact]
     public void DurationRejectsEndOnlyAndMismatchedEnd()
     {
-        Assert.Throws<ArgumentException>(() => new WorkRecord(
+        Assert.Throws<ArgumentException>(() => TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 15),
             TestData.ServiceId,
@@ -123,7 +123,7 @@ public sealed class ModelInvariantReviewTests
             new WorkMinutes(30),
             null,
             new MinuteOfDay(30)));
-        Assert.Throws<ArgumentException>(() => new WorkRecord(
+        Assert.Throws<ArgumentException>(() => TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 15),
             TestData.ServiceId,
@@ -137,7 +137,7 @@ public sealed class ModelInvariantReviewTests
     [Fact]
     public void EqualTimeRangeEndpointsRepresentExactlyTwentyFourHours()
     {
-        var record = new WorkRecord(
+        var record = TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 15),
             TestData.ServiceId,
@@ -147,7 +147,7 @@ public sealed class ModelInvariantReviewTests
             new MinuteOfDay(9 * 60),
             new MinuteOfDay(9 * 60));
 
-        Assert.Equal(1440, record.WorkMinutes.Value);
+        Assert.Equal(1440, Assert.Single(record.Tasks).WorkMinutes.Value);
     }
 
     [Fact]

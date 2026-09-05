@@ -282,20 +282,7 @@ public sealed class CalculationDetailViewModel : ViewModelBase
     {
         var record = value.WorkRecord;
         var calculation = value.Calculation;
-        var calculationByTaskId = calculation.TaskCalculations.ToDictionary(task => task.WorkTaskId);
-        var suppliedTaskDetails = value.Tasks?.ToDictionary(task => task.WorkTask.Id);
-        var taskDetails = record.Tasks.OrderBy(task => task.DisplayOrder.Value).Select((task, index) =>
-        {
-            if (suppliedTaskDetails?.GetValueOrDefault(task.Id) is { } detail) return detail;
-            var taskCalculation = calculationByTaskId.GetValueOrDefault(task.Id) ??
-                calculation.TaskCalculations.ElementAtOrDefault(index) ??
-                throw new InvalidOperationException("訪問のタスク計算内訳が不足しています。");
-            return new WorkTaskSalaryDto(
-                task,
-                taskCalculation,
-                index == 0 ? value.ServiceDisplayName : null,
-                index == 0 ? value.TimeCategoryDisplayName : null);
-        }).ToArray();
+        var taskDetails = value.Tasks.OrderBy(task => task.WorkTask.DisplayOrder.Value).ToArray();
 
         var taskNames = taskDetails.Select(TaskDisplayName).ToArray();
         rows.Add(new CalculationVisitRowViewModel(
@@ -346,7 +333,7 @@ public sealed class CalculationDetailViewModel : ViewModelBase
             : string.Empty;
         rows.Add(new CalculationWorkRecordTotalRowViewModel(
             calculation.Total is { } total ? formatter.Money(total) : "未計算",
-            formatter.SettingsMonth(value.SettingMonth ?? new YearMonth(record.WorkDate.Year, record.WorkDate.Month)),
+            formatter.SettingsMonth(value.SettingMonth),
             visitMissing));
     }
 

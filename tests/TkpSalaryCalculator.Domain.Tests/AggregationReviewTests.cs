@@ -254,12 +254,13 @@ public sealed class AggregationReviewTests
                 new YenAmount(amount)))
             .ToArray();
         var total = checked(basePay + appliedPremiums.Sum(item => item.Amount.Value) + appliedBonuses.Sum(item => item.Amount.Value));
+        var taskId = new WorkTaskId(Guid.NewGuid());
         return new WorkSalaryCalculation(
             new WorkRecordId(Guid.NewGuid()),
             SalaryCalculationStatus.Calculated,
-            TestData.Rate(RateType.FixedPerRecord, basePay),
-            new YenAmount(basePay),
-            appliedPremiums,
+            [new TaskSalaryCalculation(taskId, SalaryCalculationStatus.Calculated,
+                TestData.Rate(RateType.FixedPerRecord, basePay), new YenAmount(basePay), appliedPremiums,
+                new YenAmount(checked(basePay + appliedPremiums.Sum(item => item.Amount.Value))), [])],
             appliedBonuses,
             new YenAmount(total),
             []);
@@ -276,15 +277,17 @@ public sealed class AggregationReviewTests
 
     private static WorkSalaryCalculation Uncalculated()
     {
+        var taskId = new WorkTaskId(Guid.NewGuid());
+        var missing = new MissingCalculationRequirement(
+            taskId, MissingCalculationRequirementCodes.Rate, TestData.ServiceId.Value);
         return new(
             new WorkRecordId(Guid.NewGuid()),
             SalaryCalculationStatus.Uncalculated,
-            null,
-            null,
+            [new TaskSalaryCalculation(taskId, SalaryCalculationStatus.Uncalculated,
+                null, null, [], null, [missing])],
             [],
-            [],
             null,
-            [new MissingCalculationRequirement(MissingCalculationRequirementCodes.Rate, TestData.ServiceId.Value)]);
+            [missing]);
     }
 
 

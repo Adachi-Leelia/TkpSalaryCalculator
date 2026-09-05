@@ -142,15 +142,19 @@ public sealed class AnnualSalaryCalculatorTests
         if (uncalculatedCount > 0)
         {
             var records = Enumerable.Range(0, uncalculatedCount)
-                .Select(_ => new WorkSalaryCalculation(
-                    new WorkRecordId(Guid.NewGuid()),
-                    SalaryCalculationStatus.Uncalculated,
-                    null,
-                    null,
-                    [],
-                    [],
-                    null,
-                    [new MissingCalculationRequirement("MISSING_RATE", null)]))
+                .Select(_ =>
+                {
+                    var taskId = new WorkTaskId(Guid.NewGuid());
+                    var missing = new MissingCalculationRequirement(taskId, "MISSING_RATE", null);
+                    return new WorkSalaryCalculation(
+                        new WorkRecordId(Guid.NewGuid()),
+                        SalaryCalculationStatus.Uncalculated,
+                        [new TaskSalaryCalculation(taskId, SalaryCalculationStatus.Uncalculated,
+                            null, null, [], null, [missing])],
+                        [],
+                        null,
+                        [missing]);
+                })
                 .ToArray();
             days.Add(salary.AggregateDay(period.StartDate, records));
         }

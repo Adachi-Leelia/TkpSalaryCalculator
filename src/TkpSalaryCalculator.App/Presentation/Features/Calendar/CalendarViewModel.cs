@@ -327,14 +327,32 @@ public sealed class CalendarViewModel : ViewModelBase
         SelectedTotalText = formatter.Money(daily.CalculatedSubtotal);
         SelectedRecordCountText = daily.Records.Count == 0 ? "勤務記録はありません" : $"勤務記録 {daily.Records.Count}件";
         SelectedUncalculatedText = daily.UncalculatedCount == 0 ? string.Empty : $"未計算 {daily.UncalculatedCount}件";
-        SelectedWorkRows = daily.Records.Take(3).Select(value => new CalendarWorkSummaryRow(
-            formatter.Duration(value.WorkRecord.WorkMinutes),
-            value.Calculation.Status == SalaryCalculationStatus.Calculated && value.Calculation.Total is { } total
+        SelectedWorkRows = daily.Records.Take(3).Select(value =>
+        {
+            var orderedTasks = value.Tasks.OrderBy(task => task.WorkTask.DisplayOrder.Value).ToArray();
+            var taskSummary = string.Join("、", orderedTasks.Select(FormatTaskName));
+            var taskCountText = $"タスク {orderedTasks.Length}件";
+            var durationText = string.Join("、", orderedTasks.Select(task => formatter.Duration(task.WorkTask.WorkMinutes)));
+            var amountText = value.Calculation.Status == SalaryCalculationStatus.Calculated && value.Calculation.Total is { } total
                 ? formatter.Money(total)
-                : "未計算")).ToArray();
+                : "未計算";
+            return new CalendarWorkSummaryRow(
+                taskSummary,
+                $"{taskCountText} / {durationText}",
+                amountText,
+                $"訪問1件、{taskCountText}、{taskSummary}、訪問合計{amountText}");
+        }).ToArray();
 
         SelectedShiftCandidateCount = monthValues.FirstOrDefault(x => x.Date == date)?.BasicShiftCandidateCount ?? 0;
         BuildCells(monthValues, date);
+    }
+
+    private static string FormatTaskName(WorkTaskSalaryDto task)
+    {
+        var service = task.ServiceDisplayName ?? "現在の設定にないサービス";
+        return string.IsNullOrWhiteSpace(task.TimeCategoryDisplayName)
+            ? service
+            : $"{service} / {task.TimeCategoryDisplayName}";
     }
 
     private void BuildCells(IReadOnlyList<CalendarDayDto> values, DateOnly selected)
@@ -419,4 +437,8 @@ public sealed class CalendarDayCellViewModel
     public static CalendarDayCellViewModel Placeholder() => new();
 }
 
-public sealed record CalendarWorkSummaryRow(string DurationText, string AmountText);
+public sealed record CalendarWorkSummaryRow(
+    string TaskSummaryText,
+    string TaskCountAndDurationText,
+    string AmountText,
+    string AccessibilityText);

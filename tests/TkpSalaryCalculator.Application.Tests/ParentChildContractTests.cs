@@ -113,7 +113,7 @@ public sealed class ParentChildContractTests
                 WorkInputMode.Duration, new WorkMinutes(30), null, null, new DisplayOrder(0), null)],
             operationId);
 
-        Assert.Equal(replacementServiceId, record.ServiceId);
+        Assert.Equal(replacementServiceId, Assert.Single(record.Tasks).ServiceId);
         Assert.Equal(replacementServiceId, Assert.Single(record.ToDomain().Tasks).ServiceId);
         Assert.Equal(replacementServiceId, Assert.Single(command.Tasks).ServiceId);
         Assert.Equal(command, command with { Tasks = command.Tasks.ToArray() });

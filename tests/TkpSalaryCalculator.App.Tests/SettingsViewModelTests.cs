@@ -702,6 +702,39 @@ public sealed class SettingsViewModelTests
         Assert.Contains("タスク 2: 45分", row.TimeText);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BasicShiftEditor_TimedPremiumDateConditionsUseOrSemantics(bool usesNationalHolidays)
+    {
+        var snapshot = Snapshot(1_200);
+        var premium = new SnapshotPremium(
+            new PremiumId(Guid.NewGuid()), "祝日または火曜日", PremiumCalculationType.FixedPerHour,
+            null, new YenAmount(100), new MinuteOfDay(1320), new MinuteOfDay(300), usesNationalHolidays,
+            new HashSet<DayOfWeek> { DayOfWeek.Tuesday },
+            usesNationalHolidays ? new HashSet<DateOnly>() : new HashSet<DateOnly> { new(2026, 8, 3) },
+            new HashSet<ServiceId>(), true);
+        snapshot = new SettingSnapshot(
+            snapshot.Id, snapshot.BasedOnId, snapshot.HolidayCalendarVersionId,
+            snapshot.SchemaVersion, snapshot.CreatedAtUtc, snapshot.Services,
+            snapshot.TimeCategories, snapshot.Rates, [premium], snapshot.CountBonuses);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday,
+            [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))],
+            new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var editor = new BasicShiftEditorViewModel(
+            shifts, new WorkSettingsStub(new MonthSettingsDto(August, snapshot)),
+            new SettingsNavigatorStub(), new FixedClock(), new FixedLocalDate(),
+            new UserErrorPresenter(), new IssuePresenter(), new DialogStub(),
+            new AppSessionState(new DateOnly(2026, 8, 22)));
+        editor.Initialize(shift.Id);
+
+        await editor.LoadAsync();
+
+        Assert.True(Assert.Single(editor.Tasks).ShowStartTime);
+    }
+
     private static async Task<(BasicShiftEditorViewModel Editor, BasicShiftStub Shifts)> ShiftEditorAsync(bool existing)
     {
         var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday,

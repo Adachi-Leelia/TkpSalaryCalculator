@@ -38,7 +38,21 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         var query = new SalaryQueryStub();
         query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, recordCount: 1, uncalculated: 0, shiftCandidates: 2);
-        query.Days[TargetDate] = Day(TargetDate, calculated: true);
+        var firstTask = new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), Service, Category,
+            WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), null);
+        var secondTask = new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), Service, Category,
+            WorkInputMode.Duration, new WorkMinutes(45), null, null, new DisplayOrder(1), null);
+        var record = new WorkRecordDto(RecordId, TargetDate, [firstTask, secondTask], null, null);
+        var calculation = new WorkSalaryCalculation(RecordId, SalaryCalculationStatus.Calculated,
+        [
+            new TaskSalaryCalculation(firstTask.Id, SalaryCalculationStatus.Calculated, null,
+                new YenAmount(700), [], new YenAmount(700), []),
+            new TaskSalaryCalculation(secondTask.Id, SalaryCalculationStatus.Calculated, null,
+                new YenAmount(500), [], new YenAmount(500), []),
+        ], [], new YenAmount(1_200), []);
+        query.Days[TargetDate] = new DailySalaryDto(TargetDate,
+            [SalaryRecord(record, calculation)], new YenAmount(1_200), new YenAmount(0),
+            new YenAmount(0), new YenAmount(1_200), 0);
         var navigator = new CalendarNavigatorStub();
         var session = new AppSessionState(TargetDate);
         var viewModel = new CalendarViewModel(
@@ -53,6 +67,11 @@ public sealed class CalendarWorkFlowViewModelTests
         Assert.Equal("1,200円", viewModel.SelectedTotalText);
         Assert.Equal("勤務記録 1件", viewModel.SelectedRecordCountText);
         Assert.Equal(2, viewModel.SelectedShiftCandidateCount);
+        var row = Assert.Single(viewModel.SelectedWorkRows);
+        Assert.Equal("訪問 / 通常、訪問 / 通常", row.TaskSummaryText);
+        Assert.Equal("タスク 2件 / 1時間、45分", row.TaskCountAndDurationText);
+        Assert.Equal("1,200円", row.AmountText);
+        Assert.Contains("タスク 2件", row.AccessibilityText);
         var cell = Assert.Single(viewModel.Days, x => x.Date == TargetDate);
         Assert.True(cell.IsSelected);
         Assert.Contains("勤務あり", cell.StateText);
@@ -418,7 +437,7 @@ public sealed class CalendarWorkFlowViewModelTests
                 new YenAmount(800), [], new YenAmount(800), []),
         ], [new AppliedCountBonus(new CountBonusId(Guid.NewGuid()), "訪問件数", new YenAmount(150))],
             new YenAmount(1_950), []);
-        var daily = new DailySalaryDto(TargetDate, [new WorkRecordSalaryDto(record, calculation)],
+        var daily = new DailySalaryDto(TargetDate, [SalaryRecord(record, calculation)],
             new YenAmount(1_800), new YenAmount(0), new YenAmount(150), new YenAmount(1_950), 0);
         var query = new SalaryQueryStub { Days = { [TargetDate] = daily } };
         var viewModel = new DayViewModel(
@@ -444,12 +463,12 @@ public sealed class CalendarWorkFlowViewModelTests
         fixture.SelectDefaultPreset();
         var previewCalls = fixture.Work.PreviewCalls;
 
-        fixture.ViewModel.WorkMinutesText = "0";
+        FirstTask(fixture.ViewModel).WorkMinutesText = "0";
         await fixture.ViewModel.PreviewAsync();
 
         Assert.False(fixture.ViewModel.CanSave);
         Assert.Equal("WorkMinutes", fixture.ViewModel.FirstInvalidField);
-        Assert.Contains("1分以上24時間以内", fixture.ViewModel.WorkMinutesError);
+        Assert.Contains("1分以上24時間以内", FirstTask(fixture.ViewModel).WorkMinutesError);
         Assert.Equal(previewCalls, fixture.Work.PreviewCalls);
     }
 
@@ -467,7 +486,7 @@ public sealed class CalendarWorkFlowViewModelTests
         Assert.Empty(fixture.Work.Saved);
         Assert.Same(Assert.Single(fixture.ViewModel.Tasks), fixture.ViewModel.FirstInvalidTask);
         Assert.Equal("ServiceId", fixture.ViewModel.FirstInvalidField);
-        Assert.Equal("サービスを選択してください。", fixture.ViewModel.ServiceError);
+        Assert.Equal("サービスを選択してください。", FirstTask(fixture.ViewModel).ServiceError);
         Assert.Equal(0, fixture.Navigator.GoBackCalls);
     }
 
@@ -496,22 +515,23 @@ public sealed class CalendarWorkFlowViewModelTests
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
 
-        Assert.Null(fixture.ViewModel.SelectedPreset);
-        Assert.Null(fixture.ViewModel.SelectedService);
-        Assert.Null(fixture.ViewModel.SelectedTimeCategory);
-        Assert.Empty(fixture.ViewModel.WorkMinutesText);
+        Assert.Null(FirstTask(fixture.ViewModel).SelectedPreset);
+        Assert.Null(FirstTask(fixture.ViewModel).SelectedService);
+        Assert.Null(FirstTask(fixture.ViewModel).SelectedTimeCategory);
+        Assert.Empty(FirstTask(fixture.ViewModel).WorkMinutesText);
         Assert.False(fixture.ViewModel.CanSave);
         Assert.Equal(0, fixture.Work.PreviewCalls);
 
         fixture.SelectDefaultPreset();
 
-        Assert.Equal(Preset, fixture.ViewModel.SelectedPreset?.Id);
-        Assert.Equal(Service, fixture.ViewModel.SelectedService?.Id);
-        Assert.Equal(Category, fixture.ViewModel.SelectedTimeCategory?.Id);
-        Assert.Equal("60", fixture.ViewModel.WorkMinutesText);
+        Assert.Equal(Preset, FirstTask(fixture.ViewModel).SelectedPreset?.Id);
+        Assert.Equal(Service, FirstTask(fixture.ViewModel).SelectedService?.Id);
+        Assert.Equal(Category, FirstTask(fixture.ViewModel).SelectedTimeCategory?.Id);
+        Assert.Equal("60", FirstTask(fixture.ViewModel).WorkMinutesText);
 
-        fixture.ViewModel.SelectedTimeCategory = fixture.ViewModel.TimeCategories.Single(x => x.Id is null);
-        fixture.ViewModel.WorkMinutesText = "75";
+        FirstTask(fixture.ViewModel).SelectedTimeCategory =
+            FirstTask(fixture.ViewModel).TimeCategories.Single(x => x.Id is null);
+        FirstTask(fixture.ViewModel).WorkMinutesText = "75";
         await fixture.ViewModel.PreviewAsync();
 
         Assert.Null(FirstTask(fixture.Work.LastPreviewCommand!).TimeCategoryId);
@@ -548,12 +568,12 @@ public sealed class CalendarWorkFlowViewModelTests
 
         await fixture.ViewModel.LoadAsync();
 
-        Assert.Null(fixture.ViewModel.SelectedPreset);
-        Assert.Null(fixture.ViewModel.SelectedService);
-        Assert.Null(fixture.ViewModel.SelectedTimeCategory);
-        Assert.Empty(fixture.ViewModel.WorkMinutesText);
+        Assert.Null(FirstTask(fixture.ViewModel).SelectedPreset);
+        Assert.Null(FirstTask(fixture.ViewModel).SelectedService);
+        Assert.Null(FirstTask(fixture.ViewModel).SelectedTimeCategory);
+        Assert.Empty(FirstTask(fixture.ViewModel).WorkMinutesText);
         Assert.DoesNotContain(fixture.ViewModel.Services, x => x.Id == disabledService);
-        Assert.DoesNotContain(fixture.ViewModel.TimeCategories, x => x.Id == disabledCategory);
+        Assert.DoesNotContain(FirstTask(fixture.ViewModel).TimeCategories, x => x.Id == disabledCategory);
         Assert.DoesNotContain(fixture.ViewModel.PresetCandidates, x => x.Id == unavailablePreset);
         Assert.Contains("利用できない候補", fixture.ViewModel.UnavailableCandidatesText);
         Assert.False(fixture.ViewModel.CanSave);
@@ -566,9 +586,12 @@ public sealed class CalendarWorkFlowViewModelTests
         var disabledCategory = new TimeCategoryId(Guid.Parse("20000000-0000-0000-0000-000000000002"));
         var unavailablePreset = new ServicePresetId(Guid.Parse("30000000-0000-0000-0000-000000000002"));
         var work = new WorkUseCaseStub();
-        work.Stored.Add(new WorkRecordDto(
-            RecordId, TargetDate, disabledService, disabledCategory, WorkInputMode.Duration,
-            new WorkMinutes(60), null, null, unavailablePreset, null, null));
+        work.Stored.Add(new WorkRecordDto(RecordId, TargetDate,
+        [
+            new WorkTaskDto(new WorkTaskId(RecordId.Value), disabledService, disabledCategory,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null,
+                new DisplayOrder(0), unavailablePreset),
+        ], null, null));
         work.InputOptions = Options(
             services: [new SnapshotService(disabledService, "無効な訪問", new DisplayOrder(0), false)],
             timeCategories: [new SnapshotTimeCategory(disabledCategory, disabledService, "廃止区分", new WorkMinutes(60), new DisplayOrder(0), false)],
@@ -587,7 +610,7 @@ public sealed class CalendarWorkFlowViewModelTests
         await viewModel.SaveAsync();
 
         Assert.Contains(viewModel.Services, x => x.Id == disabledService);
-        Assert.Contains(viewModel.TimeCategories, x => x.Id == disabledCategory);
+        Assert.Contains(FirstTask(viewModel).TimeCategories, x => x.Id == disabledCategory);
         Assert.Empty(viewModel.PresetCandidates);
         var saved = Assert.Single(work.Saved);
         Assert.Equal(disabledService, FirstTask(saved).ServiceId);
@@ -654,25 +677,26 @@ public sealed class CalendarWorkFlowViewModelTests
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
         fixture.SelectDefaultPreset();
-        fixture.ViewModel.SelectedInputMode = WorkInputModeOption.TimeRange;
-        fixture.ViewModel.StartTime = new TimeSpan(23, 0, 0);
-        fixture.ViewModel.EndTime = new TimeSpan(1, 0, 0);
+        FirstTask(fixture.ViewModel).SelectedInputMode = WorkInputModeOption.TimeRange;
+        FirstTask(fixture.ViewModel).StartTime = new TimeSpan(23, 0, 0);
+        FirstTask(fixture.ViewModel).EndTime = new TimeSpan(1, 0, 0);
         fixture.Work.PreviewFactory = command => new WorkRecordPreviewDto(
-            new WorkMinutes(120), new MinuteOfDay(1380), new MinuteOfDay(60),
+            [new WorkTaskPreviewDto(FirstTask(command).Id, new WorkMinutes(120),
+                new MinuteOfDay(1380), new MinuteOfDay(60), true, [])],
             Calculated(RecordId, 2_400), true, []);
 
         await fixture.ViewModel.PreviewAsync();
 
         Assert.True(fixture.ViewModel.CanSave);
-        Assert.Contains("2時間", fixture.ViewModel.NormalizedTimeText);
-        Assert.Contains("翌日", fixture.ViewModel.NormalizedTimeText);
+        Assert.Contains("2時間", FirstTask(fixture.ViewModel).NormalizedTimeText);
+        Assert.Contains("翌日", FirstTask(fixture.ViewModel).NormalizedTimeText);
     }
 
     [Fact]
     public async Task WorkEditor_EditPreservesStoredValuesAndSaveUsesExistingIdWithoutExtraPreviewTap()
     {
         var work = new WorkUseCaseStub();
-        work.Stored.Add(Record() with { WorkMinutes = new WorkMinutes(90) });
+        work.Stored.Add(WithMinutes(Record(), new WorkMinutes(90)));
         var navigator = new CalendarNavigatorStub();
         var viewModel = new WorkEditorViewModel(
             work, navigator, new IssuePresenter(), new JapaneseDisplayFormatter(),
@@ -680,10 +704,10 @@ public sealed class CalendarWorkFlowViewModelTests
         viewModel.Initialize(TargetDate, RecordId);
 
         await viewModel.LoadAsync();
-        Assert.Equal("90", viewModel.WorkMinutesText);
+        Assert.Equal("90", FirstTask(viewModel).WorkMinutesText);
         var previewCalls = work.PreviewCalls;
 
-        viewModel.WorkMinutesText = "75";
+        viewModel.Tasks[0].WorkMinutesText = "75";
         Assert.False(viewModel.CanSave);
         await viewModel.SaveAsync();
 
@@ -713,7 +737,7 @@ public sealed class CalendarWorkFlowViewModelTests
         viewModel.Initialize(TargetDate, RecordId);
 
         await viewModel.LoadAsync();
-        viewModel.WorkMinutesText = "75";
+        viewModel.Tasks[0].WorkMinutesText = "75";
         await viewModel.SaveAsync();
 
         var saved = Assert.Single(work.Saved);
@@ -869,12 +893,12 @@ public sealed class CalendarWorkFlowViewModelTests
         var fixture = new EditorFixture();
         await fixture.ViewModel.LoadAsync();
         fixture.SelectDefaultPreset();
-        fixture.ViewModel.WorkMinutesText = "75";
+        FirstTask(fixture.ViewModel).WorkMinutesText = "75";
         fixture.Work.SaveException = new IOException("database internal path");
 
         await fixture.ViewModel.SaveAsync();
 
-        Assert.Equal("75", fixture.ViewModel.WorkMinutesText);
+        Assert.Equal("75", FirstTask(fixture.ViewModel).WorkMinutesText);
         Assert.True(fixture.ViewModel.IsDirty);
         Assert.True(fixture.ViewModel.HasError);
         Assert.Equal(0, fixture.Navigator.GoBackCalls);
@@ -895,7 +919,7 @@ public sealed class CalendarWorkFlowViewModelTests
         fixture.SelectDefaultPreset();
         await fixture.ViewModel.PreviewAsync();
 
-        Assert.False(fixture.ViewModel.ShowStartTime);
+        Assert.False(FirstTask(fixture.ViewModel).ShowStartTime);
         Assert.Null(FirstTask(fixture.Work.LastPreviewCommand!).StartTime);
 
         fixture.Holidays.Holidays[TargetDate] = "テスト祝日";
@@ -904,7 +928,7 @@ public sealed class CalendarWorkFlowViewModelTests
         fixture.SelectDefaultPreset();
         await fixture.ViewModel.PreviewAsync();
 
-        Assert.True(fixture.ViewModel.ShowStartTime);
+        Assert.True(FirstTask(fixture.ViewModel).ShowStartTime);
         Assert.NotNull(FirstTask(fixture.Work.LastPreviewCommand!).StartTime);
     }
 
@@ -930,7 +954,7 @@ public sealed class CalendarWorkFlowViewModelTests
         var calculation = calculated ? Calculated(RecordId, 1_200) : Uncalculated(RecordId);
         return new DailySalaryDto(
             date,
-            [new WorkRecordSalaryDto(Record(), calculation)],
+            [SalaryRecord(Record(), calculation)],
             new YenAmount(calculated ? 1_200 : 0), new YenAmount(0), new YenAmount(0),
             new YenAmount(calculated ? 1_200 : 0), calculated ? 0 : 1);
     }
@@ -944,23 +968,64 @@ public sealed class CalendarWorkFlowViewModelTests
         new HolidayCalendarVersionId(Guid.Parse("60000000-0000-0000-0000-000000000001")));
 
     private static WorkRecordDto Record() => new(
-        RecordId, TargetDate, Service, Category, WorkInputMode.Duration,
-        new WorkMinutes(60), null, null, Preset, null, null);
+        RecordId, TargetDate,
+        [
+            new WorkTaskDto(new WorkTaskId(RecordId.Value), Service, Category,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null,
+                new DisplayOrder(0), Preset),
+        ], null, null);
 
-    private static WorkSalaryCalculation Calculated(WorkRecordId id, long total) => new(
-        id, SalaryCalculationStatus.Calculated, null, new YenAmount(total), [], [], new YenAmount(total), []);
+    private static WorkSalaryCalculation Calculated(WorkRecordId id, long total)
+    {
+        var taskId = new WorkTaskId(id.Value);
+        return new WorkSalaryCalculation(id, SalaryCalculationStatus.Calculated,
+        [
+            new TaskSalaryCalculation(taskId, SalaryCalculationStatus.Calculated, null,
+                new YenAmount(total), [], new YenAmount(total), []),
+        ], [], new YenAmount(total), []);
+    }
 
-    private static WorkSalaryCalculation Uncalculated(WorkRecordId id) => new(
-        id, SalaryCalculationStatus.Uncalculated, null, null, [], [], null,
-        [new MissingCalculationRequirement("RATE_REQUIRED", Service.Value)]);
+    private static WorkSalaryCalculation Uncalculated(WorkRecordId id)
+    {
+        var taskId = new WorkTaskId(id.Value);
+        var missing = new MissingCalculationRequirement(taskId, "RATE_REQUIRED", Service.Value);
+        return new WorkSalaryCalculation(id, SalaryCalculationStatus.Uncalculated,
+        [
+            new TaskSalaryCalculation(taskId, SalaryCalculationStatus.Uncalculated,
+                null, null, [], null, [missing]),
+        ], [], null, [missing]);
+    }
 
     private static WorkRecordPreviewDto UncalculatedPreview(SaveWorkRecordCommand command) => new(
-        FirstTask(command).WorkMinutes ?? new WorkMinutes(60), FirstTask(command).StartTime, FirstTask(command).EndTime,
+        [new WorkTaskPreviewDto(FirstTask(command).Id,
+            FirstTask(command).WorkMinutes ?? new WorkMinutes(60),
+            FirstTask(command).StartTime, FirstTask(command).EndTime, true, [])],
         Uncalculated(command.Id ?? RecordId), true,
         [new IssueDto("RATE_REQUIRED", null, "基本単価を設定すると給与を計算できます。")]);
 
+    private static WorkRecordSalaryDto SalaryRecord(
+        WorkRecordDto record,
+        WorkSalaryCalculation calculation)
+    {
+        var calculations = calculation.TaskCalculations.ToDictionary(static value => value.WorkTaskId);
+        var tasks = record.Tasks.Select(task => new WorkTaskSalaryDto(
+            task, calculations[task.Id], "訪問", "通常")).ToArray();
+        return new WorkRecordSalaryDto(
+            record, calculation, new YearMonth(record.WorkDate.Year, record.WorkDate.Month), tasks);
+    }
+
+    private static WorkRecordDto WithMinutes(WorkRecordDto record, WorkMinutes workMinutes) =>
+        record with
+        {
+            Tasks = record.Tasks.Select((task, index) =>
+                index == 0 ? task with { WorkMinutes = workMinutes } : task).ToArray(),
+        };
+
     private static SaveWorkTaskCommand FirstTask(SaveWorkRecordCommand command) =>
         Assert.Single(command.Tasks);
+
+    private static WorkTaskEditorViewModel FirstTask(WorkEditorViewModel viewModel) =>
+        Assert.Single(viewModel.Tasks);
 
     private static WorkInputOptionsDto Options(
         IReadOnlyList<SnapshotPremium>? premiums = null,
@@ -999,7 +1064,7 @@ public sealed class CalendarWorkFlowViewModelTests
         public WorkEditorViewModel ViewModel { get; }
 
         public void SelectDefaultPreset() =>
-            ViewModel.SelectedPreset = Assert.Single(ViewModel.PresetCandidates);
+            Assert.Single(ViewModel.Tasks).SelectedPreset = Assert.Single(ViewModel.PresetCandidates);
     }
 
     private sealed class SalaryQueryStub : ISalaryQueryUseCase
@@ -1068,7 +1133,9 @@ public sealed class CalendarWorkFlowViewModelTests
         public WorkInputOptionsDto InputOptions { get; set; } = Options();
         public IReadOnlyDictionary<DateOnly, string> HolidayDates { get; set; } = new Dictionary<DateOnly, string>();
         public Func<SaveWorkRecordCommand, WorkRecordPreviewDto> PreviewFactory { get; set; } = command => new(
-            command.Tasks[0].WorkMinutes ?? new WorkMinutes(60), command.Tasks[0].StartTime, command.Tasks[0].EndTime,
+            command.Tasks.Select(task => new WorkTaskPreviewDto(
+                task.Id, task.WorkMinutes ?? new WorkMinutes(60), task.StartTime,
+                task.EndTime, true, [])).ToArray(),
             Calculated(command.Id ?? RecordId, 1_200), true, []);
 
         public async Task<WorkEditorScreenDto> GetEditorScreenAsync(

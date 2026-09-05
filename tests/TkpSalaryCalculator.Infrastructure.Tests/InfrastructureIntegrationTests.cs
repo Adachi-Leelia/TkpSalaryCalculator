@@ -469,7 +469,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 0, 0, TimeSpan.Zero));
         var operation = Guid.NewGuid();
-        var record = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
+        var record = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
             new ServiceId(fixture.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
             null, null, null);
         var repository = new SqliteWorkRecordRepository(fixture.Database, clock);
@@ -490,7 +490,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         var preset = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "Migration preset",
             new ServiceId(fixture.ServiceId), null, new WorkMinutes(60), new DisplayOrder(0), true);
         await new SqliteServicePresetRepository(fixture.Database, clock).UpsertAsync(preset, default);
-        var record = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
+        var record = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
             preset.ServiceId, null, WorkInputMode.Duration, new WorkMinutes(60), null, null,
             preset.Id, null, null);
         await new SqliteWorkRecordRepository(fixture.Database, clock).UpsertAsync(record, default);
@@ -996,7 +996,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         }
         var sourceRecords = new SqliteWorkRecordRepository(source.Database, clock);
         var saveOperationId = Guid.NewGuid();
-        var work = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 12),
+        var work = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 12),
             new ServiceId(source.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null,
             null, null, null);
         Assert.True(await sourceRecords.TryInsertAsync(work, saveOperationId, default));
@@ -1065,7 +1065,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 5, 0, 0, TimeSpan.Zero));
         var records = new SqliteWorkRecordRepository(fixture.Database, clock);
-        var existing = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 13),
+        var existing = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 13),
             new ServiceId(fixture.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
             null, null, null);
         await records.UpsertAsync(existing, default);
@@ -1091,7 +1091,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 5, 0, 0, TimeSpan.Zero));
         await new SqliteAnnualSummarySettingRepository(source.Database, clock)
             .SaveClosingMonthAsync(new AnnualClosingMonth(3), default);
-        var legacyRecord = new WorkRecordDto(
+        var legacyRecord = SingleTaskRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 14),
             new ServiceId(source.ServiceId),
@@ -1134,7 +1134,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 5, 15, 0, TimeSpan.Zero));
         await new SqliteAnnualSummarySettingRepository(source.Database, clock)
             .SaveClosingMonthAsync(new AnnualClosingMonth(4), default);
-        var legacyRecord = new WorkRecordDto(
+        var legacyRecord = SingleTaskRecord(
             new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 14), new ServiceId(source.ServiceId), null,
             WorkInputMode.Duration, new WorkMinutes(75), null, null, null, null, null);
         await new SqliteWorkRecordRepository(source.Database, clock).UpsertAsync(legacyRecord, default);
@@ -1177,7 +1177,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
     {
         await using var source = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 5, 30, 0, TimeSpan.Zero));
-        var sourceRecord = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 14),
+        var sourceRecord = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 14),
             new ServiceId(source.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
             null, null, new WorkRecordId(Guid.NewGuid()));
         await new SqliteWorkRecordRepository(source.Database, clock).UpsertAsync(sourceRecord, default);
@@ -1189,7 +1189,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
 
         await using var destination = await DatabaseFixture.CreateSeededAsync();
         var destinationRecords = new SqliteWorkRecordRepository(destination.Database, clock);
-        var existing = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
+        var existing = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
             new ServiceId(destination.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null,
             null, null, null);
         await destinationRecords.UpsertAsync(existing, default);
@@ -1306,7 +1306,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
 
         await using var destination = await DatabaseFixture.CreateSeededAsync();
         var liveRecords = new SqliteWorkRecordRepository(destination.Database, clock);
-        var existing = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
+        var existing = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
             new ServiceId(destination.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null,
             null, null, null);
         await liveRecords.UpsertAsync(existing, default);
@@ -1378,6 +1378,25 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         new(new StreamingJsonExportStream(), new StreamingJsonImportStream(), new SqliteExportDataSource(database),
             new SqliteImportStagingRepository(database, stagingPath, clock),
             new SqliteAppMetadataRepository(database, clock), new SqliteTransactionRunner(database), clock);
+
+    private static WorkRecordDto SingleTaskRecord(
+        WorkRecordId id,
+        DateOnly workDate,
+        ServiceId serviceId,
+        TimeCategoryId? timeCategoryId,
+        WorkInputMode inputMode,
+        WorkMinutes workMinutes,
+        MinuteOfDay? startTime,
+        MinuteOfDay? endTime,
+        ServicePresetId? sourceServicePresetId,
+        BasicShiftId? sourceBasicShiftId,
+        WorkRecordId? sourceWorkRecordId) =>
+        new(id, workDate,
+        [
+            new WorkTaskDto(new WorkTaskId(id.Value), serviceId, timeCategoryId,
+                inputMode, workMinutes, startTime, endTime, new DisplayOrder(0),
+                sourceServicePresetId),
+        ], sourceBasicShiftId, sourceWorkRecordId);
 
     private static WorkRecordUseCase CreateWorkUseCase(SqliteDatabase database, IUtcClock clock) => new(
         new SqliteWorkRecordRepository(database, clock),

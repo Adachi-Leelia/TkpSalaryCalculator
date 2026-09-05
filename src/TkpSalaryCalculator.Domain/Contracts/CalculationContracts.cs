@@ -85,14 +85,7 @@ public enum SalaryCalculationStatus
 public sealed record MissingCalculationRequirement(
     WorkTaskId WorkTaskId,
     string Code,
-    Guid? RelatedId)
-{
-    /// <summary>旧1タスク結果を組み立てるための一時互換コンストラクターです。</summary>
-    public MissingCalculationRequirement(string Code, Guid? RelatedId)
-        : this(default, Code, RelatedId)
-    {
-    }
-}
+    Guid? RelatedId);
 
 /// <summary>適用された割増の 1 行を保持します。</summary>
 /// <param name="Rule">サービス、日付、祝日、曜日、時間条件の判定に使用した完全で不変の割増ルール。</param>
@@ -141,67 +134,15 @@ public sealed record WorkSalaryCalculation(
     YenAmount? Total,
     IReadOnlyList<MissingCalculationRequirement> MissingRequirements)
 {
-    /// <summary>旧1タスク計算結果を訪問結果へ変換する一時互換コンストラクターです。</summary>
-    public WorkSalaryCalculation(
-        WorkRecordId WorkRecordId,
-        SalaryCalculationStatus Status,
-        SnapshotRate? AppliedRate,
-        YenAmount? BasePay,
-        IReadOnlyList<AppliedPremium> Premiums,
-        IReadOnlyList<AppliedCountBonus> CountBonuses,
-        YenAmount? Total,
-        IReadOnlyList<MissingCalculationRequirement> MissingRequirements)
-        : this(
-            WorkRecordId,
-            Status,
-            [CreateLegacyTaskCalculation(WorkRecordId, Status, AppliedRate, BasePay, Premiums, MissingRequirements)],
-            CountBonuses,
-            Total,
-            NormalizeLegacyMissingRequirements(WorkRecordId, MissingRequirements))
-    {
-    }
-
-    /// <summary>旧1タスク表示用に先頭タスクの適用単価を取得します。</summary>
-    public SnapshotRate? AppliedRate => TaskCalculations.Count == 1 ? TaskCalculations[0].AppliedRate : null;
-
     /// <summary>計算済みタスクの基本給与合計を取得します。</summary>
     public YenAmount? BasePay => Status == SalaryCalculationStatus.Calculated
-        ? new YenAmount(TaskCalculations.Aggregate(0L, static (sum, task) => checked(sum + task.BasePay!.Value.Value)))
+        ? new YenAmount(TaskCalculations.Aggregate(0L,
+            static (sum, task) => checked(sum + task.BasePay!.Value.Value)))
         : null;
 
     /// <summary>全タスクへ適用された割増を表示順に取得します。</summary>
     public IReadOnlyList<AppliedPremium> Premiums =>
         TaskCalculations.SelectMany(static task => task.Premiums).ToArray();
-
-    private static TaskSalaryCalculation CreateLegacyTaskCalculation(
-        WorkRecordId workRecordId,
-        SalaryCalculationStatus status,
-        SnapshotRate? appliedRate,
-        YenAmount? basePay,
-        IReadOnlyList<AppliedPremium> premiums,
-        IReadOnlyList<MissingCalculationRequirement> missingRequirements)
-    {
-        var taskId = new WorkTaskId(workRecordId.Value);
-        var normalizedMissing = NormalizeLegacyMissingRequirements(workRecordId, missingRequirements);
-        YenAmount? subtotal = status == SalaryCalculationStatus.Calculated && basePay is not null
-            ? new YenAmount(premiums.Aggregate(basePay.Value.Value,
-                static (sum, premium) => checked(sum + premium.Amount.Value)))
-            : null;
-        return new TaskSalaryCalculation(taskId, status, appliedRate, basePay, premiums, subtotal, normalizedMissing);
-    }
-
-    private static IReadOnlyList<MissingCalculationRequirement> NormalizeLegacyMissingRequirements(
-        WorkRecordId workRecordId,
-        IReadOnlyList<MissingCalculationRequirement> missingRequirements)
-    {
-        ArgumentNullException.ThrowIfNull(missingRequirements);
-        var taskId = new WorkTaskId(workRecordId.Value);
-        return missingRequirements
-            .Select(requirement => requirement.WorkTaskId.Value == Guid.Empty
-                ? requirement with { WorkTaskId = taskId }
-                : requirement)
-            .ToArray();
-    }
 }
 
 /// <summary>副作用のない日別集計結果を保持します。</summary>
