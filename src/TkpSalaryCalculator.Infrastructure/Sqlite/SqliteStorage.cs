@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using Microsoft.Data.Sqlite;
 using TkpSalaryCalculator.Application.Ports;
+using TkpSalaryCalculator.Domain.Models;
 using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Infrastructure.Sqlite;
@@ -41,22 +42,29 @@ public sealed class TimeZoneLocalDateConverter(TimeZoneInfo timeZone) : ILocalDa
 /// <summary>接続設定、スキーマ更新および Ambient トランザクションを所有します。</summary>
 public sealed class SqliteDatabase
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 6;
     public const int CurrentSettingSnapshotSchemaVersion = 1;
-    public const int CurrentExportFormatVersion = 1;
+    public const int CurrentExportFormatVersion = 3;
     public const int CurrentBundledBootstrapVersion = 1;
 
     private readonly string connectionString;
     private readonly bool bootstrapDefaults;
     private readonly SemaphoreSlim initializationGate = new(1, 1);
     private readonly AsyncLocal<TransactionContext?> ambientTransaction = new();
+    private readonly Action? workerEntered;
     private bool initialized;
 
     public SqliteDatabase(string databasePath, bool bootstrapDefaults = true)
+        : this(databasePath, bootstrapDefaults, null)
+    {
+    }
+
+    internal SqliteDatabase(string databasePath, bool bootstrapDefaults, Action? workerEntered)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         DatabasePath = Path.GetFullPath(databasePath);
         this.bootstrapDefaults = bootstrapDefaults;
+        this.workerEntered = workerEntered;
         connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = DatabasePath,
@@ -70,7 +78,10 @@ public sealed class SqliteDatabase
     public string DatabasePath { get; }
 
     /// <summary>未作成 DB を作成し、古い版には順次マイグレーションを適用します。</summary>
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        BackgroundOperation.RunAsync(() => InitializeCoreAsync(cancellationToken), cancellationToken, workerEntered);
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
         if (initialized) return;
 
@@ -111,18 +122,28 @@ public sealed class SqliteDatabase
 
     internal TransactionContext? AmbientTransaction => ambientTransaction.Value;
 
-    internal async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
+    internal Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(() => OpenConnectionCoreAsync(cancellationToken), cancellationToken, workerEntered);
+
+    private async Task<SqliteConnection> OpenConnectionCoreAsync(CancellationToken cancellationToken)
     {
         await InitializeAsync(cancellationToken).ConfigureAwait(false);
         return await OpenUninitializedConnectionAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task<T> ReadAsync<T>(
+    internal Task<T> ReadAsync<T>(
         Func<SqliteConnection, SqliteTransaction?, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        return BackgroundOperation.RunAsync(() => ReadCoreAsync(operation, cancellationToken), cancellationToken,
+            workerEntered);
+    }
+
+    private async Task<T> ReadCoreAsync<T>(
+        Func<SqliteConnection, SqliteTransaction?, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
         var ambient = ambientTransaction.Value;
         if (ambient is not null)
         {
@@ -133,11 +154,19 @@ public sealed class SqliteDatabase
         return await operation(connection, null, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task<T> WriteAsync<T>(
+    internal Task<T> WriteAsync<T>(
         Func<SqliteConnection, SqliteTransaction, CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        return BackgroundOperation.RunAsync(() => WriteCoreAsync(operation, cancellationToken), cancellationToken,
+            workerEntered);
+    }
+
+    private async Task<T> WriteCoreAsync<T>(
+        Func<SqliteConnection, SqliteTransaction, CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
         var ambient = ambientTransaction.Value;
         if (ambient is not null)
         {
@@ -153,10 +182,16 @@ public sealed class SqliteDatabase
         return result!;
     }
 
-    internal async Task RunTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+    internal Task RunTransactionAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        return BackgroundOperation.RunAsync(() => RunTransactionCoreAsync(operation, cancellationToken),
+            cancellationToken, workerEntered);
+    }
+
+    private async Task RunTransactionCoreAsync(Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
         if (ambientTransaction.Value is not null)
         {
             await operation(cancellationToken).ConfigureAwait(false);
@@ -236,8 +271,360 @@ public sealed class SqliteDatabase
                 .ConfigureAwait(false),
             1 => await MigrateFromOneToTwoAsync(connection, cancellationToken).ConfigureAwait(false),
             2 => await MigrateFromTwoToThreeAsync(connection, cancellationToken).ConfigureAwait(false),
+            3 => await MigrateFromThreeToFourAsync(connection, cancellationToken).ConfigureAwait(false),
+            4 => await MigrateFromFourToFiveAsync(connection, cancellationToken).ConfigureAwait(false),
+            5 => await MigrateFromFiveToSixAsync(connection, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"No migration from schema version {fromVersion} is available."),
         };
+    }
+
+    private static async Task<int> MigrateFromFiveToSixAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ValidateSchemaFiveParentsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+            await ExecuteNonQueryAsync(connection, transaction, """
+                CREATE TABLE work_record_new (
+                    id TEXT PRIMARY KEY CHECK(length(id) = 36 AND id = lower(id)),
+                    work_date TEXT NOT NULL CHECK(length(work_date) = 10),
+                    source_basic_shift_id TEXT NULL CHECK(
+                        source_basic_shift_id IS NULL OR
+                        (length(source_basic_shift_id) = 36 AND source_basic_shift_id = lower(source_basic_shift_id))),
+                    source_work_record_id TEXT NULL CHECK(
+                        source_work_record_id IS NULL OR
+                        (length(source_work_record_id) = 36 AND source_work_record_id = lower(source_work_record_id))),
+                    save_operation_id TEXT NOT NULL CHECK(
+                        length(save_operation_id) = 36 AND save_operation_id = lower(save_operation_id)),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+
+                CREATE TABLE work_task (
+                    id TEXT PRIMARY KEY CHECK(length(id) = 36 AND id = lower(id)),
+                    work_record_id TEXT NOT NULL CHECK(
+                        length(work_record_id) = 36 AND work_record_id = lower(work_record_id)),
+                    service_id TEXT NOT NULL,
+                    time_category_id TEXT NULL,
+                    input_mode TEXT NOT NULL CHECK(input_mode IN ('TimeRange', 'Duration')),
+                    work_minutes INTEGER NOT NULL CHECK(work_minutes BETWEEN 1 AND 1440),
+                    start_time_minutes INTEGER NULL CHECK(start_time_minutes BETWEEN 0 AND 1439),
+                    end_time_minutes INTEGER NULL CHECK(end_time_minutes BETWEEN 0 AND 1439),
+                    display_order INTEGER NOT NULL CHECK(display_order >= 0),
+                    source_service_preset_id TEXT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL,
+                    CHECK ((input_mode = 'TimeRange' AND start_time_minutes IS NOT NULL AND end_time_minutes IS NOT NULL)
+                        OR (input_mode = 'Duration' AND ((start_time_minutes IS NULL AND end_time_minutes IS NULL)
+                            OR (start_time_minutes IS NOT NULL AND end_time_minutes IS NOT NULL)))),
+                    FOREIGN KEY (work_record_id) REFERENCES work_record_new(id) ON DELETE CASCADE,
+                    FOREIGN KEY (service_id) REFERENCES service_definition(id) ON DELETE RESTRICT,
+                    FOREIGN KEY (time_category_id) REFERENCES time_category_definition(id) ON DELETE RESTRICT,
+                    FOREIGN KEY (source_service_preset_id) REFERENCES service_preset(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE basic_shift_new (
+                    id TEXT PRIMARY KEY CHECK(length(id) = 36 AND id = lower(id)),
+                    weekday INTEGER NOT NULL CHECK(weekday BETWEEN 1 AND 7),
+                    display_order INTEGER NOT NULL CHECK(display_order >= 0),
+                    is_enabled INTEGER NOT NULL CHECK(is_enabled IN (0, 1)),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+
+                CREATE TABLE basic_shift_task (
+                    id TEXT PRIMARY KEY CHECK(length(id) = 36 AND id = lower(id)),
+                    basic_shift_id TEXT NOT NULL CHECK(
+                        length(basic_shift_id) = 36 AND basic_shift_id = lower(basic_shift_id)),
+                    service_preset_id TEXT NULL,
+                    service_id TEXT NOT NULL,
+                    time_category_id TEXT NULL,
+                    input_mode TEXT NOT NULL CHECK(input_mode IN ('TimeRange', 'Duration')),
+                    work_minutes INTEGER NOT NULL CHECK(work_minutes BETWEEN 1 AND 1440),
+                    start_time_minutes INTEGER NULL CHECK(start_time_minutes BETWEEN 0 AND 1439),
+                    end_time_minutes INTEGER NULL CHECK(end_time_minutes BETWEEN 0 AND 1439),
+                    display_order INTEGER NOT NULL CHECK(display_order >= 0),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL,
+                    CHECK ((input_mode = 'TimeRange' AND start_time_minutes IS NOT NULL AND end_time_minutes IS NOT NULL)
+                        OR (input_mode = 'Duration' AND ((start_time_minutes IS NULL AND end_time_minutes IS NULL)
+                            OR (start_time_minutes IS NOT NULL AND end_time_minutes IS NOT NULL)))),
+                    FOREIGN KEY (basic_shift_id) REFERENCES basic_shift_new(id) ON DELETE CASCADE,
+                    FOREIGN KEY (service_preset_id) REFERENCES service_preset(id) ON DELETE SET NULL,
+                    FOREIGN KEY (service_id) REFERENCES service_definition(id) ON DELETE RESTRICT,
+                    FOREIGN KEY (time_category_id) REFERENCES time_category_definition(id) ON DELETE RESTRICT
+                );
+
+                INSERT INTO work_record_new(
+                    id, work_date, source_basic_shift_id, source_work_record_id, save_operation_id,
+                    created_at_utc, updated_at_utc)
+                SELECT id, work_date, source_basic_shift_id, source_work_record_id,
+                    COALESCE(save_operation_id, id), created_at_utc, updated_at_utc
+                FROM work_record;
+
+                INSERT INTO work_task(
+                    id, work_record_id, service_id, time_category_id, input_mode, work_minutes,
+                    start_time_minutes, end_time_minutes, display_order, source_service_preset_id,
+                    created_at_utc, updated_at_utc)
+                SELECT id, id, service_id, time_category_id, input_mode, work_minutes,
+                    start_time_minutes, end_time_minutes, 0, source_service_preset_id,
+                    created_at_utc, updated_at_utc
+                FROM work_record;
+
+                INSERT INTO basic_shift_new(
+                    id, weekday, display_order, is_enabled, created_at_utc, updated_at_utc)
+                SELECT id, weekday, display_order, is_enabled, created_at_utc, updated_at_utc
+                FROM basic_shift;
+
+                INSERT INTO basic_shift_task(
+                    id, basic_shift_id, service_preset_id, service_id, time_category_id, input_mode,
+                    work_minutes, start_time_minutes, end_time_minutes, display_order,
+                    created_at_utc, updated_at_utc)
+                SELECT id, id, service_preset_id, service_id, time_category_id, input_mode,
+                    work_minutes, start_time_minutes, end_time_minutes, 0,
+                    created_at_utc, updated_at_utc
+                FROM basic_shift;
+                """, cancellationToken).ConfigureAwait(false);
+
+            var oldWorkRecordCount = await ExecuteScalarLongAsync(
+                connection, transaction, "SELECT COUNT(*) FROM work_record;", cancellationToken)
+                .ConfigureAwait(false);
+            var newWorkRecordCount = await ExecuteScalarLongAsync(
+                connection, transaction, "SELECT COUNT(*) FROM work_record_new;", cancellationToken)
+                .ConfigureAwait(false);
+            var workTaskCount = await ExecuteScalarLongAsync(
+                connection, transaction, "SELECT COUNT(*) FROM work_task;", cancellationToken)
+                .ConfigureAwait(false);
+            var oldBasicShiftCount = await ExecuteScalarLongAsync(
+                connection, transaction, "SELECT COUNT(*) FROM basic_shift;", cancellationToken)
+                .ConfigureAwait(false);
+            var newBasicShiftCount = await ExecuteScalarLongAsync(
+                connection, transaction, "SELECT COUNT(*) FROM basic_shift_new;", cancellationToken)
+                .ConfigureAwait(false);
+            var basicShiftTaskCount = await ExecuteScalarLongAsync(
+                connection, transaction, "SELECT COUNT(*) FROM basic_shift_task;", cancellationToken)
+                .ConfigureAwait(false);
+            if (await ExecuteScalarLongAsync(connection, transaction, """
+                    SELECT COUNT(*) FROM work_record_new
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM work_task WHERE work_task.work_record_id = work_record_new.id);
+                    """, cancellationToken).ConfigureAwait(false) != 0 ||
+                await ExecuteScalarLongAsync(connection, transaction, """
+                    SELECT COUNT(*) FROM basic_shift_new
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM basic_shift_task WHERE basic_shift_task.basic_shift_id = basic_shift_new.id);
+                    """, cancellationToken).ConfigureAwait(false) != 0 ||
+                oldWorkRecordCount != newWorkRecordCount ||
+                oldWorkRecordCount != workTaskCount ||
+                oldBasicShiftCount != newBasicShiftCount ||
+                oldBasicShiftCount != basicShiftTaskCount)
+            {
+                throw new InvalidDataException("Schema version 6 migration did not preserve every parent and task.");
+            }
+
+            await ExecuteNonQueryAsync(connection, transaction, """
+                DROP TABLE work_record;
+                ALTER TABLE work_record_new RENAME TO work_record;
+                DROP TABLE basic_shift;
+                ALTER TABLE basic_shift_new RENAME TO basic_shift;
+
+                CREATE INDEX ix_basic_shift_weekday
+                    ON basic_shift(weekday, is_enabled, display_order);
+                CREATE UNIQUE INDEX ux_basic_shift_task_order
+                    ON basic_shift_task(basic_shift_id, display_order);
+                CREATE INDEX ix_work_record_date ON work_record(work_date);
+                CREATE UNIQUE INDEX ux_work_task_order
+                    ON work_task(work_record_id, display_order);
+                CREATE UNIQUE INDEX ux_work_record_shift_date
+                    ON work_record(source_basic_shift_id, work_date)
+                    WHERE source_basic_shift_id IS NOT NULL;
+                CREATE UNIQUE INDEX ux_work_record_save_operation
+                    ON work_record(save_operation_id);
+
+                UPDATE app_metadata SET export_format_version = 3 WHERE id = 1;
+                PRAGMA user_version = 6;
+                """, cancellationToken).ConfigureAwait(false);
+
+            await using (var foreignKeys = connection.CreateCommand())
+            {
+                foreignKeys.Transaction = transaction;
+                foreignKeys.CommandText = "PRAGMA foreign_key_check;";
+                await using var reader = await foreignKeys.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    throw new InvalidDataException("Schema version 6 migration produced an invalid foreign key.");
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 6;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task ValidateSchemaFiveParentsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using (var records = connection.CreateCommand())
+            {
+                records.Transaction = transaction;
+                records.CommandText = """
+                    SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes,
+                           start_time_minutes, end_time_minutes, source_service_preset_id,
+                           source_basic_shift_id, source_work_record_id, save_operation_id
+                    FROM work_record;
+                    """;
+                await using var reader = await records.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    var id = RequiredNonEmptyGuid(reader.GetString(0), "work_record.id");
+                    _ = new WorkRecord(
+                        new WorkRecordId(id),
+                        SqliteValue.Date(reader.GetString(1)),
+                        [new WorkTask(
+                            new WorkTaskId(id),
+                            new ServiceId(RequiredNonEmptyGuid(reader.GetString(2), "work_record.service_id")),
+                            reader.IsDBNull(3) ? null : new TimeCategoryId(
+                                RequiredNonEmptyGuid(reader.GetString(3), "work_record.time_category_id")),
+                            Enum.Parse<WorkInputMode>(reader.GetString(4), false),
+                            new WorkMinutes(reader.GetInt32(5)),
+                            reader.IsDBNull(6) ? null : new MinuteOfDay(reader.GetInt32(6)),
+                            reader.IsDBNull(7) ? null : new MinuteOfDay(reader.GetInt32(7)),
+                            new DisplayOrder(0))]);
+                    ValidateOptionalNonEmptyGuid(reader, 8, "work_record.source_service_preset_id");
+                    ValidateOptionalNonEmptyGuid(reader, 9, "work_record.source_basic_shift_id");
+                    ValidateOptionalNonEmptyGuid(reader, 10, "work_record.source_work_record_id");
+                    ValidateOptionalNonEmptyGuid(reader, 11, "work_record.save_operation_id");
+                }
+            }
+
+            await using var shifts = connection.CreateCommand();
+            shifts.Transaction = transaction;
+            shifts.CommandText = """
+                SELECT id, service_preset_id, service_id, time_category_id, input_mode, work_minutes,
+                       start_time_minutes, end_time_minutes
+                FROM basic_shift;
+                """;
+            await using var shiftReader = await shifts.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await shiftReader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var id = RequiredNonEmptyGuid(shiftReader.GetString(0), "basic_shift.id");
+                ValidateOptionalNonEmptyGuid(shiftReader, 1, "basic_shift.service_preset_id");
+                _ = new WorkRecord(
+                    new WorkRecordId(id),
+                    new DateOnly(2000, 1, 1),
+                    [new WorkTask(
+                        new WorkTaskId(id),
+                        new ServiceId(RequiredNonEmptyGuid(shiftReader.GetString(2), "basic_shift.service_id")),
+                        shiftReader.IsDBNull(3) ? null : new TimeCategoryId(
+                            RequiredNonEmptyGuid(shiftReader.GetString(3), "basic_shift.time_category_id")),
+                        Enum.Parse<WorkInputMode>(shiftReader.GetString(4), false),
+                        new WorkMinutes(shiftReader.GetInt32(5)),
+                        shiftReader.IsDBNull(6) ? null : new MinuteOfDay(shiftReader.GetInt32(6)),
+                        shiftReader.IsDBNull(7) ? null : new MinuteOfDay(shiftReader.GetInt32(7)),
+                        new DisplayOrder(0))]);
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
+        {
+            throw new InvalidDataException("Schema version 5 contains an invalid work record or basic shift.", exception);
+        }
+    }
+
+    private static Guid RequiredNonEmptyGuid(string value, string field)
+    {
+        var parsed = SqliteValue.Guid(value);
+        return parsed != Guid.Empty
+            ? parsed
+            : throw new InvalidDataException($"{field} cannot contain an empty UUID.");
+    }
+
+    private static void ValidateOptionalNonEmptyGuid(SqliteDataReader reader, int ordinal, string field)
+    {
+        if (!reader.IsDBNull(ordinal)) _ = RequiredNonEmptyGuid(reader.GetString(ordinal), field);
+    }
+
+    private static async Task<int> MigrateFromFourToFiveAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, transaction, """
+                CREATE TABLE IF NOT EXISTS annual_summary_setting (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    closing_month INTEGER NOT NULL DEFAULT 12 CHECK(closing_month BETWEEN 1 AND 12),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+                """, cancellationToken).ConfigureAwait(false);
+
+            var now = SqliteValue.Utc(DateTimeOffset.UtcNow);
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT OR IGNORE INTO annual_summary_setting(id, closing_month, created_at_utc, updated_at_utc)
+                    VALUES(1, 12, $now, $now);
+                    """;
+                command.Parameters.AddWithValue("$now", now);
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE app_metadata
+                    SET export_format_version = $format, updated_at_utc = $now
+                    WHERE id = 1;
+                    """;
+                command.Parameters.AddWithValue("$now", now);
+                command.Parameters.AddWithValue("$format", 2);
+                if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+                    throw new InvalidDataException("The required app_metadata row is missing.");
+            }
+
+            await ExecuteNonQueryAsync(connection, transaction, "PRAGMA user_version = 5;", cancellationToken)
+                .ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 5;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task<int> MigrateFromThreeToFourAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, transaction, """
+                DROP INDEX IF EXISTS ix_work_record_source_preset;
+                PRAGMA user_version = 4;
+                """, cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 4;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async Task<int> MigrateFromTwoToThreeAsync(
@@ -580,6 +967,19 @@ public sealed class SqliteDatabase
         command.CommandText = sql;
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<long> ExecuteScalarLongAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt64(value, CultureInfo.InvariantCulture);
     }
 
     internal static async Task<int> ExecuteNonQueryAsync(SqliteConnection connection, SqliteTransaction? transaction,

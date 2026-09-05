@@ -41,14 +41,25 @@ internal static class ApplicationSupport
 
     public static WorkRecord ToDomain(WorkRecordDto value)
     {
-        return new(
-        value.Id, value.WorkDate, value.ServiceId, value.TimeCategoryId, value.InputMode,
-        value.WorkMinutes, value.StartTime, value.EndTime);
+        ArgumentNullException.ThrowIfNull(value);
+        return value.ToDomain();
     }
 
     public static IssueDto Issue(string code, string message, string? field = null)
     {
         return new(code, field, message);
+    }
+
+    public static string TaskField(WorkTaskId workTaskId, string? field = null)
+    {
+        var prefix = $"Tasks[{workTaskId.Value:D}]";
+        return string.IsNullOrEmpty(field) ? prefix : $"{prefix}.{field}";
+    }
+
+    public static IssueDto ForTask(IssueDto issue, WorkTaskId workTaskId)
+    {
+        ArgumentNullException.ThrowIfNull(issue);
+        return issue with { Field = TaskField(workTaskId, issue.Field) };
     }
 
     public static ApplicationErrorException Invalid(string code, string message, string? field = null)
@@ -134,8 +145,17 @@ internal static class ApplicationSupport
 
     public static IReadOnlyList<IssueDto> CalculationIssues(WorkSalaryCalculation calculation)
     {
+        ArgumentNullException.ThrowIfNull(calculation);
         return [.. calculation.MissingRequirements.Select(x => Issue(
-            $"CALC_{x.Code}", "給与計算に必要な設定が不足しています。設定画面で内容を確認してください。"))];
+            $"CALC_{x.Code}",
+            "給与計算に必要な設定が不足しています。設定画面で内容を確認してください。",
+            TaskField(x.WorkTaskId, x.Code switch
+            {
+                Domain.Services.MissingCalculationRequirementCodes.Service => "ServiceId",
+                Domain.Services.MissingCalculationRequirementCodes.TimeCategory => "TimeCategoryId",
+                Domain.Services.MissingCalculationRequirementCodes.Rate => "Rate",
+                _ => null,
+            })))];
     }
 
 

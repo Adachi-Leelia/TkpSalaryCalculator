@@ -31,7 +31,12 @@ or orchestration coverage that complements the end-to-end specification case.
 | `Save_ReusedOperationIdWithDifferentInput_IsRejectedPendingAndPersisted` | WORK-007 |
 | `GetForDateAndDelete_ReflectStoredRecords` | WORK-009, APP-WORK-QUERY |
 | `Preview_RejectsInvalidModeAndOverTwentyFourHours_AndHonorsCancellation` | WORK-006, WORK-014, APP-CANCEL |
-| `GetInputOptions_OrdersByConfiguredDisplayOrderRegardlessOfHistory` | WORK-001, WORK-012 |
+| `GetInputOptions_OrdersByConfiguredDisplayOrderWithoutReadingWorkHistory` | WORK-001, WORK-012 |
+| `Save_MultipleTasks_NormalizesOrderAndAppliesCountBonusOnce` | WORK-016, WORK-018, CALC-014 |
+| `Preview_MultipleTasks_PointsInputAndCalculationIssuesToStableTaskPaths` | WORK-014, WORK-019, CALC-016 |
+| `Save_RetryComparesEveryTaskInPayload` | WORK-007, WORK-019 |
+| `Save_EditMultipleTasks_ReplacesVisitAndPreservesTaskIds` | WORK-016, WORK-020 |
+| `CopyDay_MultipleTasks_AssignsNewParentAndTaskIdsAndPreservesOrder` | WORK-020 |
 
 ## BasicShiftUseCaseTests
 
@@ -47,6 +52,11 @@ or orchestration coverage that complements the end-to-end specification case.
 | `Apply_SecondInsertFailure_RollsBackAllRecords` | SHIFT-010 |
 | `Save_CreatesAndUpdatesShift_AndRejectsInvalidWeekday` | SHIFT-001, SHIFT-007, APP-VALIDATION |
 | `UpdatingOrDeletingShift_DoesNotModifyExistingWork` | SHIFT-007, SHIFT-008 |
+| `Save_MultipleTasks_NormalizesOrderAndIndependentTimes` | SHIFT-001, SHIFT-011 |
+| `Save_RejectsEmptyDuplicateOrInvalidTasksWithoutWriting` | SHIFT-011, DB-021 |
+| `Apply_MultipleTasks_CountsVisitOnceAndKeepsTasksAfterSourceChanges` | SHIFT-004, SHIFT-005, SHIFT-007, SHIFT-008, SHIFT-013, CALC-014 |
+| `Preview_SimilarityComparesCompleteTaskMultiset` | SHIFT-006, SHIFT-012 |
+| `Preview_SecondTaskFailureBlocksVisitAndIdentifiesTask` | SHIFT-009, CALC-016 |
 
 ## SettingsAndSalaryUseCaseTests
 
@@ -54,6 +64,7 @@ or orchestration coverage that complements the end-to-end specification case.
 |---|---|
 | `CloneAndReplace_ChangesOnlyTargetMonthAndMarksChanged` | HIST-001, HIST-002 |
 | `PreviewReplacement_ReportsAffectedRecordsAndHasNoSideEffects` | HIST-013 |
+| `PreviewReplacement_CountsAffectedVisitOnceWhenAllOfItsTasksChange` | HIST-017 |
 | `PreviewReplacement_NullChild_ReturnsSafeValidationIssue` | APP-VALIDATION |
 | `CopyPreviousMonth_UsesLatestHolidayAndKeepsOtherMonths` | HIST-009, HIST-014 |
 | `CloneFailure_DoesNotCommitOrMarkChanged` | HIST-004 |
@@ -62,7 +73,12 @@ or orchestration coverage that complements the end-to-end specification case.
 | `CloneAndReplace_RepositoryCasFailure_LeavesSettingsAndMetadataUnchanged` | HIST-004, HIST-014 |
 | `CloneAndReplace_RejectsTokenReusedForDifferentReplacementOrMonth` | HIST-013, HIST-014 |
 | `SalaryQuery_UsesEachWorkDatesCalendarMonthAndAddsAllowanceOnce` | HIST-003, CALC-010 |
+| `ANNUALAPP001_HomeSummaryBatchesAnnualRangeAndBuildsMonthlyFromTheSameRead` | ANNUAL-001, ANNUAL-004, ANNUAL-006, ANNUAL-008, ANNUAL-010, DB-015 |
+| `ANNUALAPP002_HomeSummaryIncludesAllowanceOnlyPeriodsAndReturnsZeroWithoutData` | ANNUAL-007, ANNUAL-008 |
+| `ANNUALAPP003_HomeSummaryUsesClosingHistoryWithoutBoundaryGapsOrDuplicates` | ANNUAL-005, ANNUAL-010 |
+| `PERF010_MultipleTasksKeepCalendarPeriodAndAnnualReadsBatchedByRange` | PERF-010 |
 | `CalendarDayAndMonthQueries_UseOrchestratedApplicationModels` | APP-SALARY-QUERY, SHIFT-002 |
+| `WorkRecordCalculationConvertsEveryTaskFromTheParentChildContract` | HIST-016, APP-SALARY-QUERY |
 | `ClosingRuleReplacement_PreservesHistoryAndAllowanceIsPeriodScoped` | CALC-009, CALC-010 |
 | `FirstClosingRule_IsPersistedAsBaselineAndUsedForPeriodCalculation` | CALC-009 |
 | `FindPayrollPeriod_UsesClosingDayBoundaryForCurrentDate` | UI-007, CALC-009 |

@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using TkpSalaryCalculator.App.Navigation;
 using TkpSalaryCalculator.App.Presentation.Common;
 using TkpSalaryCalculator.App.Presentation.Services;
@@ -9,7 +10,7 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.App.Presentation.Features.Calendar;
 
-/// <summary>SCR-WORK-01 の入力、プレビュー、保存、および項目エラーを管理します。</summary>
+/// <summary>SCR-WORK-01 の訪問、複数タスク、プレビュー、保存、および項目エラーを管理します。</summary>
 public sealed class WorkEditorViewModel : EditableViewModelBase
 {
     private readonly IWorkRecordUseCase workRecords;
@@ -17,32 +18,26 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     private readonly IssuePresenter issuePresenter;
     private readonly JapaneseDisplayFormatter formatter;
     private readonly IAppSessionState sessionState;
-    private readonly Guid operationId = Guid.NewGuid();
     private bool isInitializing;
     private bool hasSaved;
+    private Guid operationId;
     private WorkRecordId? workRecordId;
-    private ServiceId? originalServiceId;
-    private TimeCategoryId? originalTimeCategoryId;
-    private ServicePresetId? originalSourceServicePresetId;
+    private DateOnly initialWorkDate;
     private DateOnly optionsDate;
     private DateTime workDate;
     private IReadOnlyList<PresetOptionViewModel> presetCandidates = [];
     private IReadOnlyList<ServiceOptionViewModel> services = [];
-    private IReadOnlyList<TimeCategoryOptionViewModel> timeCategories = [];
-    private PresetOptionViewModel? selectedPreset;
-    private ServiceOptionViewModel? selectedService;
-    private TimeCategoryOptionViewModel? selectedTimeCategory;
-    private WorkInputModeOption selectedInputMode = WorkInputModeOption.Duration;
-    private string workMinutesText = string.Empty;
-    private TimeSpan startTime = new(9, 0, 0);
-    private TimeSpan endTime = new(10, 0, 0);
-    private string previewText = "入力後に給与をプレビューできます。";
+    private IReadOnlyList<SnapshotTimeCategory> allTimeCategories = [];
+    private IReadOnlyList<SnapshotPremium> premiums = [];
+    private HolidayCalendar? holidayCalendar;
+    private string previewText = "入力後に訪問全体の給与をプレビューできます。";
+    private string countBonusText = string.Empty;
+    private string visitTotalText = string.Empty;
     private string issueMessage = string.Empty;
-    private IReadOnlyDictionary<string, string> fieldErrors = new Dictionary<string, string>();
     private bool canSave;
-    private string normalizedTimeText = string.Empty;
     private string unavailableCandidatesText = string.Empty;
     private string? firstInvalidField;
+    private WorkTaskEditorViewModel? firstInvalidTask;
     private WorkEditorScreenDto? editorScreen;
     private SaveWorkRecordCommand? previewedCommand;
 
@@ -63,12 +58,14 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         TrackDataChanges(this.sessionState, AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings);
         InputModes = [WorkInputModeOption.Duration, WorkInputModeOption.TimeRange];
         ReloadCommand = new AsyncCommand(LoadAsync, PresentError);
-        PreviewCommand = new AsyncCommand(PreviewAsync, PresentError, () => SelectedService is not null);
-        SaveCommand = new AsyncCommand(SaveAsync, PresentError, () => !hasSaved && SelectedService is not null && IsNotBusy);
+        PreviewCommand = new AsyncCommand(PreviewAsync, PresentError, CanEditTasks);
+        SaveCommand = new AsyncCommand(SaveAsync, PresentError,
+            () => !hasSaved && IsNotBusy);
+        AddTaskCommand = new AsyncCommand(AddTaskAsync, PresentError, CanEditTasks);
     }
 
     public bool IsEditing => WorkRecordId is not null;
-    public string PageTitle => IsEditing ? "勤務を編集" : "勤務を追加";
+    public string PageTitle => IsEditing ? "訪問を編集" : "訪問を追加";
     public WorkRecordId? WorkRecordId
     {
         get => workRecordId;
@@ -79,6 +76,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             OnPropertyChanged(nameof(PageTitle));
         }
     }
+
     public DateTime WorkDate
     {
         get => workDate;
@@ -86,108 +84,51 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         {
             if (!SetProperty(ref workDate, value.Date)) return;
             OnPropertyChanged(nameof(SettingsMonthText));
-            OnPropertyChanged(nameof(ShowStartTime));
+            OnPropertyChanged(nameof(SettingsMonthChangeWarningText));
+            OnPropertyChanged(nameof(HasSettingsMonthChangeWarning));
+            foreach (var task in Tasks) task.RefreshDateRules();
             InputChanged();
         }
     }
-    public string SettingsMonthText => $"適用する設定対象年月: {WorkDate:yyyy年M月}";
-    public IReadOnlyList<PresetOptionViewModel> PresetCandidates
+
+    public string SettingsMonthText => $"適用する設定対象年月: {WorkDate:yyyy年M月}（全タスク共通）";
+    public string SettingsMonthChangeWarningText => HasSettingsMonthChangeWarning
+        ? $"勤務日を別の年月へ変更したため、全タスクには{WorkDate:yyyy年M月}の設定が適用されます。保存前にサービス、時間区分、単価、割増および件数加算を確認してください。"
+        : string.Empty;
+    public bool HasSettingsMonthChangeWarning =>
+        WorkDate.Year != initialWorkDate.Year || WorkDate.Month != initialWorkDate.Month;
+    public ObservableCollection<WorkTaskEditorViewModel> Tasks { get; } = [];
+    public bool HasMultipleTasks => Tasks.Count > 1;
+    public string TaskCountText => $"タスク {Tasks.Count}件";
+    public IReadOnlyList<PresetOptionViewModel> PresetCandidates => presetCandidates;
+    public IReadOnlyList<ServiceOptionViewModel> Services => services;
+    public IReadOnlyList<WorkInputModeOption> InputModes { get; }
+    public AsyncCommand ReloadCommand { get; }
+    public AsyncCommand PreviewCommand { get; }
+    public AsyncCommand SaveCommand { get; }
+    public AsyncCommand AddTaskCommand { get; }
+
+    public string PreviewText { get => previewText; private set => SetProperty(ref previewText, value); }
+    public string CountBonusText
     {
-        get => presetCandidates;
-        private set => SetProperty(ref presetCandidates, value);
-    }
-    public IReadOnlyList<ServiceOptionViewModel> Services
-    {
-        get => services;
-        private set => SetProperty(ref services, value);
-    }
-    public IReadOnlyList<TimeCategoryOptionViewModel> TimeCategories
-    {
-        get => timeCategories;
+        get => countBonusText;
         private set
         {
-            if (!SetProperty(ref timeCategories, value)) return;
-            OnPropertyChanged(nameof(HasTimeCategories));
+            if (!SetProperty(ref countBonusText, value)) return;
+            OnPropertyChanged(nameof(HasCountBonus));
         }
     }
-    public bool HasTimeCategories => TimeCategories.Count > 1;
-    public IReadOnlyList<WorkInputModeOption> InputModes { get; }
-    public PresetOptionViewModel? SelectedPreset
+    public bool HasCountBonus => !string.IsNullOrWhiteSpace(CountBonusText);
+    public string VisitTotalText
     {
-        get => selectedPreset;
-        set
+        get => visitTotalText;
+        private set
         {
-            if (!SetProperty(ref selectedPreset, value) || value is null) return;
-            if (!value.IsAvailable)
-            {
-                IssueMessage = value.IssueText;
-                return;
-            }
-            ApplyPreset(value);
+            if (!SetProperty(ref visitTotalText, value)) return;
+            OnPropertyChanged(nameof(HasVisitTotal));
         }
     }
-    public ServiceOptionViewModel? SelectedService
-    {
-        get => selectedService;
-        set
-        {
-            if (!SetProperty(ref selectedService, value)) return;
-            RebuildTimeCategories(value?.Id);
-            OnPropertyChanged(nameof(ShowStartTime));
-            SaveCommand.NotifyCanExecuteChanged();
-            InputChanged();
-        }
-    }
-    public TimeCategoryOptionViewModel? SelectedTimeCategory
-    {
-        get => selectedTimeCategory;
-        set
-        {
-            if (!SetProperty(ref selectedTimeCategory, value)) return;
-            if (value?.StandardMinutes is { } standardMinutes) WorkMinutesText = standardMinutes.Value.ToString();
-            InputChanged();
-        }
-    }
-    public WorkInputModeOption SelectedInputMode
-    {
-        get => selectedInputMode;
-        set
-        {
-            if (!SetProperty(ref selectedInputMode, value)) return;
-            OnPropertyChanged(nameof(ShowDuration));
-            OnPropertyChanged(nameof(ShowStartTime));
-            OnPropertyChanged(nameof(ShowEndTime));
-            InputChanged();
-        }
-    }
-    public bool ShowDuration => SelectedInputMode.Value == WorkInputMode.Duration;
-    public bool ShowEndTime => SelectedInputMode.Value == WorkInputMode.TimeRange;
-    public bool ShowStartTime => ShowEndTime || SelectedService is { } service && HasApplicableTimedPremium(service.Id);
-    public string WorkMinutesText
-    {
-        get => workMinutesText;
-        set { if (SetProperty(ref workMinutesText, value)) InputChanged(); }
-    }
-    public TimeSpan StartTime
-    {
-        get => startTime;
-        set { if (SetProperty(ref startTime, value)) InputChanged(); }
-    }
-    public TimeSpan EndTime
-    {
-        get => endTime;
-        set { if (SetProperty(ref endTime, value)) InputChanged(); }
-    }
-    public string PreviewText
-    {
-        get => previewText;
-        private set => SetProperty(ref previewText, value);
-    }
-    public string NormalizedTimeText
-    {
-        get => normalizedTimeText;
-        private set => SetProperty(ref normalizedTimeText, value);
-    }
+    public bool HasVisitTotal => !string.IsNullOrWhiteSpace(VisitTotalText);
     public string IssueMessage
     {
         get => issueMessage;
@@ -197,31 +138,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             OnPropertyChanged(nameof(HasIssues));
         }
     }
-    public bool HasIssues => !string.IsNullOrWhiteSpace(IssueMessage) || FieldErrors.Count != 0;
-    public IReadOnlyDictionary<string, string> FieldErrors
-    {
-        get => fieldErrors;
-        private set
-        {
-            if (!SetProperty(ref fieldErrors, value)) return;
-            OnPropertyChanged(nameof(ServiceError));
-            OnPropertyChanged(nameof(TimeCategoryError));
-            OnPropertyChanged(nameof(WorkMinutesError));
-            OnPropertyChanged(nameof(StartTimeError));
-            OnPropertyChanged(nameof(EndTimeError));
-            OnPropertyChanged(nameof(HasIssues));
-        }
-    }
-    public string ServiceError => FieldErrors.GetValueOrDefault("ServiceId", string.Empty);
-    public string TimeCategoryError => FieldErrors.GetValueOrDefault("TimeCategoryId", string.Empty);
-    public string WorkMinutesError => FieldErrors.GetValueOrDefault("WorkMinutes", string.Empty);
-    public string StartTimeError => FieldErrors.GetValueOrDefault("StartTime", string.Empty);
-    public string EndTimeError => FieldErrors.GetValueOrDefault("EndTime", string.Empty);
-    public string? FirstInvalidField
-    {
-        get => firstInvalidField;
-        private set => SetProperty(ref firstInvalidField, value);
-    }
+    public bool HasIssues => !string.IsNullOrWhiteSpace(IssueMessage) || Tasks.Any(task => task.HasErrors);
     public bool CanSave
     {
         get => canSave;
@@ -241,24 +158,34 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         }
     }
     public bool HasUnavailableCandidates => !string.IsNullOrWhiteSpace(UnavailableCandidatesText);
-    public AsyncCommand ReloadCommand { get; }
-    public AsyncCommand PreviewCommand { get; }
-    public AsyncCommand SaveCommand { get; }
+    public string? FirstInvalidField
+    {
+        get => firstInvalidField;
+        private set => SetProperty(ref firstInvalidField, value);
+    }
+    public WorkTaskEditorViewModel? FirstInvalidTask
+    {
+        get => firstInvalidTask;
+        private set => SetProperty(ref firstInvalidTask, value);
+    }
 
     public void Initialize(DateOnly date, WorkRecordId? id)
     {
         InvalidateTrackedLoad();
+        operationId = Guid.NewGuid();
         hasSaved = false;
         editorScreen = null;
         previewedCommand = null;
-        originalServiceId = null;
-        originalTimeCategoryId = null;
-        originalSourceServicePresetId = null;
-        ResetInputFields();
+        ResetScreenState();
         WorkRecordId = id;
+        initialWorkDate = date;
         workDate = date.ToDateTime(TimeOnly.MinValue);
         OnPropertyChanged(nameof(WorkDate));
         OnPropertyChanged(nameof(SettingsMonthText));
+        OnPropertyChanged(nameof(SettingsMonthChangeWarningText));
+        OnPropertyChanged(nameof(HasSettingsMonthChangeWarning));
+        AddTaskCore(null);
+        MarkSaved();
         NotifyCommands();
     }
 
@@ -301,7 +228,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
                 command,
                 command.Id is null ? CancellationToken.None : cancellationToken);
             var result = await NotifyWhenSaveCompletesAsync(saveTask).WaitAsync(cancellationToken);
-            ApplyNormalized(result.WorkRecord.WorkMinutes, result.WorkRecord.StartTime, result.WorkRecord.EndTime);
+            ApplySavedNormalization(result.WorkRecord);
             hasSaved = true;
             MarkSaved();
             await navigator.GoBackAsync("勤務記録を保存しました。", cancellationToken);
@@ -309,8 +236,41 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         NotifyCommands();
     }
 
-    private async Task<SaveWorkRecordResultDto> NotifyWhenSaveCompletesAsync(
-        Task<SaveWorkRecordResultDto> saveTask)
+    public Task AddTaskAsync()
+    {
+        if (!CanEditTasks()) return Task.CompletedTask;
+        AddTaskCore(null);
+        InputChanged();
+        return Task.CompletedTask;
+    }
+
+    public Task MoveTaskUpAsync(WorkTaskEditorViewModel task) => MoveTaskAsync(task, -1);
+    public Task MoveTaskDownAsync(WorkTaskEditorViewModel task) => MoveTaskAsync(task, 1);
+
+    public Task DeleteTaskAsync(WorkTaskEditorViewModel task)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        if (!CanEditTasks()) return Task.CompletedTask;
+        if (Tasks.Count <= 1 || !Tasks.Remove(task)) return Task.CompletedTask;
+        UpdateTaskPositions();
+        InputChanged();
+        return Task.CompletedTask;
+    }
+
+    private Task MoveTaskAsync(WorkTaskEditorViewModel task, int offset)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        if (!CanEditTasks()) return Task.CompletedTask;
+        var oldIndex = Tasks.IndexOf(task);
+        var newIndex = oldIndex + offset;
+        if (oldIndex < 0 || newIndex < 0 || newIndex >= Tasks.Count) return Task.CompletedTask;
+        Tasks.Move(oldIndex, newIndex);
+        UpdateTaskPositions();
+        InputChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task<SaveWorkRecordResultDto> NotifyWhenSaveCompletesAsync(Task<SaveWorkRecordResultDto> saveTask)
     {
         var result = await saveTask.ConfigureAwait(false);
         sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
@@ -319,66 +279,59 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
-        WorkRecordDto? existing = null;
         isInitializing = true;
         try
         {
             var date = DateOnly.FromDateTime(WorkDate);
             editorScreen = await workRecords.GetEditorScreenAsync(date, WorkRecordId, cancellationToken);
-            var options = editorScreen.InputOptions;
-            existing = editorScreen.ExistingRecord;
+            var existing = editorScreen.ExistingRecord;
             if (WorkRecordId is not null && existing is null)
-                throw new InvalidOperationException("編集する勤務記録が見つかりませんでした。");
+                throw new InvalidOperationException("編集する訪問が見つかりませんでした。");
 
-            if (existing is not null) RememberOriginalSelection(existing);
-            PopulateOptions(options, editorScreen.HolidayCalendar);
-            if (existing is not null)
-                ApplyExisting(existing);
-            MarkSaved();
+            PopulateOptions(editorScreen.InputOptions, editorScreen.HolidayCalendar, existing);
+            Tasks.Clear();
+            if (existing is null)
+                AddTaskCore(null);
+            else
+                foreach (var task in existing.Tasks.OrderBy(task => task.DisplayOrder.Value)) AddTaskCore(task);
+            UpdateTaskPositions();
         }
         finally
         {
             isInitializing = false;
         }
 
-        if (existing is not null || SelectedService is not null)
+        if (editorScreen?.ExistingRecord is not null)
             await PreviewCoreAsync(cancellationToken);
         MarkSaved();
     }
 
-    private void ResetInputFields()
+    private void ResetScreenState()
     {
-        selectedPreset = null;
-        selectedService = null;
-        selectedTimeCategory = null;
-        selectedInputMode = WorkInputModeOption.Duration;
-        workMinutesText = string.Empty;
-        startTime = new TimeSpan(9, 0, 0);
-        endTime = new TimeSpan(10, 0, 0);
-        PresetCandidates = [];
-        Services = [];
-        TimeCategories = [];
-        allTimeCategories = [];
-        premiums = [];
-        holidayCalendar = null;
-        UnavailableCandidatesText = string.Empty;
-        PreviewText = "入力後に給与をプレビューできます。";
-        NormalizedTimeText = string.Empty;
-        IssueMessage = string.Empty;
-        FieldErrors = new Dictionary<string, string>();
-        FirstInvalidField = null;
-        CanSave = false;
-
-        OnPropertyChanged(nameof(SelectedPreset));
-        OnPropertyChanged(nameof(SelectedService));
-        OnPropertyChanged(nameof(SelectedTimeCategory));
-        OnPropertyChanged(nameof(SelectedInputMode));
-        OnPropertyChanged(nameof(ShowDuration));
-        OnPropertyChanged(nameof(ShowStartTime));
-        OnPropertyChanged(nameof(ShowEndTime));
-        OnPropertyChanged(nameof(WorkMinutesText));
-        OnPropertyChanged(nameof(StartTime));
-        OnPropertyChanged(nameof(EndTime));
+        isInitializing = true;
+        try
+        {
+            Tasks.Clear();
+            presetCandidates = [];
+            services = [];
+            allTimeCategories = [];
+            premiums = [];
+            holidayCalendar = null;
+            UnavailableCandidatesText = string.Empty;
+            PreviewText = "入力後に訪問全体の給与をプレビューできます。";
+            CountBonusText = string.Empty;
+            VisitTotalText = string.Empty;
+            IssueMessage = string.Empty;
+            FirstInvalidTask = null;
+            FirstInvalidField = null;
+            CanSave = false;
+        }
+        finally
+        {
+            isInitializing = false;
+        }
+        OnPropertyChanged(nameof(PresetCandidates));
+        OnPropertyChanged(nameof(Services));
     }
 
     private async Task<WorkRecordPreviewDto?> PreviewCoreAsync(CancellationToken cancellationToken)
@@ -403,18 +356,13 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     {
         var selectedDate = DateOnly.FromDateTime(WorkDate);
         if (selectedDate == optionsDate) return;
-        var serviceId = SelectedService?.Id;
-        var categoryId = SelectedTimeCategory?.Id;
         isInitializing = true;
         try
         {
             editorScreen = await workRecords.GetEditorScreenAsync(selectedDate, WorkRecordId, cancellationToken);
-            var options = editorScreen.InputOptions;
-            PopulateOptions(options, editorScreen.HolidayCalendar);
-            selectedPreset = PresetCandidates.FirstOrDefault(x => x.Id == selectedPreset?.Id && x.IsAvailable);
-            OnPropertyChanged(nameof(SelectedPreset));
-            SelectedService = Services.FirstOrDefault(x => x.Id == serviceId) ?? Services.FirstOrDefault(x => x.IsEnabled);
-            SelectedTimeCategory = TimeCategories.FirstOrDefault(x => x.Id == categoryId) ?? TimeCategories.FirstOrDefault();
+            PopulateOptions(editorScreen.InputOptions, editorScreen.HolidayCalendar, editorScreen.ExistingRecord);
+            foreach (var task in Tasks)
+                task.UpdateOptions(presetCandidates, services, allTimeCategories);
         }
         finally
         {
@@ -422,27 +370,36 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         }
     }
 
-    private void PopulateOptions(WorkInputOptionsDto options, HolidayCalendar holidayCalendar)
+    private void PopulateOptions(WorkInputOptionsDto options, HolidayCalendar calendar, WorkRecordDto? existing)
     {
         optionsDate = options.WorkDate;
-        this.holidayCalendar = holidayCalendar;
-        PresetCandidates = options.PresetCandidates.Where(x => x.IsAvailable).Select(x => new PresetOptionViewModel(
-            x.Preset.Id,
-            x.Preset.DisplayName,
-            x.Preset.ServiceId,
-            x.Preset.TimeCategoryId,
-            x.Preset.DefaultWorkMinutes,
-            x.IsAvailable,
-            string.Join(Environment.NewLine, x.Issues.Select(issue => issue.Message)))).ToArray();
-        Services = options.Settings.Snapshot.Services
-            .Where(x => x.IsEnabled || x.Id == originalServiceId)
-            .OrderBy(x => x.DisplayOrder.Value)
-            .Select(x => new ServiceOptionViewModel(x.Id, x.DisplayName, x.IsEnabled))
+        holidayCalendar = calendar;
+        var originalServiceIds = existing?.Tasks.Select(task => task.ServiceId).ToHashSet() ?? [];
+        presetCandidates = options.PresetCandidates
+            .Where(candidate => candidate.IsAvailable)
+            .OrderBy(candidate => candidate.Preset.DisplayOrder.Value)
+            .ThenBy(candidate => candidate.Preset.DisplayName, StringComparer.CurrentCulture)
+            .Select(candidate => new PresetOptionViewModel(
+                candidate.Preset.Id,
+                candidate.Preset.DisplayName,
+                candidate.Preset.ServiceId,
+                candidate.Preset.TimeCategoryId,
+                candidate.Preset.DefaultWorkMinutes,
+                candidate.IsAvailable,
+                string.Join(Environment.NewLine, candidate.Issues.Select(issue => issue.Message))))
+            .ToArray();
+        services = options.Settings.Snapshot.Services
+            .Where(service => service.IsEnabled || originalServiceIds.Contains(service.Id))
+            .OrderBy(service => service.DisplayOrder.Value)
+            .ThenBy(service => service.DisplayName, StringComparer.CurrentCulture)
+            .Select(service => new ServiceOptionViewModel(service.Id, service.DisplayName, service.IsEnabled))
             .ToArray();
         allTimeCategories = options.Settings.Snapshot.TimeCategories;
         premiums = options.Settings.Snapshot.Premiums;
         UnavailableCandidatesText = string.Join(Environment.NewLine,
-            options.PresetCandidates.Where(x => !x.IsAvailable).Select(FormatUnavailableCandidate));
+            options.PresetCandidates.Where(candidate => !candidate.IsAvailable).Select(FormatUnavailableCandidate));
+        OnPropertyChanged(nameof(PresetCandidates));
+        OnPropertyChanged(nameof(Services));
     }
 
     private static string FormatUnavailableCandidate(ServicePresetCandidateDto value)
@@ -453,90 +410,87 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         return $"利用できない候補: {value.Preset.DisplayName}: {reason}";
     }
 
-    private IReadOnlyList<SnapshotTimeCategory> allTimeCategories = [];
-    private IReadOnlyList<SnapshotPremium> premiums = [];
-    private HolidayCalendar? holidayCalendar;
-
-    private void ApplyExisting(WorkRecordDto value)
+    private void AddTaskCore(WorkTaskDto? existing)
     {
-        SelectedService = Services.FirstOrDefault(x => x.Id == value.ServiceId);
-        SelectedTimeCategory = TimeCategories.FirstOrDefault(x => x.Id == value.TimeCategoryId);
-        SelectedInputMode = InputModes.First(x => x.Value == value.InputMode);
-        WorkMinutesText = value.WorkMinutes.Value.ToString();
-        if (value.StartTime is { } start) StartTime = ToTimeSpan(start);
-        if (value.EndTime is { } end) EndTime = ToTimeSpan(end);
-        selectedPreset = PresetCandidates.FirstOrDefault(x => x.Id == value.SourceServicePresetId);
-        OnPropertyChanged(nameof(SelectedPreset));
+        var id = existing?.Id ?? (Tasks.Count == 0
+            ? new WorkTaskId(operationId)
+            : new WorkTaskId(Guid.NewGuid()));
+        var task = new WorkTaskEditorViewModel(
+            id,
+            existing,
+            presetCandidates,
+            services,
+            allTimeCategories,
+            InputModes,
+            HasApplicableTimedPremium,
+            OnTaskInputChanged,
+            MoveTaskUpAsync,
+            MoveTaskDownAsync,
+            DeleteTaskAsync);
+        Tasks.Add(task);
+        UpdateTaskPositions();
     }
 
-    private void RememberOriginalSelection(WorkRecordDto value)
+    private void OnTaskInputChanged(WorkTaskEditorViewModel _)
     {
-        originalServiceId = value.ServiceId;
-        originalTimeCategoryId = value.TimeCategoryId;
-        originalSourceServicePresetId = value.SourceServicePresetId;
-    }
-
-    private void ApplyPreset(PresetOptionViewModel value)
-    {
-        isInitializing = true;
-        try
-        {
-            SelectedService = Services.FirstOrDefault(x => x.Id == value.ServiceId);
-            SelectedTimeCategory = TimeCategories.FirstOrDefault(x => x.Id == value.TimeCategoryId);
-            WorkMinutesText = value.DefaultWorkMinutes.Value.ToString();
-        }
-        finally
-        {
-            isInitializing = false;
-        }
+        if (isInitializing) return;
         InputChanged();
     }
 
-    private void RebuildTimeCategories(ServiceId? serviceId)
+    private void UpdateTaskPositions()
     {
-        var previous = SelectedTimeCategory;
-        TimeCategories = new[] { TimeCategoryOptionViewModel.Arbitrary }
-            .Concat(allTimeCategories
-            .Where(x => x.ServiceId == serviceId &&
-                (x.IsEnabled || (serviceId == originalServiceId && x.Id == originalTimeCategoryId)))
-            .OrderBy(x => x.DisplayOrder.Value)
-            .Select(x => new TimeCategoryOptionViewModel(x.Id, x.DisplayName, x.StandardMinutes, x.IsEnabled)))
-            .ToArray();
-        selectedTimeCategory = previous is { Id: null }
-            ? TimeCategories[0]
-            : TimeCategories.FirstOrDefault(x => x.Id == previous?.Id) ??
-              TimeCategories.FirstOrDefault(x => x.Id is not null && x.IsEnabled) ?? TimeCategories[0];
-        OnPropertyChanged(nameof(SelectedTimeCategory));
-        if (!isInitializing && selectedTimeCategory.StandardMinutes is { } standardMinutes)
-            WorkMinutesText = standardMinutes.Value.ToString();
+        for (var index = 0; index < Tasks.Count; index++)
+            Tasks[index].UpdatePosition(index, Tasks.Count);
+        OnPropertyChanged(nameof(HasMultipleTasks));
+        OnPropertyChanged(nameof(TaskCountText));
+        OnPropertyChanged(nameof(HasIssues));
     }
 
     private bool HasApplicableTimedPremium(ServiceId serviceId)
     {
         var date = DateOnly.FromDateTime(WorkDate);
-        return premiums.Any(x =>
+        return premiums.Any(premium =>
         {
-            if (!x.IsEnabled || x.StartTime is null ||
-                (x.ServiceIds.Count != 0 && !x.ServiceIds.Contains(serviceId))) return false;
-            var hasDateCondition = x.Weekdays.Count != 0 || x.Dates.Count != 0 || x.UsesNationalHolidays;
-            return !hasDateCondition || x.Weekdays.Contains(date.DayOfWeek) || x.Dates.Contains(date) ||
-                (x.UsesNationalHolidays && holidayCalendar?.Holidays.ContainsKey(date) == true);
+            if (!premium.IsEnabled || premium.StartTime is null ||
+                (premium.ServiceIds.Count != 0 && !premium.ServiceIds.Contains(serviceId))) return false;
+            var hasDateCondition = premium.Weekdays.Count != 0 || premium.Dates.Count != 0 || premium.UsesNationalHolidays;
+            return !hasDateCondition || premium.Weekdays.Contains(date.DayOfWeek) || premium.Dates.Contains(date) ||
+                (premium.UsesNationalHolidays && holidayCalendar?.Holidays.ContainsKey(date) == true);
         });
     }
 
     private SaveWorkRecordCommand? BuildCommand(out IReadOnlyList<IssueDto> issues)
     {
         var local = new List<IssueDto>();
-        if (SelectedService is null)
-            local.Add(new IssueDto("WORK_SERVICE_REQUIRED", "ServiceId", "サービスを選択してください。"));
-
-        WorkMinutes? minutes = null;
-        if (SelectedInputMode.Value == WorkInputMode.Duration)
+        var commands = new List<SaveWorkTaskCommand>(Tasks.Count);
+        foreach (var task in Tasks)
         {
-            if (!int.TryParse(WorkMinutesText, out var value) || value is < 1 or > 1440)
-                local.Add(new IssueDto("WORK_MINUTES_OUT_OF_RANGE", "WorkMinutes", "勤務時間は1分以上24時間以内で入力してください。超える場合は複数の記録に分けてください。"));
-            else
-                minutes = new WorkMinutes(value);
+            var prefix = $"Tasks[{task.Id.Value:D}]";
+            if (task.SelectedService is null)
+                local.Add(new IssueDto("WORK_SERVICE_REQUIRED", $"{prefix}.ServiceId", "サービスを選択してください。"));
+
+            WorkMinutes? minutes = null;
+            if (task.SelectedInputMode.Value == WorkInputMode.Duration)
+            {
+                if (!int.TryParse(task.WorkMinutesText, out var value) || value is < 1 or > 1440)
+                    local.Add(new IssueDto("WORK_MINUTES_OUT_OF_RANGE", $"{prefix}.WorkMinutes",
+                        "勤務時間は1分以上24時間以内で入力してください。"));
+                else
+                    minutes = new WorkMinutes(value);
+            }
+
+            if (task.SelectedService is null) continue;
+            var mode = task.SelectedInputMode.Value;
+            commands.Add(new SaveWorkTaskCommand(
+                task.Id,
+                task.SelectedService.Id,
+                task.SelectedTimeCategory?.Id,
+                mode,
+                minutes,
+                mode == WorkInputMode.TimeRange || task.ShowStartTime ? ToMinuteOfDay(task.StartTime) : null,
+                mode == WorkInputMode.TimeRange ? ToMinuteOfDay(task.EndTime) : null,
+                new DisplayOrder(task.DisplayOrder),
+                task.SelectedPreset?.Id ?? task.OriginalSourceServicePresetId));
         }
 
         if (local.Count != 0)
@@ -546,17 +500,10 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         }
 
         issues = [];
-        var mode = SelectedInputMode.Value;
         return new SaveWorkRecordCommand(
             WorkRecordId,
             DateOnly.FromDateTime(WorkDate),
-            SelectedService!.Id,
-            SelectedTimeCategory?.Id,
-            mode,
-            minutes,
-            mode == WorkInputMode.TimeRange || ShowStartTime ? ToMinuteOfDay(StartTime) : null,
-            mode == WorkInputMode.TimeRange ? ToMinuteOfDay(EndTime) : null,
-            SelectedPreset?.Id ?? (IsEditing ? originalSourceServicePresetId : null),
+            commands,
             WorkRecordId is null ? operationId : null);
     }
 
@@ -564,30 +511,90 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     {
         PresentIssues(preview.Issues);
         CanSave = preview.CanSave;
+        var normalizedById = preview.Tasks
+            .Where(task => task.WorkTaskId.Value != Guid.Empty)
+            .ToDictionary(task => task.WorkTaskId);
+        var calculationById = preview.Calculation?.TaskCalculations.ToDictionary(task => task.WorkTaskId) ?? [];
+        for (var index = 0; index < Tasks.Count; index++)
+        {
+            var task = Tasks[index];
+            WorkTaskPreviewDto? normalized = normalizedById.GetValueOrDefault(task.Id);
+            TaskSalaryCalculation? calculation = calculationById.GetValueOrDefault(task.Id);
+            task.ApplyPreview(normalized, calculation, formatter);
+        }
+
         if (preview.Calculation?.Status == SalaryCalculationStatus.Calculated && preview.Calculation.Total is { } total)
-            PreviewText = $"給与見込み {formatter.Money(total)}";
+        {
+            CountBonusText = preview.Calculation.CountBonuses.Count == 0
+                ? "訪問の件数加算: なし"
+                : "訪問の件数加算: " + string.Join("、", preview.Calculation.CountBonuses
+                    .Select(bonus => $"{bonus.DisplayName} {formatter.Money(bonus.Amount)}"));
+            VisitTotalText = $"訪問合計 {formatter.Money(total)}";
+            PreviewText = "全タスクを含む訪問の給与見込みです。";
+        }
         else if (preview.Calculation?.Status == SalaryCalculationStatus.Uncalculated)
-            PreviewText = "未計算（勤務内容は保存できます）";
+        {
+            CountBonusText = string.Empty;
+            VisitTotalText = string.Empty;
+            PreviewText = "未計算（勤務内容は保存できます）。不足しているタスクを確認してください。";
+        }
         else
-            PreviewText = "入力を修正すると給与をプレビューできます。";
-        ApplyNormalized(preview.NormalizedWorkMinutes, preview.NormalizedStartTime, preview.NormalizedEndTime);
+        {
+            CountBonusText = string.Empty;
+            VisitTotalText = string.Empty;
+            PreviewText = "入力を修正すると訪問全体の給与をプレビューできます。";
+        }
     }
 
-    private void ApplyNormalized(WorkMinutes? minutes, MinuteOfDay? start, MinuteOfDay? end)
+    private void ApplySavedNormalization(WorkRecordDto record)
     {
-        var values = new List<string>();
-        if (minutes is { } workMinutes) values.Add($"正規化後: {formatter.Duration(workMinutes)}");
-        if (start is { } startTime) values.Add($"開始 {formatter.Time(startTime)}");
-        if (end is { } endTime) values.Add($"終了 {formatter.Time(endTime)}{(start is { } s && endTime.Value <= s.Value ? "（翌日）" : string.Empty)}");
-        NormalizedTimeText = string.Join(" / ", values);
+        var byId = record.Tasks.ToDictionary(task => task.Id);
+        foreach (var task in Tasks)
+        {
+            if (byId.TryGetValue(task.Id, out var saved)) task.ApplyNormalized(saved, formatter);
+        }
     }
 
     private void PresentIssues(IReadOnlyList<IssueDto> issues)
     {
-        var presentation = issuePresenter.Present(issues);
-        FieldErrors = presentation.FieldErrors;
-        IssueMessage = presentation.ScreenMessage ?? string.Empty;
-        FirstInvalidField = presentation.FirstInvalidField;
+        foreach (var task in Tasks) task.SetErrors([]);
+        FirstInvalidTask = null;
+        FirstInvalidField = null;
+
+        var screenIssues = new List<IssueDto>();
+        foreach (var issue in issues)
+        {
+            if (TryParseTaskField(issue.Field, out var taskId, out var field) &&
+                Tasks.FirstOrDefault(task => task.Id == taskId) is { } task)
+            {
+                task.AddError(field, issue.Message);
+                if (FirstInvalidTask is null)
+                {
+                    FirstInvalidTask = task;
+                    FirstInvalidField = field;
+                }
+            }
+            else
+            {
+                screenIssues.Add(issue with { Field = null });
+            }
+        }
+
+        IssueMessage = issuePresenter.Present(screenIssues).ScreenMessage ?? string.Empty;
+        OnPropertyChanged(nameof(HasIssues));
+    }
+
+    private static bool TryParseTaskField(string? value, out WorkTaskId taskId, out string field)
+    {
+        taskId = default;
+        field = string.Empty;
+        const string prefix = "Tasks[";
+        if (value is null || !value.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var close = value.IndexOf(']', prefix.Length);
+        if (close < 0 || !Guid.TryParse(value[prefix.Length..close], out var id)) return false;
+        field = close + 1 < value.Length && value[close + 1] == '.' ? value[(close + 2)..] : "Tasks";
+        taskId = new WorkTaskId(id);
+        return true;
     }
 
     private void InputChanged()
@@ -596,23 +603,384 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         previewedCommand = null;
         MarkDirty();
         CanSave = false;
-        PreviewText = "入力内容が変わりました。給与を再プレビューしてください。";
-        NormalizedTimeText = string.Empty;
-        FieldErrors = new Dictionary<string, string>();
+        PreviewText = "入力内容が変わりました。訪問全体を再プレビューしてください。";
+        CountBonusText = string.Empty;
+        VisitTotalText = string.Empty;
+        foreach (var task in Tasks)
+        {
+            task.SetErrors([]);
+            task.ResetPreview();
+        }
         IssueMessage = string.Empty;
+        FirstInvalidTask = null;
         FirstInvalidField = null;
+        OnPropertyChanged(nameof(HasIssues));
         PreviewCommand.NotifyCanExecuteChanged();
         SaveCommand.NotifyCanExecuteChanged();
     }
+
+    private bool CanEditTasks() => !hasSaved && IsNotBusy;
 
     private void NotifyCommands()
     {
         PreviewCommand.NotifyCanExecuteChanged();
         SaveCommand.NotifyCanExecuteChanged();
+        foreach (var task in Tasks) task.NotifyCommands();
     }
 
     private static MinuteOfDay ToMinuteOfDay(TimeSpan value) => new((int)value.TotalMinutes);
-    private static TimeSpan ToTimeSpan(MinuteOfDay value) => TimeSpan.FromMinutes(value.Value);
+}
+
+/// <summary>勤務入力画面の1タスクカードに閉じた編集状態を保持します。</summary>
+public sealed class WorkTaskEditorViewModel : ObservableObject
+{
+    private readonly IReadOnlyList<WorkInputModeOption> inputModes;
+    private readonly Func<ServiceId, bool> hasApplicableTimedPremium;
+    private readonly Action<WorkTaskEditorViewModel> inputChanged;
+    private bool suppressChanges;
+    private IReadOnlyList<PresetOptionViewModel> presetCandidates;
+    private IReadOnlyList<ServiceOptionViewModel> services;
+    private IReadOnlyList<SnapshotTimeCategory> allTimeCategories;
+    private IReadOnlyList<TimeCategoryOptionViewModel> timeCategories = [];
+    private PresetOptionViewModel? selectedPreset;
+    private ServiceOptionViewModel? selectedService;
+    private TimeCategoryOptionViewModel? selectedTimeCategory;
+    private WorkInputModeOption selectedInputMode;
+    private string workMinutesText = string.Empty;
+    private TimeSpan startTime = new(9, 0, 0);
+    private TimeSpan endTime = new(10, 0, 0);
+    private int displayOrder;
+    private int taskCount = 1;
+    private string previewText = "入力後にタスク給与を表示します。";
+    private string normalizedTimeText = string.Empty;
+    private readonly Dictionary<string, List<string>> errors = new(StringComparer.Ordinal);
+
+    public WorkTaskEditorViewModel(
+        WorkTaskId id,
+        WorkTaskDto? existing,
+        IReadOnlyList<PresetOptionViewModel> presetCandidates,
+        IReadOnlyList<ServiceOptionViewModel> services,
+        IReadOnlyList<SnapshotTimeCategory> timeCategories,
+        IReadOnlyList<WorkInputModeOption> inputModes,
+        Func<ServiceId, bool> hasApplicableTimedPremium,
+        Action<WorkTaskEditorViewModel> inputChanged,
+        Func<WorkTaskEditorViewModel, Task> moveUp,
+        Func<WorkTaskEditorViewModel, Task> moveDown,
+        Func<WorkTaskEditorViewModel, Task> delete)
+    {
+        Id = id;
+        this.presetCandidates = presetCandidates;
+        this.services = services;
+        allTimeCategories = timeCategories;
+        this.inputModes = inputModes;
+        this.hasApplicableTimedPremium = hasApplicableTimedPremium;
+        this.inputChanged = inputChanged;
+        selectedInputMode = inputModes[0];
+        OriginalServiceId = existing?.ServiceId;
+        OriginalTimeCategoryId = existing?.TimeCategoryId;
+        OriginalSourceServicePresetId = existing?.SourceServicePresetId;
+        MoveUpCommand = new AsyncCommand(() => moveUp(this), _ => { }, () => CanMoveUp);
+        MoveDownCommand = new AsyncCommand(() => moveDown(this), _ => { }, () => CanMoveDown);
+        DeleteCommand = new AsyncCommand(() => delete(this), _ => { }, () => CanRemove);
+
+        suppressChanges = true;
+        try
+        {
+            if (existing is not null)
+            {
+                selectedService = services.FirstOrDefault(service => service.Id == existing.ServiceId);
+                RebuildTimeCategories(existing.TimeCategoryId);
+                selectedTimeCategory = FindTimeCategory(existing.TimeCategoryId);
+                selectedInputMode = inputModes.First(mode => mode.Value == existing.InputMode);
+                workMinutesText = existing.WorkMinutes.Value.ToString();
+                if (existing.StartTime is { } start) startTime = TimeSpan.FromMinutes(start.Value);
+                if (existing.EndTime is { } end) endTime = TimeSpan.FromMinutes(end.Value);
+                selectedPreset = presetCandidates.FirstOrDefault(preset => preset.Id == existing.SourceServicePresetId);
+            }
+            else
+            {
+                RebuildTimeCategories(null);
+            }
+        }
+        finally
+        {
+            suppressChanges = false;
+        }
+    }
+
+    public WorkTaskId Id { get; }
+    public ServiceId? OriginalServiceId { get; }
+    public TimeCategoryId? OriginalTimeCategoryId { get; }
+    public ServicePresetId? OriginalSourceServicePresetId { get; }
+    public IReadOnlyList<PresetOptionViewModel> PresetCandidates => presetCandidates;
+    public IReadOnlyList<ServiceOptionViewModel> Services => services;
+    public IReadOnlyList<TimeCategoryOptionViewModel> TimeCategories => timeCategories;
+    public IReadOnlyList<WorkInputModeOption> InputModes => inputModes;
+    public int DisplayOrder => displayOrder;
+    public string TaskTitle => $"タスク {DisplayOrder + 1}";
+    public string AccessibilityText => $"訪問内の{TaskTitle}、全{taskCount}件";
+    public bool CanMoveUp => DisplayOrder > 0;
+    public bool CanMoveDown => DisplayOrder < taskCount - 1;
+    public bool CanRemove => taskCount > 1;
+    public string DeleteAccessibilityText => CanRemove
+        ? $"{TaskTitle}を削除"
+        : "最後の1タスクは削除できません";
+    public string ServiceAutomationId => $"Task-{Id.Value:D}-ServiceId";
+    public string TimeCategoryAutomationId => $"Task-{Id.Value:D}-TimeCategoryId";
+    public string WorkMinutesAutomationId => $"Task-{Id.Value:D}-WorkMinutes";
+    public string StartTimeAutomationId => $"Task-{Id.Value:D}-StartTime";
+    public string EndTimeAutomationId => $"Task-{Id.Value:D}-EndTime";
+    public AsyncCommand MoveUpCommand { get; }
+    public AsyncCommand MoveDownCommand { get; }
+    public AsyncCommand DeleteCommand { get; }
+
+    public PresetOptionViewModel? SelectedPreset
+    {
+        get => selectedPreset;
+        set
+        {
+            if (!SetProperty(ref selectedPreset, value)) return;
+            if (value is not null) ApplyPreset(value);
+            Changed();
+        }
+    }
+    public ServiceOptionViewModel? SelectedService
+    {
+        get => selectedService;
+        set
+        {
+            if (!SetProperty(ref selectedService, value)) return;
+            RebuildTimeCategories(SelectedTimeCategory?.Id);
+            OnPropertyChanged(nameof(ShowStartTime));
+            Changed();
+        }
+    }
+    public TimeCategoryOptionViewModel? SelectedTimeCategory
+    {
+        get => selectedTimeCategory;
+        set
+        {
+            if (!SetProperty(ref selectedTimeCategory, value)) return;
+            if (value?.StandardMinutes is { } standardMinutes) WorkMinutesText = standardMinutes.Value.ToString();
+            Changed();
+        }
+    }
+    public WorkInputModeOption SelectedInputMode
+    {
+        get => selectedInputMode;
+        set
+        {
+            if (!SetProperty(ref selectedInputMode, value)) return;
+            OnPropertyChanged(nameof(ShowDuration));
+            OnPropertyChanged(nameof(ShowStartTime));
+            OnPropertyChanged(nameof(ShowEndTime));
+            Changed();
+        }
+    }
+    public bool HasTimeCategories => TimeCategories.Count > 1;
+    public bool ShowDuration => SelectedInputMode.Value == WorkInputMode.Duration;
+    public bool ShowEndTime => SelectedInputMode.Value == WorkInputMode.TimeRange;
+    public bool ShowStartTime => ShowEndTime || SelectedService is { } service && hasApplicableTimedPremium(service.Id);
+    public string WorkMinutesText
+    {
+        get => workMinutesText;
+        set { if (SetProperty(ref workMinutesText, value)) Changed(); }
+    }
+    public TimeSpan StartTime
+    {
+        get => startTime;
+        set { if (SetProperty(ref startTime, value)) Changed(); }
+    }
+    public TimeSpan EndTime
+    {
+        get => endTime;
+        set { if (SetProperty(ref endTime, value)) Changed(); }
+    }
+    public string PreviewText { get => previewText; private set => SetProperty(ref previewText, value); }
+    public string NormalizedTimeText { get => normalizedTimeText; private set => SetProperty(ref normalizedTimeText, value); }
+    public bool HasErrors => errors.Count != 0;
+    public string ServiceError => Error("ServiceId");
+    public string TimeCategoryError => Error("TimeCategoryId");
+    public string WorkMinutesError => Error("WorkMinutes");
+    public string StartTimeError => Error("StartTime");
+    public string EndTimeError => Error("EndTime");
+    public string TaskIssueMessage => string.Join(Environment.NewLine, errors
+        .Where(pair => pair.Key is not "ServiceId" and not "TimeCategoryId" and not "WorkMinutes" and not "StartTime" and not "EndTime")
+        .SelectMany(pair => pair.Value)
+        .Distinct(StringComparer.Ordinal));
+    public bool HasTaskIssues => !string.IsNullOrWhiteSpace(TaskIssueMessage);
+
+    public void UpdateOptions(
+        IReadOnlyList<PresetOptionViewModel> newPresets,
+        IReadOnlyList<ServiceOptionViewModel> newServices,
+        IReadOnlyList<SnapshotTimeCategory> newTimeCategories)
+    {
+        var serviceId = SelectedService?.Id;
+        var categoryId = SelectedTimeCategory?.Id;
+        var presetId = SelectedPreset?.Id;
+        suppressChanges = true;
+        try
+        {
+            presetCandidates = newPresets;
+            services = newServices;
+            allTimeCategories = newTimeCategories;
+            selectedPreset = newPresets.FirstOrDefault(preset => preset.Id == presetId);
+            selectedService = newServices.FirstOrDefault(service => service.Id == serviceId);
+            RebuildTimeCategories(categoryId);
+            selectedTimeCategory = FindTimeCategory(categoryId);
+        }
+        finally
+        {
+            suppressChanges = false;
+        }
+        OnPropertyChanged(nameof(PresetCandidates));
+        OnPropertyChanged(nameof(Services));
+        OnPropertyChanged(nameof(SelectedPreset));
+        OnPropertyChanged(nameof(SelectedService));
+        OnPropertyChanged(nameof(SelectedTimeCategory));
+        RefreshDateRules();
+    }
+
+    public void UpdatePosition(int index, int count)
+    {
+        displayOrder = index;
+        taskCount = count;
+        OnPropertyChanged(nameof(DisplayOrder));
+        OnPropertyChanged(nameof(TaskTitle));
+        OnPropertyChanged(nameof(AccessibilityText));
+        OnPropertyChanged(nameof(CanMoveUp));
+        OnPropertyChanged(nameof(CanMoveDown));
+        OnPropertyChanged(nameof(CanRemove));
+        OnPropertyChanged(nameof(DeleteAccessibilityText));
+        NotifyCommands();
+    }
+
+    public void RefreshDateRules() => OnPropertyChanged(nameof(ShowStartTime));
+
+    public void ApplyPreview(
+        WorkTaskPreviewDto? normalized,
+        TaskSalaryCalculation? calculation,
+        JapaneseDisplayFormatter formatter)
+    {
+        if (normalized is not null)
+            ApplyNormalized(normalized.NormalizedWorkMinutes, normalized.NormalizedStartTime, normalized.NormalizedEndTime, formatter);
+        if (calculation?.Status == SalaryCalculationStatus.Calculated && calculation.TaskSubtotal is { } subtotal)
+            PreviewText = $"タスク給与 {formatter.Money(subtotal)}";
+        else if (calculation?.Status == SalaryCalculationStatus.Uncalculated)
+            PreviewText = "このタスクは設定不足のため未計算です。";
+        else
+            PreviewText = "入力を修正するとタスク給与を表示します。";
+    }
+
+    public void ApplyNormalized(WorkTaskDto task, JapaneseDisplayFormatter formatter) =>
+        ApplyNormalized(task.WorkMinutes, task.StartTime, task.EndTime, formatter);
+
+    public void ResetPreview()
+    {
+        PreviewText = "入力後にタスク給与を表示します。";
+        NormalizedTimeText = string.Empty;
+    }
+
+    public void SetErrors(IEnumerable<KeyValuePair<string, string>> values)
+    {
+        errors.Clear();
+        foreach (var (field, message) in values) AddErrorCore(field, message);
+        NotifyErrors();
+    }
+
+    public void AddError(string field, string message)
+    {
+        AddErrorCore(field, message);
+        NotifyErrors();
+    }
+
+    public void NotifyCommands()
+    {
+        MoveUpCommand.NotifyCanExecuteChanged();
+        MoveDownCommand.NotifyCanExecuteChanged();
+        DeleteCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ApplyPreset(PresetOptionViewModel preset)
+    {
+        suppressChanges = true;
+        try
+        {
+            selectedService = services.FirstOrDefault(service => service.Id == preset.ServiceId);
+            OnPropertyChanged(nameof(SelectedService));
+            RebuildTimeCategories(preset.TimeCategoryId);
+            selectedTimeCategory = FindTimeCategory(preset.TimeCategoryId);
+            OnPropertyChanged(nameof(SelectedTimeCategory));
+            workMinutesText = preset.DefaultWorkMinutes.Value.ToString();
+            OnPropertyChanged(nameof(WorkMinutesText));
+            OnPropertyChanged(nameof(ShowStartTime));
+        }
+        finally
+        {
+            suppressChanges = false;
+        }
+    }
+
+    private void RebuildTimeCategories(TimeCategoryId? preferredId)
+    {
+        timeCategories = new[] { TimeCategoryOptionViewModel.Arbitrary }
+            .Concat(allTimeCategories
+                .Where(category => category.ServiceId == SelectedService?.Id &&
+                    (category.IsEnabled || (category.ServiceId == OriginalServiceId && category.Id == OriginalTimeCategoryId)))
+                .OrderBy(category => category.DisplayOrder.Value)
+                .ThenBy(category => category.DisplayName, StringComparer.CurrentCulture)
+                .Select(category => new TimeCategoryOptionViewModel(
+                    category.Id, category.DisplayName, category.StandardMinutes, category.IsEnabled)))
+            .ToArray();
+        selectedTimeCategory = FindTimeCategory(preferredId);
+        OnPropertyChanged(nameof(TimeCategories));
+        OnPropertyChanged(nameof(SelectedTimeCategory));
+        OnPropertyChanged(nameof(HasTimeCategories));
+    }
+
+    private TimeCategoryOptionViewModel? FindTimeCategory(TimeCategoryId? id) =>
+        id is null ? null : timeCategories.FirstOrDefault(category => category.Id == id);
+
+    private void ApplyNormalized(
+        WorkMinutes? minutes,
+        MinuteOfDay? start,
+        MinuteOfDay? end,
+        JapaneseDisplayFormatter formatter)
+    {
+        var values = new List<string>();
+        if (minutes is { } workMinutes) values.Add($"正規化後: {formatter.Duration(workMinutes)}");
+        if (start is { } startTimeValue) values.Add($"開始 {formatter.Time(startTimeValue)}");
+        if (end is { } endTimeValue)
+            values.Add($"終了 {formatter.Time(endTimeValue)}{(start is { } s && endTimeValue.Value <= s.Value ? "（翌日）" : string.Empty)}");
+        NormalizedTimeText = string.Join(" / ", values);
+    }
+
+    private void AddErrorCore(string field, string message)
+    {
+        if (!errors.TryGetValue(field, out var messages)) errors[field] = messages = [];
+        if (!messages.Contains(message, StringComparer.Ordinal)) messages.Add(message);
+    }
+
+    private string Error(string field) => errors.TryGetValue(field, out var messages)
+        ? string.Join(Environment.NewLine, messages)
+        : string.Empty;
+
+    private void NotifyErrors()
+    {
+        OnPropertyChanged(nameof(HasErrors));
+        OnPropertyChanged(nameof(ServiceError));
+        OnPropertyChanged(nameof(TimeCategoryError));
+        OnPropertyChanged(nameof(WorkMinutesError));
+        OnPropertyChanged(nameof(StartTimeError));
+        OnPropertyChanged(nameof(EndTimeError));
+        OnPropertyChanged(nameof(TaskIssueMessage));
+        OnPropertyChanged(nameof(HasTaskIssues));
+    }
+
+    private void Changed()
+    {
+        if (!suppressChanges) inputChanged(this);
+    }
 }
 
 public sealed record PresetOptionViewModel(

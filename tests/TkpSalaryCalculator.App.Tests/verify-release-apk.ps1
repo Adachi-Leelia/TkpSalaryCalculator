@@ -29,6 +29,23 @@ $aapt2 = Get-ChildItem -LiteralPath $buildToolsDirectory -Directory |
     Where-Object { Test-Path -LiteralPath $_ } |
     Select-Object -First 1
 Assert-Condition ($null -ne $aapt2) 'aapt2.exe was not found in the Android SDK.'
+$apksigner = Get-ChildItem -LiteralPath $buildToolsDirectory -Directory |
+    Sort-Object { [version]$_.Name } -Descending |
+    ForEach-Object { Join-Path $_.FullName 'apksigner.bat' } |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+Assert-Condition ($null -ne $apksigner) 'apksigner.bat was not found in the Android SDK.'
+
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $signatureVerification = & $apksigner verify --verbose --print-certs $resolvedApk 2>&1
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-Condition ($LASTEXITCODE -eq 0) `
+    "APK signature verification failed: $($signatureVerification -join [Environment]::NewLine)"
 
 function Invoke-Aapt2Dump {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)

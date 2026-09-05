@@ -90,6 +90,44 @@ public sealed class SqliteAppMetadataRepository(SqliteDatabase database, IUtcClo
         }, cancellationToken);
 }
 
+public sealed class SqliteAnnualSummarySettingRepository(SqliteDatabase database, IUtcClock clock)
+    : IAnnualSummarySettingRepository
+{
+    private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
+    private readonly IUtcClock clock = clock ?? throw new ArgumentNullException(nameof(clock));
+
+    public Task<AnnualClosingMonth> GetClosingMonthAsync(CancellationToken cancellationToken) =>
+        database.ReadAsync(async (connection, transaction, token) =>
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT closing_month FROM annual_summary_setting WHERE id = 1;";
+            var value = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            if (value is null or DBNull)
+                throw new InvalidDataException("The required annual_summary_setting row is missing.");
+            return new AnnualClosingMonth(Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
+        }, cancellationToken);
+
+    public Task SaveClosingMonthAsync(
+        AnnualClosingMonth closingMonth,
+        CancellationToken cancellationToken) =>
+        database.WriteAsync(async (connection, transaction, token) =>
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE annual_summary_setting
+                SET closing_month = $closingMonth, updated_at_utc = $now
+                WHERE id = 1;
+                """;
+            command.Parameters.AddValue("$closingMonth", closingMonth.Value);
+            command.Parameters.AddValue("$now", SqliteValue.Utc(clock.UtcNow));
+            if (await command.ExecuteNonQueryAsync(token).ConfigureAwait(false) != 1)
+                throw new InvalidDataException("The required annual_summary_setting row is missing.");
+            return true;
+        }, cancellationToken);
+}
+
 public sealed class SqliteServicePresetRepository(SqliteDatabase database, IUtcClock clock) : IServicePresetRepository
 {
     private readonly SqliteDatabase database = database ?? throw new ArgumentNullException(nameof(database));
@@ -184,7 +222,6 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
 
         return database.ReadAsync(async (connection, transaction, token) =>
         {
-            var values = requested.ToDictionary(x => x, _ => new List<BasicShiftDto>());
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             var parameterNames = new string[requested.Length];
@@ -194,17 +231,19 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
                 command.Parameters.AddValue(parameterNames[index], WeekdayToDatabase(requested[index]));
             }
             command.CommandText = $"""
-                SELECT id, weekday, service_preset_id, service_id, time_category_id, input_mode, work_minutes,
-                       start_time_minutes, end_time_minutes, display_order, is_enabled
-                FROM basic_shift WHERE weekday IN ({string.Join(", ", parameterNames)})
-                ORDER BY weekday, is_enabled DESC, display_order, id;
+                SELECT shift.id AS shift_id, shift.weekday, shift.display_order AS shift_display_order,
+                       shift.is_enabled, task.id AS task_id, task.service_preset_id, task.service_id,
+                       task.time_category_id, task.input_mode, task.work_minutes, task.start_time_minutes,
+                       task.end_time_minutes, task.display_order AS task_display_order
+                FROM basic_shift AS shift
+                LEFT JOIN basic_shift_task AS task ON task.basic_shift_id = shift.id
+                WHERE shift.weekday IN ({string.Join(", ", parameterNames)})
+                ORDER BY shift.weekday, shift.is_enabled DESC, shift.display_order, shift.id,
+                         task.display_order;
                 """;
-            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
-            {
-                var value = Read(reader);
-                values[value.Weekday].Add(value);
-            }
+            var shifts = await ReadManyAsync(command, token).ConfigureAwait(false);
+            var values = requested.ToDictionary(x => x, _ => new List<BasicShiftDto>());
+            foreach (var shift in shifts) values[shift.Weekday].Add(shift);
             return (IReadOnlyDictionary<DayOfWeek, IReadOnlyList<BasicShiftDto>>)
                 values.ToDictionary(x => x.Key, x => (IReadOnlyList<BasicShiftDto>)x.Value);
         }, cancellationToken);
@@ -216,41 +255,39 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT id, weekday, service_preset_id, service_id, time_category_id, input_mode, work_minutes,
-                       start_time_minutes, end_time_minutes, display_order, is_enabled
-                FROM basic_shift WHERE id = $id;
+                SELECT shift.id AS shift_id, shift.weekday, shift.display_order AS shift_display_order,
+                       shift.is_enabled, task.id AS task_id, task.service_preset_id, task.service_id,
+                       task.time_category_id, task.input_mode, task.work_minutes, task.start_time_minutes,
+                       task.end_time_minutes, task.display_order AS task_display_order
+                FROM basic_shift AS shift
+                LEFT JOIN basic_shift_task AS task ON task.basic_shift_id = shift.id
+                WHERE shift.id = $id
+                ORDER BY task.display_order;
                 """;
             command.Parameters.AddValue("$id", SqliteValue.Id(id.Value));
-            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            return await reader.ReadAsync(token).ConfigureAwait(false) ? Read(reader) : null;
+            return (await ReadManyAsync(command, token).ConfigureAwait(false)).SingleOrDefault();
         }, cancellationToken);
 
     public Task UpsertAsync(BasicShiftDto basicShift, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(basicShift);
-        _ = new WorkRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2000, 1, 1), basicShift.ServiceId,
-            basicShift.TimeCategoryId, basicShift.InputMode, basicShift.WorkMinutes, basicShift.StartTime,
-            basicShift.EndTime);
+        var snapshot = Snapshot(basicShift);
         return database.WriteAsync(async (connection, transaction, token) =>
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                INSERT INTO basic_shift(id, weekday, service_preset_id, service_id, time_category_id, input_mode,
-                    work_minutes, start_time_minutes, end_time_minutes, display_order, is_enabled,
-                    created_at_utc, updated_at_utc)
-                VALUES($id, $weekday, $preset, $service, $category, $mode, $minutes, $start, $end,
-                    $order, $enabled, $now, $now)
+                INSERT INTO basic_shift(id, weekday, display_order, is_enabled, created_at_utc, updated_at_utc)
+                VALUES($id, $weekday, $order, $enabled, $now, $now)
                 ON CONFLICT(id) DO UPDATE SET weekday = excluded.weekday,
-                    service_preset_id = excluded.service_preset_id, service_id = excluded.service_id,
-                    time_category_id = excluded.time_category_id, input_mode = excluded.input_mode,
-                    work_minutes = excluded.work_minutes, start_time_minutes = excluded.start_time_minutes,
-                    end_time_minutes = excluded.end_time_minutes, display_order = excluded.display_order,
+                    display_order = excluded.display_order,
                     is_enabled = excluded.is_enabled, updated_at_utc = excluded.updated_at_utc;
                 """;
-            Bind(command, basicShift);
-            command.Parameters.AddValue("$now", SqliteValue.Utc(clock.UtcNow));
+            var now = SqliteValue.Utc(clock.UtcNow);
+            BindParent(command, snapshot, now);
             await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+
+            await UpsertTasksAsync(connection, transaction, snapshot.Id, snapshot.Tasks, now, token)
+                .ConfigureAwait(false);
             return true;
         }, cancellationToken);
     }
@@ -268,35 +305,186 @@ public sealed class SqliteBasicShiftRepository(SqliteDatabase database, IUtcCloc
         ? DayOfWeek.Sunday
         : (DayOfWeek)weekday;
 
-    private static void Bind(SqliteCommand command, BasicShiftDto value)
+    private static void Validate(BasicShiftDto value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        _ = WeekdayToDatabase(value.Weekday);
+        _ = new WorkRecord(new WorkRecordId(value.Id.Value), new DateOnly(2000, 1, 1), value.Tasks.Select(task =>
+            new WorkTask(new WorkTaskId(task.Id.Value), task.ServiceId, task.TimeCategoryId, task.InputMode,
+                task.WorkMinutes, task.StartTime, task.EndTime, task.DisplayOrder)).ToArray());
+    }
+
+    private static BasicShiftDto Snapshot(BasicShiftDto value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(value.Tasks);
+        var snapshot = value with { Tasks = value.Tasks.ToArray() };
+        Validate(snapshot);
+        return snapshot;
+    }
+
+    private static void BindParent(SqliteCommand command, BasicShiftDto value, string now)
     {
         command.Parameters.AddValue("$id", SqliteValue.Id(value.Id.Value));
         command.Parameters.AddValue("$weekday", WeekdayToDatabase(value.Weekday));
-        command.Parameters.AddValue("$preset", value.ServicePresetId is { } preset ? SqliteValue.Id(preset.Value) : null);
-        command.Parameters.AddValue("$service", SqliteValue.Id(value.ServiceId.Value));
-        command.Parameters.AddValue("$category", value.TimeCategoryId is { } category ? SqliteValue.Id(category.Value) : null);
-        command.Parameters.AddValue("$mode", value.InputMode.ToString());
-        command.Parameters.AddValue("$minutes", value.WorkMinutes.Value);
-        command.Parameters.AddValue("$start", value.StartTime?.Value);
-        command.Parameters.AddValue("$end", value.EndTime?.Value);
         command.Parameters.AddValue("$order", value.DisplayOrder.Value);
         command.Parameters.AddValue("$enabled", value.IsEnabled ? 1 : 0);
+        command.Parameters.AddValue("$now", now);
     }
 
-    private static BasicShiftDto Read(SqliteDataReader reader) => new(
-        new BasicShiftId(SqliteValue.Guid(reader.GetString("id"))),
-        WeekdayFromDatabase(reader.GetInt32("weekday")),
-        reader.GetNullableString("service_preset_id") is { } preset
-            ? new ServicePresetId(SqliteValue.Guid(preset)) : null,
-        new ServiceId(SqliteValue.Guid(reader.GetString("service_id"))),
-        reader.GetNullableString("time_category_id") is { } category
-            ? new TimeCategoryId(SqliteValue.Guid(category)) : null,
-        Enum.Parse<WorkInputMode>(reader.GetString("input_mode"), false),
-        new WorkMinutes(reader.GetInt32("work_minutes")),
-        reader.GetNullableInt32("start_time_minutes") is { } start ? new MinuteOfDay(start) : null,
-        reader.GetNullableInt32("end_time_minutes") is { } end ? new MinuteOfDay(end) : null,
-        new DisplayOrder(reader.GetInt32("display_order")),
-        reader.GetBoolean("is_enabled"));
+    private static async Task UpsertTasksAsync(SqliteConnection connection, SqliteTransaction transaction,
+        BasicShiftId parentId, IReadOnlyList<BasicShiftTaskDto> tasks, string now,
+        CancellationToken cancellationToken)
+    {
+        var existingIds = new HashSet<BasicShiftTaskId>();
+        var maxExistingOrder = -1;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT id, display_order FROM basic_shift_task WHERE basic_shift_id = $parent;";
+            read.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                existingIds.Add(new BasicShiftTaskId(SqliteValue.Guid(reader.GetString(0))));
+                maxExistingOrder = Math.Max(maxExistingOrder, reader.GetInt32(1));
+            }
+        }
+
+        if (existingIds.Count != 0)
+        {
+            var maxDesiredOrder = tasks.Count == 0 ? -1 : tasks.Max(static task => task.DisplayOrder.Value);
+            await using var move = connection.CreateCommand();
+            move.Transaction = transaction;
+            move.CommandText = "UPDATE basic_shift_task SET display_order = display_order + $offset WHERE basic_shift_id = $parent;";
+            move.Parameters.AddValue("$offset", (long)maxExistingOrder + maxDesiredOrder + 2L);
+            move.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await move.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var desiredIds = tasks.Select(static task => task.Id).ToHashSet();
+        foreach (var removedId in existingIds.Where(id => !desiredIds.Contains(id)))
+        {
+            await using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM basic_shift_task WHERE basic_shift_id = $parent AND id = $id;";
+            delete.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            delete.Parameters.AddValue("$id", SqliteValue.Id(removedId.Value));
+            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var task in tasks)
+        {
+            if (existingIds.Contains(task.Id))
+                await UpdateTaskAsync(connection, transaction, task, now, cancellationToken).ConfigureAwait(false);
+            else
+                await InsertTaskAsync(connection, transaction, parentId, task, now, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task UpdateTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
+        BasicShiftTaskDto task, string now, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE basic_shift_task SET service_preset_id = $preset, service_id = $service,
+                time_category_id = $category, input_mode = $mode, work_minutes = $minutes,
+                start_time_minutes = $start, end_time_minutes = $end, display_order = $order,
+                updated_at_utc = $now
+            WHERE id = $id;
+            """;
+        BindTask(command, task, now);
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+            throw new InvalidDataException($"Basic shift task {task.Id.Value:D} was not found during update.");
+    }
+
+    private static async Task InsertTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
+        BasicShiftId parentId, BasicShiftTaskDto task, string now, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO basic_shift_task(
+                id, basic_shift_id, service_preset_id, service_id, time_category_id, input_mode,
+                work_minutes, start_time_minutes, end_time_minutes, display_order,
+                created_at_utc, updated_at_utc)
+            VALUES($id, $parent, $preset, $service, $category, $mode, $minutes, $start, $end,
+                $order, $now, $now);
+            """;
+        command.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+        BindTask(command, task, now);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void BindTask(SqliteCommand command, BasicShiftTaskDto task, string now)
+    {
+        command.Parameters.AddValue("$id", SqliteValue.Id(task.Id.Value));
+        command.Parameters.AddValue("$preset", task.ServicePresetId is { } preset ? SqliteValue.Id(preset.Value) : null);
+        command.Parameters.AddValue("$service", SqliteValue.Id(task.ServiceId.Value));
+        command.Parameters.AddValue("$category", task.TimeCategoryId is { } category ? SqliteValue.Id(category.Value) : null);
+        command.Parameters.AddValue("$mode", task.InputMode.ToString());
+        command.Parameters.AddValue("$minutes", task.WorkMinutes.Value);
+        command.Parameters.AddValue("$start", task.StartTime?.Value);
+        command.Parameters.AddValue("$end", task.EndTime?.Value);
+        command.Parameters.AddValue("$order", task.DisplayOrder.Value);
+        command.Parameters.AddValue("$now", now);
+    }
+
+    private static async Task<IReadOnlyList<BasicShiftDto>> ReadManyAsync(
+        SqliteCommand command,
+        CancellationToken cancellationToken)
+    {
+        var builders = new Dictionary<BasicShiftId, BasicShiftBuilder>();
+        var order = new List<BasicShiftId>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var id = new BasicShiftId(SqliteValue.Guid(reader.GetString("shift_id")));
+            if (!builders.TryGetValue(id, out var builder))
+            {
+                builder = new BasicShiftBuilder(id, WeekdayFromDatabase(reader.GetInt32("weekday")),
+                    new DisplayOrder(reader.GetInt32("shift_display_order")), reader.GetBoolean("is_enabled"));
+                builders.Add(id, builder);
+                order.Add(id);
+            }
+
+            if (reader.GetNullableString("task_id") is not { } taskId) continue;
+            builder.Tasks.Add(new BasicShiftTaskDto(
+                new BasicShiftTaskId(SqliteValue.Guid(taskId)),
+                reader.GetNullableString("service_preset_id") is { } preset
+                    ? new ServicePresetId(SqliteValue.Guid(preset)) : null,
+                new ServiceId(SqliteValue.Guid(reader.GetString("service_id"))),
+                reader.GetNullableString("time_category_id") is { } category
+                    ? new TimeCategoryId(SqliteValue.Guid(category)) : null,
+                Enum.Parse<WorkInputMode>(reader.GetString("input_mode"), false),
+                new WorkMinutes(reader.GetInt32("work_minutes")),
+                reader.GetNullableInt32("start_time_minutes") is { } start ? new MinuteOfDay(start) : null,
+                reader.GetNullableInt32("end_time_minutes") is { } end ? new MinuteOfDay(end) : null,
+                new DisplayOrder(reader.GetInt32("task_display_order"))));
+        }
+
+        var result = new List<BasicShiftDto>(order.Count);
+        foreach (var id in order)
+        {
+            var builder = builders[id];
+            if (builder.Tasks.Count == 0)
+                throw new InvalidDataException($"Basic shift {id.Value:D} has no tasks.");
+            var value = new BasicShiftDto(id, builder.Weekday, builder.Tasks, builder.DisplayOrder, builder.IsEnabled);
+            Validate(value);
+            result.Add(value);
+        }
+        return result;
+    }
+
+    private sealed record BasicShiftBuilder(
+        BasicShiftId Id,
+        DayOfWeek Weekday,
+        DisplayOrder DisplayOrder,
+        bool IsEnabled)
+    {
+        internal List<BasicShiftTaskDto> Tasks { get; } = [];
+    }
 }
 
 public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcClock clock) : IWorkRecordRepository
@@ -312,52 +500,17 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         return Convert.ToInt64(await command.ExecuteScalarAsync(token).ConfigureAwait(false)) != 0;
     }, cancellationToken);
 
-    public Task<WorkInputHistory> GetInputHistoryAsync(
-        CancellationToken cancellationToken) => database.ReadAsync(async (connection, transaction, token) =>
-    {
-        var usageCounts = new Dictionary<ServicePresetId, long>();
-        await using (var usageCommand = connection.CreateCommand())
-        {
-            usageCommand.Transaction = transaction;
-            usageCommand.CommandText = """
-                SELECT source_service_preset_id, COUNT(*) AS usage_count
-                FROM work_record WHERE source_service_preset_id IS NOT NULL GROUP BY source_service_preset_id;
-                """;
-            await using var reader = await usageCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
-                usageCounts[new ServicePresetId(SqliteValue.Guid(reader.GetString("source_service_preset_id")))] =
-                    reader.GetInt64("usage_count");
-        }
-
-        WorkRecordDto? mostRecent = null;
-        await using (var recentCommand = connection.CreateCommand())
-        {
-            recentCommand.Transaction = transaction;
-            recentCommand.CommandText = """
-                SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
-                       end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
-                FROM work_record ORDER BY updated_at_utc DESC, work_date DESC, id DESC LIMIT 1;
-                """;
-            await using var reader = await recentCommand.ExecuteReaderAsync(token).ConfigureAwait(false);
-            if (await reader.ReadAsync(token).ConfigureAwait(false)) mostRecent = Read(reader);
-        }
-
-        return new WorkInputHistory(usageCounts, mostRecent);
-    }, cancellationToken);
-
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken) => FindBySqlAsync("""
-        SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
-               end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
-        FROM work_record WHERE id = $value;
+        WHERE wr.id = $value
+        ORDER BY task.display_order;
         """, SqliteValue.Id(id.Value), cancellationToken);
 
     public Task<WorkRecordDto?> FindBySaveOperationIdAsync(Guid operationId, CancellationToken cancellationToken)
     {
         if (operationId == Guid.Empty) throw new ArgumentException("Operation id cannot be empty.", nameof(operationId));
         return FindBySqlAsync("""
-            SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
-                   end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
-            FROM work_record WHERE save_operation_id = $value;
+            WHERE wr.save_operation_id = $value
+            ORDER BY task.display_order;
             """, SqliteValue.Id(operationId), cancellationToken);
     }
 
@@ -365,40 +518,38 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         if (startDate > endDate) throw new ArgumentException("Start date must not follow end date.", nameof(startDate));
-        cancellationToken.ThrowIfCancellationRequested();
-        var ambient = database.AmbientTransaction;
-        SqliteConnection? ownedConnection = null;
-        var connection = ambient?.Connection ?? (ownedConnection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
-        try
+        var values = await database.ReadAsync(async (connection, transaction, token) =>
         {
+            var result = new List<WorkRecordDto>();
             await using var command = connection.CreateCommand();
-            command.Transaction = ambient?.Transaction;
-            command.CommandText = """
-                SELECT id, work_date, service_id, time_category_id, input_mode, work_minutes, start_time_minutes,
-                       end_time_minutes, source_service_preset_id, source_basic_shift_id, source_work_record_id
-                FROM work_record WHERE work_date BETWEEN $start AND $end ORDER BY work_date, id;
+            command.Transaction = transaction;
+            command.CommandText = SelectParentAndTasksSql + "\n" + """
+                WHERE wr.work_date BETWEEN $start AND $end
+                ORDER BY wr.work_date, wr.id, task.display_order;
                 """;
             command.Parameters.AddValue("$start", SqliteValue.Date(startDate));
             command.Parameters.AddValue("$end", SqliteValue.Date(endDate));
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) yield return Read(reader);
-        }
-        finally
+            result.AddRange(await ReadManyAsync(command, token).ConfigureAwait(false));
+            return result;
+        }, cancellationToken).ConfigureAwait(false);
+
+        foreach (var value in values)
         {
-            if (ownedConnection is not null) await ownedConnection.DisposeAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return value;
         }
     }
 
     public Task UpsertAsync(WorkRecordDto workRecord, CancellationToken cancellationToken)
     {
-        Validate(workRecord);
-        return WriteAsync(workRecord, null, upsert: true, cancellationToken);
+        var snapshot = Snapshot(workRecord);
+        return WriteAsync(snapshot, null, upsert: true, cancellationToken);
     }
 
     public Task<bool> TryInsertAsync(WorkRecordDto workRecord, Guid operationId,
         CancellationToken cancellationToken)
     {
-        Validate(workRecord);
+        var snapshot = Snapshot(workRecord);
         if (operationId == Guid.Empty) throw new ArgumentException("Operation id cannot be empty.", nameof(operationId));
         return database.WriteAsync(async (connection, transaction, token) =>
         {
@@ -410,7 +561,7 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
                 if (Convert.ToInt64(await check.ExecuteScalarAsync(token).ConfigureAwait(false)) != 0) return false;
             }
 
-            await InsertOrUpdateAsync(connection, transaction, workRecord, SqliteValue.Id(operationId), false,
+            await InsertOrUpdateAsync(connection, transaction, snapshot, SqliteValue.Id(operationId), false,
                 SqliteValue.Utc(clock.UtcNow), token).ConfigureAwait(false);
             return true;
         }, cancellationToken);
@@ -430,25 +581,30 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
     private static async Task InsertOrUpdateAsync(SqliteConnection connection, SqliteTransaction transaction,
         WorkRecordDto value, string? operationId, bool upsert, string now, CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO work_record(id, work_date, service_id, time_category_id, input_mode, work_minutes,
-                start_time_minutes, end_time_minutes, source_service_preset_id, source_basic_shift_id,
-                source_work_record_id, save_operation_id, created_at_utc, updated_at_utc)
-            VALUES($id, $date, $service, $category, $mode, $minutes, $start, $end, $preset, $shift,
-                $source, $operation, $now, $now)
-            """ + (upsert ? """
-            ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date, service_id = excluded.service_id,
-                time_category_id = excluded.time_category_id, input_mode = excluded.input_mode,
-                work_minutes = excluded.work_minutes, start_time_minutes = excluded.start_time_minutes,
-                end_time_minutes = excluded.end_time_minutes,
-                source_service_preset_id = excluded.source_service_preset_id,
-                source_basic_shift_id = excluded.source_basic_shift_id,
-                source_work_record_id = excluded.source_work_record_id, updated_at_utc = excluded.updated_at_utc;
-            """ : ";");
-        Bind(command, value, operationId, now);
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = upsert ? """
+                INSERT INTO work_record(id, work_date, source_basic_shift_id, source_work_record_id,
+                    save_operation_id, created_at_utc, updated_at_utc)
+                VALUES($id, $date, $shift, $source,
+                    COALESCE((SELECT save_operation_id FROM work_record WHERE id = $id), $operation),
+                    $now, $now)
+                ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date,
+                    source_basic_shift_id = excluded.source_basic_shift_id,
+                    source_work_record_id = excluded.source_work_record_id,
+                    updated_at_utc = excluded.updated_at_utc;
+                """ : """
+                INSERT INTO work_record(id, work_date, source_basic_shift_id, source_work_record_id,
+                    save_operation_id, created_at_utc, updated_at_utc)
+                VALUES($id, $date, $shift, $source, $operation, $now, $now);
+                """;
+            BindParent(command, value, operationId ?? SqliteValue.Id(value.Id.Value), now);
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await UpsertTasksAsync(connection, transaction, value.Id, value.Tasks, now, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private Task<WorkRecordDto?> FindBySqlAsync(string sql, string? value, CancellationToken cancellationToken) =>
@@ -456,52 +612,205 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = sql;
+            command.CommandText = SelectParentAndTasksSql + "\n" + sql;
             if (value is not null) command.Parameters.AddValue("$value", value);
-            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            return await reader.ReadAsync(token).ConfigureAwait(false) ? Read(reader) : null;
+            return (await ReadManyAsync(command, token).ConfigureAwait(false)).SingleOrDefault();
         }, cancellationToken);
 
     private static void Validate(WorkRecordDto value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        _ = new WorkRecord(value.Id, value.WorkDate, value.ServiceId, value.TimeCategoryId, value.InputMode,
-            value.WorkMinutes, value.StartTime, value.EndTime);
+        _ = value.ToDomain();
     }
 
-    private static void Bind(SqliteCommand command, WorkRecordDto value, string? operationId, string now)
+    private static WorkRecordDto Snapshot(WorkRecordDto value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(value.Tasks);
+        var snapshot = value with { Tasks = value.Tasks.ToArray() };
+        Validate(snapshot);
+        return snapshot;
+    }
+
+    private static void BindParent(SqliteCommand command, WorkRecordDto value, string operationId, string now)
     {
         command.Parameters.AddValue("$id", SqliteValue.Id(value.Id.Value));
         command.Parameters.AddValue("$date", SqliteValue.Date(value.WorkDate));
-        command.Parameters.AddValue("$service", SqliteValue.Id(value.ServiceId.Value));
-        command.Parameters.AddValue("$category", value.TimeCategoryId is { } category ? SqliteValue.Id(category.Value) : null);
-        command.Parameters.AddValue("$mode", value.InputMode.ToString());
-        command.Parameters.AddValue("$minutes", value.WorkMinutes.Value);
-        command.Parameters.AddValue("$start", value.StartTime?.Value);
-        command.Parameters.AddValue("$end", value.EndTime?.Value);
-        command.Parameters.AddValue("$preset", value.SourceServicePresetId is { } preset ? SqliteValue.Id(preset.Value) : null);
         command.Parameters.AddValue("$shift", value.SourceBasicShiftId is { } shift ? SqliteValue.Id(shift.Value) : null);
         command.Parameters.AddValue("$source", value.SourceWorkRecordId is { } source ? SqliteValue.Id(source.Value) : null);
         command.Parameters.AddValue("$operation", operationId);
         command.Parameters.AddValue("$now", now);
     }
 
-    internal static WorkRecordDto Read(SqliteDataReader reader) => new(
-        new WorkRecordId(SqliteValue.Guid(reader.GetString("id"))),
-        SqliteValue.Date(reader.GetString("work_date")),
-        new ServiceId(SqliteValue.Guid(reader.GetString("service_id"))),
-        reader.GetNullableString("time_category_id") is { } category
-            ? new TimeCategoryId(SqliteValue.Guid(category)) : null,
-        Enum.Parse<WorkInputMode>(reader.GetString("input_mode"), false),
-        new WorkMinutes(reader.GetInt32("work_minutes")),
-        reader.GetNullableInt32("start_time_minutes") is { } start ? new MinuteOfDay(start) : null,
-        reader.GetNullableInt32("end_time_minutes") is { } end ? new MinuteOfDay(end) : null,
-        reader.GetNullableString("source_service_preset_id") is { } preset
-            ? new ServicePresetId(SqliteValue.Guid(preset)) : null,
-        reader.GetNullableString("source_basic_shift_id") is { } shift
-            ? new BasicShiftId(SqliteValue.Guid(shift)) : null,
-        reader.GetNullableString("source_work_record_id") is { } source
-            ? new WorkRecordId(SqliteValue.Guid(source)) : null);
+    private static async Task UpsertTasksAsync(SqliteConnection connection, SqliteTransaction transaction,
+        WorkRecordId parentId, IReadOnlyList<WorkTaskDto> tasks, string now,
+        CancellationToken cancellationToken)
+    {
+        var existingIds = new HashSet<WorkTaskId>();
+        var maxExistingOrder = -1;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT id, display_order FROM work_task WHERE work_record_id = $parent;";
+            read.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                existingIds.Add(new WorkTaskId(SqliteValue.Guid(reader.GetString(0))));
+                maxExistingOrder = Math.Max(maxExistingOrder, reader.GetInt32(1));
+            }
+        }
+
+        if (existingIds.Count != 0)
+        {
+            var maxDesiredOrder = tasks.Count == 0 ? -1 : tasks.Max(static task => task.DisplayOrder.Value);
+            await using var move = connection.CreateCommand();
+            move.Transaction = transaction;
+            move.CommandText = "UPDATE work_task SET display_order = display_order + $offset WHERE work_record_id = $parent;";
+            move.Parameters.AddValue("$offset", (long)maxExistingOrder + maxDesiredOrder + 2L);
+            move.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            await move.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var desiredIds = tasks.Select(static task => task.Id).ToHashSet();
+        foreach (var removedId in existingIds.Where(id => !desiredIds.Contains(id)))
+        {
+            await using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM work_task WHERE work_record_id = $parent AND id = $id;";
+            delete.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+            delete.Parameters.AddValue("$id", SqliteValue.Id(removedId.Value));
+            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var task in tasks)
+        {
+            if (existingIds.Contains(task.Id))
+                await UpdateTaskAsync(connection, transaction, task, now, cancellationToken).ConfigureAwait(false);
+            else
+                await InsertTaskAsync(connection, transaction, parentId, task, now, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task UpdateTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
+        WorkTaskDto task, string now, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE work_task SET service_id = $service, time_category_id = $category,
+                input_mode = $mode, work_minutes = $minutes, start_time_minutes = $start,
+                end_time_minutes = $end, display_order = $order, source_service_preset_id = $preset,
+                updated_at_utc = $now
+            WHERE id = $id;
+            """;
+        BindTask(command, task, now);
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+            throw new InvalidDataException($"Work task {task.Id.Value:D} was not found during update.");
+    }
+
+    private static async Task InsertTaskAsync(SqliteConnection connection, SqliteTransaction transaction,
+        WorkRecordId parentId, WorkTaskDto task, string now, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO work_task(
+                id, work_record_id, service_id, time_category_id, input_mode, work_minutes,
+                start_time_minutes, end_time_minutes, display_order, source_service_preset_id,
+                created_at_utc, updated_at_utc)
+            VALUES($id, $parent, $service, $category, $mode, $minutes, $start, $end,
+                $order, $preset, $now, $now);
+            """;
+        command.Parameters.AddValue("$parent", SqliteValue.Id(parentId.Value));
+        BindTask(command, task, now);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void BindTask(SqliteCommand command, WorkTaskDto task, string now)
+    {
+        command.Parameters.AddValue("$id", SqliteValue.Id(task.Id.Value));
+        command.Parameters.AddValue("$service", SqliteValue.Id(task.ServiceId.Value));
+        command.Parameters.AddValue("$category", task.TimeCategoryId is { } category ? SqliteValue.Id(category.Value) : null);
+        command.Parameters.AddValue("$mode", task.InputMode.ToString());
+        command.Parameters.AddValue("$minutes", task.WorkMinutes.Value);
+        command.Parameters.AddValue("$start", task.StartTime?.Value);
+        command.Parameters.AddValue("$end", task.EndTime?.Value);
+        command.Parameters.AddValue("$order", task.DisplayOrder.Value);
+        command.Parameters.AddValue("$preset", task.SourceServicePresetId is { } preset ? SqliteValue.Id(preset.Value) : null);
+        command.Parameters.AddValue("$now", now);
+    }
+
+    private static async Task<IReadOnlyList<WorkRecordDto>> ReadManyAsync(
+        SqliteCommand command,
+        CancellationToken cancellationToken)
+    {
+        var builders = new Dictionary<WorkRecordId, WorkRecordBuilder>();
+        var order = new List<WorkRecordId>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var id = new WorkRecordId(SqliteValue.Guid(reader.GetString("record_id")));
+            if (!builders.TryGetValue(id, out var builder))
+            {
+                builder = new WorkRecordBuilder(
+                    id,
+                    SqliteValue.Date(reader.GetString("work_date")),
+                    reader.GetNullableString("source_basic_shift_id") is { } shift
+                        ? new BasicShiftId(SqliteValue.Guid(shift)) : null,
+                    reader.GetNullableString("source_work_record_id") is { } source
+                        ? new WorkRecordId(SqliteValue.Guid(source)) : null);
+                builders.Add(id, builder);
+                order.Add(id);
+            }
+
+            if (reader.GetNullableString("task_id") is not { } taskId) continue;
+            builder.Tasks.Add(new WorkTaskDto(
+                new WorkTaskId(SqliteValue.Guid(taskId)),
+                new ServiceId(SqliteValue.Guid(reader.GetString("service_id"))),
+                reader.GetNullableString("time_category_id") is { } category
+                    ? new TimeCategoryId(SqliteValue.Guid(category)) : null,
+                Enum.Parse<WorkInputMode>(reader.GetString("input_mode"), false),
+                new WorkMinutes(reader.GetInt32("work_minutes")),
+                reader.GetNullableInt32("start_time_minutes") is { } start ? new MinuteOfDay(start) : null,
+                reader.GetNullableInt32("end_time_minutes") is { } end ? new MinuteOfDay(end) : null,
+                new DisplayOrder(reader.GetInt32("task_display_order")),
+                reader.GetNullableString("source_service_preset_id") is { } preset
+                    ? new ServicePresetId(SqliteValue.Guid(preset)) : null));
+        }
+
+        var result = new List<WorkRecordDto>(order.Count);
+        foreach (var id in order)
+        {
+            var builder = builders[id];
+            if (builder.Tasks.Count == 0)
+                throw new InvalidDataException($"Work record {id.Value:D} has no tasks.");
+            var value = new WorkRecordDto(id, builder.WorkDate, builder.Tasks,
+                builder.SourceBasicShiftId, builder.SourceWorkRecordId);
+            Validate(value);
+            result.Add(value);
+        }
+        return result;
+    }
+
+    private const string SelectParentAndTasksSql = """
+        SELECT wr.id AS record_id, wr.work_date, wr.source_basic_shift_id,
+               wr.source_work_record_id, task.id AS task_id, task.service_id,
+               task.time_category_id, task.input_mode, task.work_minutes, task.start_time_minutes,
+               task.end_time_minutes, task.display_order AS task_display_order,
+               task.source_service_preset_id
+        FROM work_record AS wr
+        LEFT JOIN work_task AS task ON task.work_record_id = wr.id
+        """;
+
+    private sealed record WorkRecordBuilder(
+        WorkRecordId Id,
+        DateOnly WorkDate,
+        BasicShiftId? SourceBasicShiftId,
+        WorkRecordId? SourceWorkRecordId)
+    {
+        internal List<WorkTaskDto> Tasks { get; } = [];
+    }
 }
 
 public sealed class SqliteMonthlyAllowanceRepository(SqliteDatabase database, IUtcClock clock)
@@ -529,6 +838,42 @@ public sealed class SqliteMonthlyAllowanceRepository(SqliteDatabase database, IU
                 reader.GetString("display_name"), new YenAmount(reader.GetInt64("amount_yen"))));
         return (IReadOnlyList<MonthlyAllowance>)values;
     }, cancellationToken);
+
+    public Task<IReadOnlyList<MonthlyAllowance>> GetForRangeAsync(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end,
+        CancellationToken cancellationToken)
+    {
+        if (start.Value.CompareTo(end.Value) > 0)
+        {
+            throw new ArgumentException("月額手当の検索開始給与期間は終了給与期間以前で指定してください。", nameof(start));
+        }
+
+        return database.ReadAsync(async (connection, transaction, token) =>
+        {
+            var values = new List<MonthlyAllowance>();
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT id, payroll_period_year_month, display_name, amount_yen FROM monthly_allowance
+                WHERE payroll_period_year_month BETWEEN $start AND $end
+                ORDER BY payroll_period_year_month, created_at_utc, id;
+                """;
+            command.Parameters.AddValue("$start", SqliteValue.YearMonth(start.Value));
+            command.Parameters.AddValue("$end", SqliteValue.YearMonth(end.Value));
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                values.Add(new MonthlyAllowance(
+                    new MonthlyAllowanceId(SqliteValue.Guid(reader.GetString("id"))),
+                    new PayrollPeriodKey(SqliteValue.YearMonth(reader.GetInt64("payroll_period_year_month"))),
+                    reader.GetString("display_name"),
+                    new YenAmount(reader.GetInt64("amount_yen"))));
+            }
+
+            return (IReadOnlyList<MonthlyAllowance>)values;
+        }, cancellationToken);
+    }
 
     public Task UpsertAsync(MonthlyAllowance allowance, CancellationToken cancellationToken)
     {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -11,11 +12,94 @@ using TkpSalaryCalculator.Domain.Models;
 using TkpSalaryCalculator.Domain.ValueObjects;
 using TkpSalaryCalculator.Infrastructure.DataTransfer;
 using TkpSalaryCalculator.Infrastructure.Sqlite;
+using Xunit.Abstractions;
 
 namespace TkpSalaryCalculator.Infrastructure.Tests;
 
-public sealed class InfrastructureIntegrationTests
+public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
 {
+    private readonly ITestOutputHelper output = output;
+
+    [Fact]
+    public async Task SHIFT004_SHIFT005_SHIFT013_MultiTaskShiftRoundTripsAndAppliedVisitSurvivesSourceChanges()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 5, 30, 0, TimeSpan.Zero));
+        var useCase = CreateShiftUseCase(fixture.Database, clock);
+        var command = MultiTaskShiftCommand(new ServiceId(fixture.ServiceId));
+        var shift = await useCase.SaveAsync(command, default);
+        Assert.Equal(shift, Assert.Single(await useCase.GetForWeekdayAsync(DayOfWeek.Monday, default)));
+
+        var date = new DateOnly(2026, 8, 17);
+        var applied = Assert.Single(await useCase.ApplyAsync(new(date, [shift.Id]), default));
+        var records = new SqliteWorkRecordRepository(fixture.Database, clock);
+        Assert.Equal(applied.WorkRecord, await records.FindAsync(applied.WorkRecord.Id, default));
+        Assert.Equal(2, applied.WorkRecord.Tasks.Count);
+        Assert.Equal([60, 45], applied.WorkRecord.Tasks.Select(task => task.WorkMinutes.Value));
+        Assert.All(applied.WorkRecord.Tasks, task => Assert.DoesNotContain(shift.Tasks, original => original.Id.Value == task.Id.Value));
+        await Assert.ThrowsAsync<ApplicationErrorException>(() => useCase.ApplyAsync(new(date, [shift.Id]), default));
+        await useCase.SaveAsync(command with { Id = shift.Id, Tasks = [command.Tasks[0] with { WorkMinutes = new WorkMinutes(120) }] }, default);
+        Assert.Equal(applied.WorkRecord, await records.FindAsync(applied.WorkRecord.Id, default));
+        await useCase.DeleteAsync(shift.Id, default);
+        Assert.Equal(applied.WorkRecord, await records.FindAsync(applied.WorkRecord.Id, default));
+    }
+
+    [Fact]
+    public async Task SHIFT010_SecondShiftChildInsertFailureRollsBackAllVisitsAndMetadata()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 5, 30, 0, TimeSpan.Zero));
+        var useCase = CreateShiftUseCase(fixture.Database, clock);
+        var first = await useCase.SaveAsync(MultiTaskShiftCommand(new ServiceId(fixture.ServiceId)), default);
+        var second = await useCase.SaveAsync(MultiTaskShiftCommand(new ServiceId(fixture.ServiceId)), default);
+        var metadata = new SqliteAppMetadataRepository(fixture.Database, clock);
+        var before = await metadata.GetAsync(default);
+        await using var connection = await fixture.OpenRawAsync();
+        await ExecuteAsync(connection, """
+            CREATE TRIGGER fail_fourth_work_task BEFORE INSERT ON work_task
+            WHEN (SELECT COUNT(*) FROM work_task) = 3
+            BEGIN SELECT RAISE(ABORT, 'injected child failure'); END;
+            """);
+
+        await Assert.ThrowsAsync<SqliteException>(() => useCase.ApplyAsync(new(new(2026, 8, 17), [first.Id, second.Id]), default));
+
+        Assert.Equal(0L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM work_record;"));
+        Assert.Equal(0L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM work_task;"));
+        Assert.Equal(before, await metadata.GetAsync(default));
+        Assert.Equal(2, (await useCase.GetForWeekdayAsync(DayOfWeek.Monday, default)).Count);
+    }
+
+    [Fact]
+    public async Task SHIFT011_ShiftReplacementChildFailurePreservesOriginalTasks()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 5, 30, 0, TimeSpan.Zero));
+        var useCase = CreateShiftUseCase(fixture.Database, clock);
+        var shift = await useCase.SaveAsync(MultiTaskShiftCommand(new ServiceId(fixture.ServiceId)), default);
+        await using var connection = await fixture.OpenRawAsync();
+        await ExecuteAsync(connection, """
+            CREATE TRIGGER fail_shift_task BEFORE INSERT ON basic_shift_task
+            WHEN NEW.display_order = 1
+            BEGIN SELECT RAISE(ABORT, 'injected shift child failure'); END;
+            """);
+        await Assert.ThrowsAsync<SqliteException>(() => useCase.SaveAsync(
+            MultiTaskShiftCommand(new ServiceId(fixture.ServiceId)) with { Id = shift.Id }, default));
+        Assert.Equal(shift, Assert.Single(await useCase.GetForWeekdayAsync(DayOfWeek.Monday, default)));
+    }
+
+    private static BasicShiftUseCase CreateShiftUseCase(SqliteDatabase database, IUtcClock clock) => new(
+        new SqliteBasicShiftRepository(database, clock), new SqliteWorkRecordRepository(database, clock),
+        new SqliteSettingSnapshotRepository(database, clock), new SqliteHolidayCalendarRepository(database),
+        new Domain.Services.SalaryCalculator(), new SqliteTransactionRunner(database),
+        new SqliteAppMetadataRepository(database, clock), clock);
+
+    private static SaveBasicShiftCommand MultiTaskShiftCommand(ServiceId service) => new(null, DayOfWeek.Monday,
+        [new SaveBasicShiftTaskCommand(new BasicShiftTaskId(Guid.NewGuid()), null, service, null,
+            WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0)),
+        new SaveBasicShiftTaskCommand(new BasicShiftTaskId(Guid.NewGuid()), null, service, null,
+            WorkInputMode.TimeRange, null, new MinuteOfDay(1380), new MinuteOfDay(1425), new DisplayOrder(1))],
+        new DisplayOrder(0), true);
+
     [Fact]
     public async Task DB001_NewFileCreatesEveryCurrentTableIndexAndMajorForeignKey()
     {
@@ -34,7 +118,8 @@ public sealed class InfrastructureIntegrationTests
             "app_metadata", "setting_month", "setting_snapshot", "snapshot_service", "snapshot_time_category",
             "snapshot_rate", "snapshot_premium", "snapshot_premium_weekday", "snapshot_premium_date",
             "snapshot_premium_service", "snapshot_count_bonus", "snapshot_count_bonus_service", "service_preset",
-            "basic_shift", "work_record", "closing_rule_history", "monthly_allowance", "holiday_calendar_version",
+            "basic_shift", "basic_shift_task", "work_record", "work_task", "closing_rule_history",
+            "monthly_allowance", "annual_summary_setting", "holiday_calendar_version",
             "holiday_date", "service_definition", "time_category_definition", "premium_definition",
             "count_bonus_definition",
         };
@@ -47,14 +132,17 @@ public sealed class InfrastructureIntegrationTests
             "ix_setting_month_snapshot", "ix_snapshot_service_order", "ix_snapshot_time_category_order",
             "ux_snapshot_rate_service", "ux_snapshot_rate_time_category", "ix_snapshot_premium_snapshot",
             "ix_snapshot_count_bonus_snapshot", "ix_service_preset_order", "ix_basic_shift_weekday",
-            "ix_work_record_date", "ix_work_record_service_date", "ux_work_record_shift_date",
-            "ix_work_record_source_preset",
+            "ux_basic_shift_task_order", "ix_work_record_date", "ux_work_task_order", "ux_work_record_shift_date",
             "ux_work_record_save_operation", "ux_closing_rule_effective_month", "ix_monthly_allowance_period",
             "ix_holiday_date_lookup",
         };
         foreach (var index in requiredIndexes)
             Assert.Equal(1L, await ScalarLongAsync(connection,
                 $"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{index}';"));
+        Assert.Equal(0L, await ScalarLongAsync(connection, """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'index' AND name IN ('ix_work_record_source_preset', 'ix_work_record_service_date');
+            """));
 
         var requiredForeignKeys = new[]
         {
@@ -67,8 +155,12 @@ public sealed class InfrastructureIntegrationTests
             ("snapshot_premium", "premium_id", "premium_definition", "id", "RESTRICT"),
             ("snapshot_count_bonus", "count_bonus_id", "count_bonus_definition", "id", "RESTRICT"),
             ("service_preset", "service_id", "service_definition", "id", "RESTRICT"),
-            ("basic_shift", "service_preset_id", "service_preset", "id", "SET NULL"),
-            ("work_record", "source_service_preset_id", "service_preset", "id", "SET NULL"),
+            ("basic_shift_task", "basic_shift_id", "basic_shift", "id", "CASCADE"),
+            ("basic_shift_task", "service_preset_id", "service_preset", "id", "SET NULL"),
+            ("basic_shift_task", "service_id", "service_definition", "id", "RESTRICT"),
+            ("work_task", "work_record_id", "work_record", "id", "CASCADE"),
+            ("work_task", "source_service_preset_id", "service_preset", "id", "SET NULL"),
+            ("work_task", "service_id", "service_definition", "id", "RESTRICT"),
             ("app_metadata", "initial_snapshot_id", "setting_snapshot", "id", "RESTRICT"),
         };
         foreach (var (table, from, referencedTable, to, onDelete) in requiredForeignKeys)
@@ -119,10 +211,30 @@ public sealed class InfrastructureIntegrationTests
             .GetManyAsync([snapshot.HolidayCalendarVersionId], default);
         Assert.Equal(calendar.Holidays, calendars[snapshot.HolidayCalendarVersionId].Holidays);
         Assert.Empty(await new SqliteClosingRuleRepository(fixture.Database, clock).GetHistoryAsync(default));
+        var annualSummary = new SqliteAnnualSummarySettingRepository(fixture.Database, clock);
+        Assert.Equal(12, (await annualSummary.GetClosingMonthAsync(default)).Value);
     }
 
     [Fact]
-    public async Task ExistingVersionOneWithoutDefaultsIsBackfilledIdempotently()
+    public async Task AnnualSummarySettingPersistsValidMonthAndDatabaseRejectsInvalidMonth()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 4, 0, 0, TimeSpan.Zero));
+        var repository = new SqliteAnnualSummarySettingRepository(fixture.Database, clock);
+
+        await repository.SaveClosingMonthAsync(new AnnualClosingMonth(3), default);
+
+        Assert.Equal(3, (await repository.GetClosingMonthAsync(default)).Value);
+        await using var connection = await fixture.OpenRawAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "UPDATE annual_summary_setting SET closing_month = 13 WHERE id = 1;";
+        await Assert.ThrowsAsync<SqliteException>(() => command.ExecuteNonQueryAsync());
+        Assert.Equal(3L, await ScalarLongAsync(connection,
+            "SELECT closing_month FROM annual_summary_setting WHERE id = 1;"));
+    }
+
+    [Fact]
+    public async Task ExistingDatabaseWithoutAppliedDefaultsIsBackfilledIdempotently()
     {
         var root = Path.Combine(Path.GetTempPath(), $"tkp-infrastructure-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -130,13 +242,11 @@ public sealed class InfrastructureIntegrationTests
         try
         {
             await new SqliteDatabase(path, bootstrapDefaults: false).InitializeAsync();
-            await using (var versionOne = new SqliteConnection($"Data Source={path};Pooling=False"))
+            await using (var existing = new SqliteConnection($"Data Source={path};Pooling=False"))
             {
-                await versionOne.OpenAsync();
-                await ExecuteAsync(versionOne, """
-                    DROP INDEX ix_work_record_source_preset;
-                    ALTER TABLE app_metadata DROP COLUMN bundled_bootstrap_version;
-                    PRAGMA user_version = 1;
+                await existing.OpenAsync();
+                await ExecuteAsync(existing, """
+                    UPDATE app_metadata SET bundled_bootstrap_version = 0 WHERE id = 1;
                     """);
             }
             await new SqliteDatabase(path).InitializeAsync();
@@ -147,6 +257,10 @@ public sealed class InfrastructureIntegrationTests
                 "SELECT COUNT(*) FROM app_metadata WHERE initial_snapshot_id IS NOT NULL;"));
             Assert.Equal(5L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM service_preset;"));
             Assert.Equal(35L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM holiday_date;"));
+            Assert.Equal(12L, await ScalarLongAsync(connection,
+                "SELECT closing_month FROM annual_summary_setting WHERE id = 1;"));
+            Assert.Equal(3L, await ScalarLongAsync(connection,
+                "SELECT export_format_version FROM app_metadata WHERE id = 1;"));
         }
         finally
         {
@@ -355,7 +469,7 @@ public sealed class InfrastructureIntegrationTests
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 0, 0, TimeSpan.Zero));
         var operation = Guid.NewGuid();
-        var record = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
+        var record = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
             new ServiceId(fixture.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
             null, null, null);
         var repository = new SqliteWorkRecordRepository(fixture.Database, clock);
@@ -369,45 +483,17 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
-    public async Task WORK001_MostRecentUsesUpdatedTimestampBeforeWorkDate()
-    {
-        await using var fixture = await DatabaseFixture.CreateSeededAsync();
-        var newerWorkDate = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 20),
-            new ServiceId(fixture.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
-            null, null, null);
-        var earlierWorkDateButLaterUpdate = newerWorkDate with
-        {
-            Id = new WorkRecordId(Guid.NewGuid()),
-            WorkDate = new DateOnly(2026, 8, 1),
-        };
-        await new SqliteWorkRecordRepository(fixture.Database,
-            new FixedClock(new DateTimeOffset(2026, 8, 16, 1, 0, 0, TimeSpan.Zero)))
-            .UpsertAsync(newerWorkDate, default);
-        var repository = new SqliteWorkRecordRepository(fixture.Database,
-            new FixedClock(new DateTimeOffset(2026, 8, 16, 2, 0, 0, TimeSpan.Zero)));
-        await repository.UpsertAsync(earlierWorkDateButLaterUpdate, default);
-
-        Assert.Equal(earlierWorkDateButLaterUpdate.Id, (await repository.GetInputHistoryAsync(default)).MostRecent!.Id);
-    }
-
-    [Fact]
-    public async Task DB007_VersionOneToCurrentAddsMeasuredUsageIndexAndPreservesInputHistory()
+    public async Task DB007_CurrentSchemaReopenKeepsRemovedHistoryIndexAbsentAndPreservesWorkRecords()
     {
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 3, 0, 0, TimeSpan.Zero));
         var preset = new ServicePresetDto(new ServicePresetId(Guid.NewGuid()), "Migration preset",
             new ServiceId(fixture.ServiceId), null, new WorkMinutes(60), new DisplayOrder(0), true);
         await new SqliteServicePresetRepository(fixture.Database, clock).UpsertAsync(preset, default);
-        var record = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
+        var record = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 10),
             preset.ServiceId, null, WorkInputMode.Duration, new WorkMinutes(60), null, null,
             preset.Id, null, null);
         await new SqliteWorkRecordRepository(fixture.Database, clock).UpsertAsync(record, default);
-        await using (var versionOne = await fixture.OpenRawAsync())
-            await ExecuteAsync(versionOne, """
-                DROP INDEX ix_work_record_source_preset;
-                PRAGMA user_version = 1;
-                """);
-
         var migrated = new SqliteDatabase(fixture.DatabasePath);
         await migrated.InitializeAsync();
 
@@ -415,27 +501,116 @@ public sealed class InfrastructureIntegrationTests
         Assert.Equal(SqliteDatabase.CurrentSchemaVersion, await ScalarLongAsync(connection, "PRAGMA user_version;"));
         Assert.Equal(SqliteDatabase.CurrentBundledBootstrapVersion, await ScalarLongAsync(connection,
             "SELECT bundled_bootstrap_version FROM app_metadata WHERE id = 1;"));
-        Assert.Equal(1L, await ScalarLongAsync(connection, """
+        Assert.Equal(0L, await ScalarLongAsync(connection, """
             SELECT COUNT(*) FROM sqlite_master
             WHERE type = 'index' AND name = 'ix_work_record_source_preset';
             """));
-        var history = await new SqliteWorkRecordRepository(migrated, clock).GetInputHistoryAsync(default);
-        Assert.Equal(record.Id, history.MostRecent!.Id);
-        Assert.Equal(1, history.ServicePresetUsageCounts[preset.Id]);
+        Assert.Equal(record, await new SqliteWorkRecordRepository(migrated, clock).FindAsync(record.Id, default));
+    }
 
-        await using var plan = connection.CreateCommand();
-        plan.CommandText = """
-            EXPLAIN QUERY PLAN
-            SELECT source_service_preset_id, COUNT(*) AS usage_count
-            FROM work_record
-            WHERE source_service_preset_id IS NOT NULL
-            GROUP BY source_service_preset_id;
-            """;
-        await using var reader = await plan.ExecuteReaderAsync();
-        var details = new List<string>();
-        while (await reader.ReadAsync()) details.Add(reader.GetString(3));
-        Assert.Contains(details, detail => detail.Contains(
-            "ix_work_record_source_preset", StringComparison.OrdinalIgnoreCase));
+    [Fact]
+    public async Task DB016_ActualVersionFourSchemaMigratesAnnualSettingAndPreservesExistingSalaryData()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 7, 0, 0, TimeSpan.Zero));
+        var allowance = new MonthlyAllowance(
+            new MonthlyAllowanceId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(2026, 8)),
+            "移行前手当",
+            new YenAmount(12_345));
+        await new SqliteMonthlyAllowanceRepository(fixture.Database, clock).UpsertAsync(allowance, default);
+        await using (var versionFour = await fixture.OpenRawAsync())
+        {
+            await ExecuteAsync(versionFour, """
+                PRAGMA foreign_keys = OFF;
+                DROP TABLE work_task;
+                DROP TABLE work_record;
+                DROP TABLE basic_shift_task;
+                DROP TABLE basic_shift;
+                CREATE TABLE work_record (
+                    id TEXT PRIMARY KEY,
+                    work_date TEXT NOT NULL,
+                    service_id TEXT NOT NULL,
+                    time_category_id TEXT NULL,
+                    input_mode TEXT NOT NULL,
+                    work_minutes INTEGER NOT NULL,
+                    start_time_minutes INTEGER NULL,
+                    end_time_minutes INTEGER NULL,
+                    source_service_preset_id TEXT NULL,
+                    source_basic_shift_id TEXT NULL,
+                    source_work_record_id TEXT NULL,
+                    save_operation_id TEXT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX ux_work_record_save_operation
+                    ON work_record(save_operation_id) WHERE save_operation_id IS NOT NULL;
+                CREATE UNIQUE INDEX ux_work_record_shift_date
+                    ON work_record(source_basic_shift_id, work_date) WHERE source_basic_shift_id IS NOT NULL;
+                CREATE INDEX ix_work_record_date ON work_record(work_date);
+                CREATE INDEX ix_work_record_service_date ON work_record(service_id, work_date);
+                CREATE TABLE basic_shift (
+                    id TEXT PRIMARY KEY,
+                    weekday INTEGER NOT NULL,
+                    service_preset_id TEXT NULL,
+                    service_id TEXT NOT NULL,
+                    time_category_id TEXT NULL,
+                    input_mode TEXT NOT NULL,
+                    work_minutes INTEGER NOT NULL,
+                    start_time_minutes INTEGER NULL,
+                    end_time_minutes INTEGER NULL,
+                    display_order INTEGER NOT NULL,
+                    is_enabled INTEGER NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+                CREATE INDEX ix_basic_shift_weekday ON basic_shift(weekday, is_enabled, display_order);
+                DROP TABLE annual_summary_setting;
+                UPDATE app_metadata SET export_format_version = 1 WHERE id = 1;
+                PRAGMA user_version = 4;
+                PRAGMA foreign_keys = ON;
+                """);
+        }
+
+        var migrated = new SqliteDatabase(fixture.DatabasePath);
+        await migrated.InitializeAsync();
+
+        await using var connection = await fixture.OpenRawAsync();
+        Assert.Equal(6L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(1L, await ScalarLongAsync(connection,
+            "SELECT COUNT(*) FROM annual_summary_setting WHERE id = 1 AND closing_month = 12;"));
+        Assert.Equal(3L, await ScalarLongAsync(connection,
+            "SELECT export_format_version FROM app_metadata WHERE id = 1;"));
+        Assert.Equal(allowance, Assert.Single(await new SqliteMonthlyAllowanceRepository(migrated, clock)
+            .GetForPeriodAsync(allowance.PayrollPeriodKey, default)));
+        Assert.Equal(1L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM closing_rule_history;"));
+        Assert.Equal(2L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM setting_month;"));
+    }
+
+    [Fact]
+    public async Task DB016_MigrationFailureRollsBackCreatedAnnualTableAndSchemaVersion()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        await using (var versionFour = await fixture.OpenRawAsync())
+        {
+            await ExecuteAsync(versionFour, """
+                DROP TABLE annual_summary_setting;
+                DELETE FROM app_metadata WHERE id = 1;
+                PRAGMA user_version = 4;
+                """);
+        }
+
+        var migrated = new SqliteDatabase(fixture.DatabasePath);
+        await Assert.ThrowsAsync<InvalidDataException>(() => migrated.InitializeAsync());
+
+        await using var connection = await fixture.OpenRawAsync();
+        Assert.Equal(4L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(0L, await ScalarLongAsync(connection, """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'table' AND name = 'annual_summary_setting';
+            """));
+        Assert.Equal(1L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM closing_rule_history;"));
+        Assert.Equal(2L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM setting_month;"));
     }
 
     [Fact]
@@ -450,9 +625,7 @@ public sealed class InfrastructureIntegrationTests
         Assert.Contains(preset, await presets.GetAllAsync(default));
 
         var shifts = new SqliteBasicShiftRepository(fixture.Database, clock);
-        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, preset.Id,
-            preset.ServiceId, null, WorkInputMode.TimeRange, new WorkMinutes(60), new MinuteOfDay(540),
-            new MinuteOfDay(600), new DisplayOrder(0), true);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), preset.Id, preset.ServiceId, null, WorkInputMode.TimeRange, new WorkMinutes(60), new MinuteOfDay(540), new MinuteOfDay(600), new DisplayOrder(0))], new DisplayOrder(0), true);
         await shifts.UpsertAsync(shift, default);
         Assert.Equal(shift, Assert.Single(await shifts.GetForWeekdayAsync(DayOfWeek.Monday, default)));
         var shiftsByWeekday = await shifts.GetForWeekdaysAsync(
@@ -474,10 +647,272 @@ public sealed class InfrastructureIntegrationTests
         Assert.Equal(allowance, Assert.Single(await allowances.GetForPeriodAsync(replacement.EffectiveFrom, default)));
 
         await presets.DeleteAsync(preset.Id, default);
-        Assert.Null((await shifts.FindAsync(shift.Id, default))!.ServicePresetId);
+        Assert.Null((await shifts.FindAsync(shift.Id, default))!.Tasks[0].ServicePresetId);
         await shifts.DeleteAsync(shift.Id, default);
         await allowances.DeleteAsync(allowance.Id, default);
         Assert.Empty(await allowances.GetForPeriodAsync(replacement.EffectiveFrom, default));
+    }
+
+    [Fact]
+    public async Task ANNUALINFRA001_MonthlyAllowancesAreReadForTheInclusivePeriodRangeInOneQuery()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 0, 0, 0, TimeSpan.Zero));
+        var repository = new SqliteMonthlyAllowanceRepository(fixture.Database, clock);
+        foreach (var (year, month, amount) in new[]
+                 {
+                     (2025, 12, 12L),
+                     (2026, 1, 1L),
+                     (2026, 8, 8L),
+                     (2026, 9, 9L),
+                 })
+        {
+            await repository.UpsertAsync(new MonthlyAllowance(
+                new MonthlyAllowanceId(Guid.NewGuid()),
+                new PayrollPeriodKey(new YearMonth(year, month)),
+                $"{month}月手当",
+                new YenAmount(amount)), default);
+        }
+
+        var values = await repository.GetForRangeAsync(
+            new PayrollPeriodKey(new YearMonth(2026, 1)),
+            new PayrollPeriodKey(new YearMonth(2026, 8)),
+            default);
+
+        Assert.Equal([new YearMonth(2026, 1), new YearMonth(2026, 8)],
+            values.Select(static value => value.PayrollPeriodKey.Value));
+        Assert.Equal([1L, 8L], values.Select(static value => value.Amount.Value));
+        await Assert.ThrowsAsync<ArgumentException>(() => repository.GetForRangeAsync(
+            new PayrollPeriodKey(new YearMonth(2026, 8)),
+            new PayrollPeriodKey(new YearMonth(2026, 1)),
+            default));
+    }
+
+    [Theory]
+    [InlineData(1, 1_000L)]
+    [InlineData(2, 1_800L)]
+    public async Task PERF001_PERF002_PERF003_PERF004_PERF005_PERF008_PERF010_LargeIndexedDatabaseScenariosStayWithinTwoSeconds(
+        int tasksPerVisit,
+        long expectedVisitPay)
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 8, 0, 0, TimeSpan.Zero));
+        string representativeRecordId;
+        await using (var connection = await fixture.OpenRawAsync())
+        {
+            var snapshotId = Assert.IsType<string>(await ScalarAsync(connection,
+                "SELECT initial_snapshot_id FROM app_metadata WHERE id = 1;"));
+            var firstServiceId = Assert.IsType<string>(await ScalarAsync(connection,
+                $"SELECT service_id FROM snapshot_service WHERE snapshot_id = '{snapshotId}' ORDER BY display_order LIMIT 1;"));
+            var secondServiceId = Assert.IsType<string>(await ScalarAsync(connection,
+                $"SELECT service_id FROM snapshot_service WHERE snapshot_id = '{snapshotId}' ORDER BY display_order LIMIT 1 OFFSET 1;"));
+            await ExecuteParameterizedAsync(connection, """
+                BEGIN IMMEDIATE;
+                INSERT INTO snapshot_rate(snapshot_id, service_id, time_category_id, rate_type, amount_yen)
+                VALUES($snapshot, $first_service, NULL, 'Hourly', 1000);
+                INSERT INTO snapshot_rate(snapshot_id, service_id, time_category_id, rate_type, amount_yen)
+                VALUES($snapshot, $second_service, NULL, 'Hourly', 800);
+                INSERT INTO setting_month(year_month, snapshot_id, created_at_utc, updated_at_utc)
+                VALUES(199609, $snapshot, $now, $now);
+                INSERT INTO closing_rule_history(id, effective_from_year_month, closing_day, is_end_of_month, created_at_utc)
+                VALUES($closing, 100001, NULL, 1, $now);
+                WITH RECURSIVE
+                dates(work_date) AS (
+                    VALUES('1996-09-01')
+                    UNION ALL
+                    SELECT date(work_date, '+1 day') FROM dates WHERE work_date < '2026-08-31'
+                ),
+                visits(visit_number) AS (
+                    VALUES(1)
+                    UNION ALL
+                    SELECT visit_number + 1 FROM visits WHERE visit_number < 20
+                )
+                INSERT INTO work_record(
+                    id, work_date, source_basic_shift_id, source_work_record_id, save_operation_id,
+                    created_at_utc, updated_at_utc)
+                SELECT
+                    printf('20000000-0000-4000-8000-%012x',
+                        CAST(julianday(work_date) - julianday('1996-09-01') AS INTEGER) * 20 + visit_number),
+                    work_date, NULL, NULL,
+                    printf('20000000-0000-4000-8000-%012x',
+                        CAST(julianday(work_date) - julianday('1996-09-01') AS INTEGER) * 20 + visit_number),
+                    $now, $now
+                FROM dates CROSS JOIN visits;
+                WITH RECURSIVE
+                dates(work_date) AS (
+                    VALUES('1996-09-01')
+                    UNION ALL
+                    SELECT date(work_date, '+1 day') FROM dates WHERE work_date < '2026-08-31'
+                ),
+                visits(visit_number) AS (
+                    VALUES(1)
+                    UNION ALL
+                    SELECT visit_number + 1 FROM visits WHERE visit_number < 20
+                ),
+                task_numbers(task_number) AS (
+                    VALUES(1)
+                    UNION ALL
+                    SELECT task_number + 1 FROM task_numbers WHERE task_number < $tasks_per_visit
+                )
+                INSERT INTO work_task(
+                    id, work_record_id, service_id, time_category_id, input_mode, work_minutes,
+                    start_time_minutes, end_time_minutes, source_service_preset_id, display_order,
+                    created_at_utc, updated_at_utc)
+                SELECT
+                    printf(CASE task_number WHEN 1
+                            THEN '20000000-0000-4000-8000-%012x'
+                            ELSE '30000000-0000-4000-8000-%012x' END,
+                        CAST(julianday(work_date) - julianday('1996-09-01') AS INTEGER) * 20 + visit_number),
+                    printf('20000000-0000-4000-8000-%012x',
+                        CAST(julianday(work_date) - julianday('1996-09-01') AS INTEGER) * 20 + visit_number),
+                    CASE task_number WHEN 1 THEN $first_service ELSE $second_service END,
+                    NULL, 'Duration', 60, NULL, NULL, NULL, task_number - 1, $now, $now
+                FROM dates CROSS JOIN visits CROSS JOIN task_numbers;
+                UPDATE app_metadata
+                SET initial_setup_status = 'Completed', updated_at_utc = $now
+                WHERE id = 1;
+                ANALYZE;
+                COMMIT;
+                """, new Dictionary<string, object?>
+            {
+                ["$snapshot"] = snapshotId,
+                ["$first_service"] = firstServiceId,
+                ["$second_service"] = secondServiceId,
+                ["$tasks_per_visit"] = tasksPerVisit,
+                ["$closing"] = Guid.NewGuid().ToString("D"),
+                ["$now"] = "2026-08-29T08:00:00.0000000Z",
+            });
+
+            Assert.InRange(await ScalarLongAsync(connection, "SELECT COUNT(*) FROM work_record;"),
+                219_000, 220_000);
+            Assert.Equal(tasksPerVisit * await ScalarLongAsync(connection, "SELECT COUNT(*) FROM work_record;"),
+                await ScalarLongAsync(connection, "SELECT COUNT(*) FROM work_task;"));
+            var workPlan = await ReadQueryPlanAsync(connection, """
+                SELECT wr.id, wt.id
+                FROM work_record AS wr
+                JOIN work_task AS wt ON wt.work_record_id = wr.id
+                WHERE wr.work_date BETWEEN '2026-01-01' AND '2026-08-31'
+                ORDER BY wr.work_date, wr.id, wt.display_order;
+                """);
+            Assert.Contains(workPlan, detail => detail.Contains("ix_work_record_date", StringComparison.Ordinal));
+            Assert.Contains(workPlan, detail => detail.Contains("ux_work_task_order", StringComparison.Ordinal));
+            var allowancePlan = await ReadQueryPlanAsync(connection, """
+                SELECT id FROM monthly_allowance
+                WHERE payroll_period_year_month BETWEEN 202601 AND 202608
+                ORDER BY payroll_period_year_month, created_at_utc, id;
+                """);
+            Assert.Contains(allowancePlan,
+                detail => detail.Contains("ix_monthly_allowance_period", StringComparison.Ordinal));
+            representativeRecordId = Assert.IsType<string>(await ScalarAsync(connection, """
+                SELECT id FROM work_record
+                WHERE work_date = '2026-08-15'
+                ORDER BY id
+                LIMIT 1;
+                """));
+        }
+
+        var records = new SqliteWorkRecordRepository(fixture.Database, clock);
+        var query = CreateSalaryQuery(fixture.Database, clock);
+        var selected = new PayrollPeriodKey(new YearMonth(2026, 8));
+        var previous = new PayrollPeriodKey(new YearMonth(2026, 7));
+        var representativeId = new WorkRecordId(Guid.Parse(representativeRecordId));
+        var representative = await records.FindAsync(representativeId, default);
+        Assert.NotNull(representative);
+
+        var day = await MeasureWithinTwoSecondsAsync(
+            $"PERF-001 ({tasksPerVisit} task(s))",
+            async () =>
+            {
+                await records.UpsertAsync(representative, default);
+                return await query.GetDayAsync(representative.WorkDate, default);
+            });
+        Assert.Equal(20 * expectedVisitPay, day.CalculatedSubtotal.Value);
+
+        var recalculatedPeriod = await MeasureWithinTwoSecondsAsync(
+            $"PERF-002 ({tasksPerVisit} task(s))",
+            async () =>
+            {
+                await records.UpsertAsync(representative, default);
+                return await query.GetPayrollPeriodAsync(selected, default);
+            });
+        Assert.Equal(620 * expectedVisitPay, recalculatedPeriod.CalculatedSubtotal.Value);
+
+        var calendar = await MeasureWithinTwoSecondsAsync(
+            $"PERF-003 ({tasksPerVisit} task(s))",
+            () => query.GetCalendarMonthScreenAsync(
+                new YearMonth(2026, 8), representative.WorkDate, default));
+        Assert.Equal(20, calendar.SelectedDay.Records.Count);
+        Assert.Equal(20 * expectedVisitPay, calendar.SelectedDay.CalculatedSubtotal.Value);
+
+        var switchedPeriod = await MeasureWithinTwoSecondsAsync(
+            $"PERF-004 ({tasksPerVisit} task(s))",
+            () => query.GetPayrollPeriodAsync(previous, default));
+        Assert.Equal(620 * expectedVisitPay, switchedPeriod.CalculatedSubtotal.Value);
+
+        var period = await MeasureWithinTwoSecondsAsync(
+            $"PERF-005 ({tasksPerVisit} task(s))",
+            () => query.GetPayrollPeriodAsync(selected, default));
+        Assert.Equal(620 * expectedVisitPay, period.CalculatedSubtotal.Value);
+
+        var detail = await MeasureWithinTwoSecondsAsync(
+            $"PERF-005 detail ({tasksPerVisit} task(s))",
+            () => query.GetWorkRecordCalculationAsync(representativeId, default));
+        Assert.Equal(tasksPerVisit, detail.Record.Tasks!.Count);
+        Assert.Equal(expectedVisitPay, detail.Record.Calculation.Total!.Value.Value);
+
+        var home = await MeasureWithinTwoSecondsAsync(
+            $"PERF-008 ({tasksPerVisit} task(s))",
+            () => query.GetHomeSalarySummaryAsync(selected, default));
+        Assert.Equal(4_860 * expectedVisitPay, home.AnnualSummary.CalculatedSubtotal.Value);
+        Assert.Equal(620 * expectedVisitPay, home.MonthlySummary.CalculatedSubtotal.Value);
+    }
+
+    [Fact]
+    public async Task PERF009_OneVisitWith100TasksCanBeEditedCalculatedSavedAndFormatThreeRoundTripped()
+    {
+        await using var source = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 8, 30, 0, TimeSpan.Zero));
+        var serviceId = new ServiceId(source.ServiceId);
+        var workUseCase = CreateWorkUseCase(source.Database, clock);
+        var tasks = Enumerable.Range(0, 100).Select(index => new SaveWorkTaskCommand(
+            new WorkTaskId(Guid.NewGuid()), serviceId, null, WorkInputMode.Duration,
+            new WorkMinutes(60), null, null, new DisplayOrder(index), null)).ToArray();
+        var created = await workUseCase.SaveAsync(
+            new SaveWorkRecordCommand(null, new DateOnly(2026, 8, 15), tasks, Guid.NewGuid()), default);
+
+        var editedTasks = created.WorkRecord.Tasks.Reverse().Select((task, index) => new SaveWorkTaskCommand(
+            task.Id, task.ServiceId, task.TimeCategoryId, task.InputMode,
+            new WorkMinutes(index == 0 ? 30 : 60), task.StartTime, task.EndTime,
+            new DisplayOrder(index), task.SourceServicePresetId)).ToArray();
+        var edited = await workUseCase.SaveAsync(
+            new SaveWorkRecordCommand(created.WorkRecord.Id, created.WorkRecord.WorkDate, editedTasks), default);
+
+        Assert.Equal(100, edited.WorkRecord.Tasks.Count);
+        Assert.Equal(editedTasks.Select(task => task.Id), edited.WorkRecord.Tasks.Select(task => task.Id));
+        var before = await CreateSalaryQuery(source.Database, clock)
+            .GetWorkRecordCalculationAsync(edited.WorkRecord.Id, default);
+        Assert.Equal(99_500, before.Record.Calculation.Total!.Value.Value);
+
+        var exported = new MemoryStream();
+        await CreateTransferUseCase(source.Database, source.StagingPath, clock)
+            .ExportAsync(exported, "1.0.1", default);
+        var document = JsonNode.Parse(exported.ToArray())!.AsObject();
+        Assert.Equal(3, document["formatVersion"]!.GetValue<int>());
+
+        await using var destination = await DatabaseFixture.CreateAsync();
+        var destinationTransfer = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
+        var preview = await destinationTransfer.PrepareImportAsync(new MemoryStream(exported.ToArray()), default);
+        Assert.Equal(1, preview.WorkRecordCount);
+        Assert.Equal(100, preview.WorkTaskCount);
+        await destinationTransfer.CommitImportAsync(preview.Id, default);
+
+        var imported = await new SqliteWorkRecordRepository(destination.Database, clock)
+            .FindAsync(edited.WorkRecord.Id, default);
+        Assert.NotNull(imported);
+        Assert.Equal(edited.WorkRecord.Tasks, imported.Tasks);
+        var after = await CreateSalaryQuery(destination.Database, clock)
+            .GetWorkRecordCalculationAsync(imported.Id, default);
+        Assert.Equal(before.Record.Calculation.Total, after.Record.Calculation.Total);
     }
 
     [Fact]
@@ -503,6 +938,23 @@ public sealed class InfrastructureIntegrationTests
         Assert.Equal("document_header", Assert.IsType<DataTransferRecord<JsonElement>>(records[0]).Value
             .GetProperty("type").GetString());
         Assert.Equal(DataTransferSection.WorkRecords, records[1].Section);
+    }
+
+    [Fact]
+    public async Task DATA001_ExportRejectsMissingAnnualSummarySettingWithoutMarkingSuccess()
+    {
+        await using var fixture = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 6, 0, 0, TimeSpan.Zero));
+        var metadata = new SqliteAppMetadataRepository(fixture.Database, clock);
+        Assert.Null((await metadata.GetAsync(default)).LastExportedAtUtc);
+        await using (var connection = await fixture.OpenRawAsync())
+            await ExecuteAsync(connection, "DELETE FROM annual_summary_setting;");
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CreateTransferUseCase(fixture.Database, fixture.StagingPath, clock)
+                .ExportAsync(new MemoryStream(), "2.0.0", default));
+
+        Assert.Null((await metadata.GetAsync(default)).LastExportedAtUtc);
     }
 
     [Fact]
@@ -544,7 +996,7 @@ public sealed class InfrastructureIntegrationTests
         }
         var sourceRecords = new SqliteWorkRecordRepository(source.Database, clock);
         var saveOperationId = Guid.NewGuid();
-        var work = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 12),
+        var work = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 12),
             new ServiceId(source.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null,
             null, null, null);
         Assert.True(await sourceRecords.TryInsertAsync(work, saveOperationId, default));
@@ -613,7 +1065,7 @@ public sealed class InfrastructureIntegrationTests
         await using var fixture = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 5, 0, 0, TimeSpan.Zero));
         var records = new SqliteWorkRecordRepository(fixture.Database, clock);
-        var existing = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 13),
+        var existing = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 13),
             new ServiceId(fixture.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
             null, null, null);
         await records.UpsertAsync(existing, default);
@@ -633,21 +1085,111 @@ public sealed class InfrastructureIntegrationTests
     }
 
     [Fact]
-    public async Task DATA004_DATA005_ImportRejectsIncompleteVersionsAndMalformedIdsWithoutChangingLiveData()
+    public async Task LegacyVersionOneImportBackfillsDecemberAnnualClosingMonth()
+    {
+        await using var source = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 5, 0, 0, TimeSpan.Zero));
+        await new SqliteAnnualSummarySettingRepository(source.Database, clock)
+            .SaveClosingMonthAsync(new AnnualClosingMonth(3), default);
+        var legacyRecord = SingleTaskRecord(
+            new WorkRecordId(Guid.NewGuid()),
+            new DateOnly(2026, 8, 14),
+            new ServiceId(source.ServiceId),
+            null,
+            WorkInputMode.Duration,
+            new WorkMinutes(30),
+            null,
+            null,
+            null,
+            null,
+            null);
+        await new SqliteWorkRecordRepository(source.Database, clock).UpsertAsync(legacyRecord, default);
+        var exported = new MemoryStream();
+        await CreateTransferUseCase(source.Database, source.StagingPath, clock)
+            .ExportAsync(exported, "2.0.0", default);
+        var legacyBytes = ConvertToLegacyExport(exported.ToArray(), 1);
+
+        await using var destination = await DatabaseFixture.CreateSeededAsync();
+        var transfer = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
+        var preview = await transfer.PrepareImportAsync(
+            new MemoryStream(legacyBytes), default);
+        await transfer.CommitImportAsync(preview.Id, default);
+
+        Assert.Equal(1, preview.FormatVersion);
+        Assert.Equal(preview.WorkRecordCount, preview.WorkTaskCount);
+        Assert.Equal(preview.BasicShiftCount, preview.BasicShiftTaskCount);
+        Assert.Equal(12, (await new SqliteAnnualSummarySettingRepository(destination.Database, clock)
+            .GetClosingMonthAsync(default)).Value);
+        Assert.Equal(3, (await new SqliteAppMetadataRepository(destination.Database, clock)
+            .GetAsync(default)).ExportFormatVersion);
+        var importedRecord = await new SqliteWorkRecordRepository(destination.Database, clock)
+            .FindAsync(legacyRecord.Id, default);
+        Assert.Equal(new WorkTaskId(legacyRecord.Id.Value), Assert.Single(importedRecord!.Tasks).Id);
+    }
+
+    [Fact]
+    public async Task DATA020_FormatTwoImportConvertsLegacyRowsToSingleTaskParents()
+    {
+        await using var source = await DatabaseFixture.CreateSeededAsync();
+        var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 5, 15, 0, TimeSpan.Zero));
+        await new SqliteAnnualSummarySettingRepository(source.Database, clock)
+            .SaveClosingMonthAsync(new AnnualClosingMonth(4), default);
+        var legacyRecord = SingleTaskRecord(
+            new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 14), new ServiceId(source.ServiceId), null,
+            WorkInputMode.Duration, new WorkMinutes(75), null, null, null, null, null);
+        await new SqliteWorkRecordRepository(source.Database, clock).UpsertAsync(legacyRecord, default);
+        var legacyShift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Tuesday, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, new ServiceId(source.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
+        await new SqliteBasicShiftRepository(source.Database, clock).UpsertAsync(legacyShift, default);
+        var exported = new MemoryStream();
+        await CreateTransferUseCase(source.Database, source.StagingPath, clock)
+            .ExportAsync(exported, "2.0.0", default);
+        var beforeSalary = await ReadSalaryTotalsAsync(source.Database, clock);
+        Assert.Equal(1250, beforeSalary.Total);
+        Assert.Equal(0, beforeSalary.UncalculatedCount);
+
+        await using var destination = await DatabaseFixture.CreateSeededAsync();
+        var transfer = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
+        var preview = await transfer.PrepareImportAsync(
+            new MemoryStream(ConvertToLegacyExport(exported.ToArray(), 2)), default);
+
+        Assert.Equal(2, preview.FormatVersion);
+        Assert.Equal(1, preview.WorkRecordCount);
+        Assert.Equal(1, preview.WorkTaskCount);
+        Assert.Equal(1, preview.BasicShiftCount);
+        Assert.Equal(1, preview.BasicShiftTaskCount);
+        await transfer.CommitImportAsync(preview.Id, default);
+
+        var imported = await new SqliteWorkRecordRepository(destination.Database, clock)
+            .FindAsync(legacyRecord.Id, default);
+        Assert.Equal(legacyRecord, imported);
+        var importedShift = await new SqliteBasicShiftRepository(destination.Database, clock)
+            .FindAsync(legacyShift.Id, default);
+        Assert.Equal(legacyShift with { Tasks = [legacyShift.Tasks[0] with { Id = new BasicShiftTaskId(legacyShift.Id.Value) }] }, importedShift);
+        Assert.Equal(beforeSalary, await ReadSalaryTotalsAsync(destination.Database, clock));
+        Assert.Equal(4, (await new SqliteAnnualSummarySettingRepository(destination.Database, clock)
+            .GetClosingMonthAsync(default)).Value);
+        Assert.Equal(3, (await new SqliteAppMetadataRepository(destination.Database, clock)
+            .GetAsync(default)).ExportFormatVersion);
+    }
+
+    [Fact]
+    public async Task DATA004_DATA005_DATA021_ImportRejectsIncompleteVersionsAndMalformedIdsWithoutChangingLiveData()
     {
         await using var source = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 5, 30, 0, TimeSpan.Zero));
-        var sourceRecord = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 14),
+        var sourceRecord = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 14),
             new ServiceId(source.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null,
             null, null, new WorkRecordId(Guid.NewGuid()));
         await new SqliteWorkRecordRepository(source.Database, clock).UpsertAsync(sourceRecord, default);
+        var sourceShift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, new ServiceId(source.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(30), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
+        await new SqliteBasicShiftRepository(source.Database, clock).UpsertAsync(sourceShift, default);
         var exported = new MemoryStream();
         await CreateTransferUseCase(source.Database, source.StagingPath, clock).ExportAsync(exported, "1.0.0", default);
         var validBytes = exported.ToArray();
 
         await using var destination = await DatabaseFixture.CreateSeededAsync();
         var destinationRecords = new SqliteWorkRecordRepository(destination.Database, clock);
-        var existing = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
+        var existing = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
             new ServiceId(destination.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null,
             null, null, null);
         await destinationRecords.UpsertAsync(existing, default);
@@ -656,11 +1198,49 @@ public sealed class InfrastructureIntegrationTests
 
         var mutations = new Action<JsonArray>[]
         {
+            // A format-three visit and basic shift must each retain at least one child task.
+            data => RemoveRecords(data, "work_task"),
+            data => RemoveRecords(data, "basic_shift_task"),
+            // Child records cannot outlive or point away from their parent.
+            data => RemoveRecords(data, "work_record"),
+            data => FindValue(data, "work_task")["work_record_id"] = Guid.NewGuid().ToString("D"),
+            // IDs and display orders are unique within the imported aggregate.
+            data => data.Add(FindEnvelope(data, "work_task").DeepClone()),
+            data =>
+            {
+                var duplicateOrder = FindEnvelope(data, "work_task").DeepClone().AsObject();
+                duplicateOrder["value"]!["id"] = Guid.NewGuid().ToString("D");
+                data.Add(duplicateOrder);
+            },
+            // A task interval must agree with its normalized work duration.
+            data =>
+            {
+                var task = FindValue(data, "work_task");
+                task["input_mode"] = "TimeRange";
+                task["start_time_minutes"] = 0;
+                task["end_time_minutes"] = 60;
+                task["work_minutes"] = 30;
+            },
+            // Audit timestamps on both child record types must remain valid UTC values.
+            data => FindValue(data, "work_task")["created_at_utc"] = "not-a-timestamp",
+            data => FindValue(data, "work_task")["updated_at_utc"] = "not-a-timestamp",
+            data => FindValue(data, "basic_shift_task")["created_at_utc"] = "not-a-timestamp",
+            data => FindValue(data, "basic_shift_task")["updated_at_utc"] = "not-a-timestamp",
             // No closing rule means the forced Completed state would be inconsistent.
             data => RemoveRecords(data, "closing_rule_history"),
+            data => RemoveRecords(data, "annual_summary_setting"),
+            data => FindValue(data, "annual_summary_setting")["closing_month"] = 13,
+            data => FindValue(data, "annual_summary_setting")["closing_month"] = true,
+            data => FindValue(data, "annual_summary_setting")["closing_month"] = "3",
+            data =>
+            {
+                var duplicate = data.Single(item =>
+                    item!["value"]!["type"]!.GetValue<string>() == "annual_summary_setting")!.DeepClone();
+                data.Add(duplicate);
+            },
             // Initial snapshot has no applicable rate after this removal.
             data => RemoveRecords(data, "snapshot_rate"),
-            data => FindValue(data, "app_metadata")["export_format_version"] = 2,
+            data => FindValue(data, "app_metadata")["export_format_version"] = 4,
             data => FindValue(data, "setting_snapshot")["schema_version"] = 2,
             // Unreferenced holiday IDs must also be canonical UUIDs.
             data => data.Add(new JsonObject
@@ -686,10 +1266,11 @@ public sealed class InfrastructureIntegrationTests
                 "内閣府『国民の祝日について』公式CSV", "2026-08-16"),
         };
 
-        foreach (var mutation in mutations)
+        for (var mutationIndex = 0; mutationIndex < mutations.Length; mutationIndex++)
         {
-            var input = MutateExport(validBytes, mutation);
-            await Assert.ThrowsAnyAsync<Exception>(() => useCase.PrepareImportAsync(input, default));
+            var input = MutateExport(validBytes, mutations[mutationIndex]);
+            var exception = await Record.ExceptionAsync(() => useCase.PrepareImportAsync(input, default));
+            Assert.True(exception is not null, $"Mutation {mutationIndex} should have been rejected.");
             Assert.Equal(existing, await destinationRecords.FindAsync(existing.Id, default));
         }
     }
@@ -725,7 +1306,7 @@ public sealed class InfrastructureIntegrationTests
 
         await using var destination = await DatabaseFixture.CreateSeededAsync();
         var liveRecords = new SqliteWorkRecordRepository(destination.Database, clock);
-        var existing = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
+        var existing = SingleTaskRecord(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 15),
             new ServiceId(destination.ServiceId), null, WorkInputMode.Duration, new WorkMinutes(45), null, null,
             null, null, null);
         await liveRecords.UpsertAsync(existing, default);
@@ -798,6 +1379,88 @@ public sealed class InfrastructureIntegrationTests
             new SqliteImportStagingRepository(database, stagingPath, clock),
             new SqliteAppMetadataRepository(database, clock), new SqliteTransactionRunner(database), clock);
 
+    private static WorkRecordDto SingleTaskRecord(
+        WorkRecordId id,
+        DateOnly workDate,
+        ServiceId serviceId,
+        TimeCategoryId? timeCategoryId,
+        WorkInputMode inputMode,
+        WorkMinutes workMinutes,
+        MinuteOfDay? startTime,
+        MinuteOfDay? endTime,
+        ServicePresetId? sourceServicePresetId,
+        BasicShiftId? sourceBasicShiftId,
+        WorkRecordId? sourceWorkRecordId) =>
+        new(id, workDate,
+        [
+            new WorkTaskDto(new WorkTaskId(id.Value), serviceId, timeCategoryId,
+                inputMode, workMinutes, startTime, endTime, new DisplayOrder(0),
+                sourceServicePresetId),
+        ], sourceBasicShiftId, sourceWorkRecordId);
+
+    private static WorkRecordUseCase CreateWorkUseCase(SqliteDatabase database, IUtcClock clock) => new(
+        new SqliteWorkRecordRepository(database, clock),
+        new SqliteSettingSnapshotRepository(database, clock),
+        new SqliteServicePresetRepository(database, clock),
+        new SqliteHolidayCalendarRepository(database),
+        new Domain.Services.SalaryCalculator(),
+        new SqliteTransactionRunner(database),
+        new SqliteAppMetadataRepository(database, clock),
+        clock);
+
+    private static SalaryQueryUseCase CreateSalaryQuery(SqliteDatabase database, IUtcClock clock) => new(
+        new SqliteWorkRecordRepository(database, clock),
+        new SqliteSettingSnapshotRepository(database, clock),
+        new SqliteHolidayCalendarRepository(database),
+        new SqliteClosingRuleRepository(database, clock),
+        new SqliteMonthlyAllowanceRepository(database, clock),
+        new SqliteBasicShiftRepository(database, clock),
+        new Domain.Services.SalaryCalculator(),
+        new Domain.Services.PayrollPeriodCalculator(),
+        new Domain.Services.AnnualSalaryCalculator(),
+        new SqliteAnnualSummarySettingRepository(database, clock));
+
+    private async Task<T> MeasureWithinTwoSecondsAsync<T>(string scenario, Func<Task<T>> operation)
+    {
+        _ = await operation();
+        var measurements = new List<TimeSpan>();
+        T result = default!;
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            result = await operation();
+            stopwatch.Stop();
+            measurements.Add(stopwatch.Elapsed);
+        }
+
+        var formatted = string.Join(", ", measurements.Select(value =>
+            value.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture)));
+        output.WriteLine($"{scenario}: {formatted} ms (worst {measurements.Max().TotalMilliseconds:F0} ms)");
+        Assert.True(measurements.Max() < TimeSpan.FromSeconds(2),
+            $"{scenario} exceeded two seconds. Measurements: {formatted} ms.");
+        return result;
+    }
+
+    private static async Task<SalaryTotals> ReadSalaryTotalsAsync(SqliteDatabase database, IUtcClock clock)
+    {
+        var query = new SalaryQueryUseCase(
+            new SqliteWorkRecordRepository(database, clock),
+            new SqliteSettingSnapshotRepository(database, clock),
+            new SqliteHolidayCalendarRepository(database),
+            new SqliteClosingRuleRepository(database, clock),
+            new SqliteMonthlyAllowanceRepository(database, clock),
+            new SqliteBasicShiftRepository(database, clock),
+            new Domain.Services.SalaryCalculator(), new Domain.Services.PayrollPeriodCalculator(),
+            new SqliteAnnualSummarySettingRepository(database, clock));
+        var summary = await query.GetPayrollPeriodAsync(new PayrollPeriodKey(new YearMonth(2026, 8)), default);
+        return new SalaryTotals(summary.BasePaySubtotal.Value, summary.PremiumSubtotal.Value,
+            summary.CountBonusSubtotal.Value, summary.AllowanceSubtotal.Value,
+            summary.CalculatedSubtotal.Value, summary.UncalculatedCount);
+    }
+
+    private sealed record SalaryTotals(long BasePay, long Premium, long CountBonus, long Allowance, long Total,
+        int UncalculatedCount);
+
     private static async IAsyncEnumerable<DataTransferRecord> One(DataTransferRecord record)
     {
         await Task.Yield();
@@ -828,6 +1491,50 @@ public sealed class InfrastructureIntegrationTests
         return new MemoryStream(Encoding.UTF8.GetBytes(root.ToJsonString()));
     }
 
+    private static byte[] ConvertToLegacyExport(byte[] bytes, int formatVersion)
+    {
+        if (formatVersion is not 1 and not 2) throw new ArgumentOutOfRangeException(nameof(formatVersion));
+        var root = JsonNode.Parse(bytes)!.AsObject();
+        root["formatVersion"] = formatVersion;
+        var data = root["data"]!.AsArray();
+        MergeLegacyTaskColumns(data, "basic_shift", "basic_shift_task", "basic_shift_id",
+            ["service_preset_id", "service_id", "time_category_id", "input_mode", "work_minutes",
+                "start_time_minutes", "end_time_minutes"]);
+        MergeLegacyTaskColumns(data, "work_record", "work_task", "work_record_id",
+            ["service_id", "time_category_id", "input_mode", "work_minutes", "start_time_minutes",
+                "end_time_minutes", "source_service_preset_id"]);
+        RemoveRecords(data, "basic_shift_task");
+        RemoveRecords(data, "work_task");
+        FindValue(data, "app_metadata")["export_format_version"] = formatVersion;
+        if (formatVersion == 1) RemoveRecords(data, "annual_summary_setting");
+
+        var nextSequence = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var item in data)
+        {
+            var envelope = item!.AsObject();
+            var section = envelope["section"]!.GetValue<string>();
+            if (!nextSequence.TryGetValue(section, out var sequence))
+                sequence = section == DataTransferSection.Metadata.ToString() ? 1 : 0;
+            envelope["sequence"] = sequence;
+            nextSequence[section] = sequence + 1;
+        }
+        return Encoding.UTF8.GetBytes(root.ToJsonString());
+    }
+
+    private static void MergeLegacyTaskColumns(JsonArray data, string parentType, string taskType,
+        string taskParentColumn, IReadOnlyList<string> taskColumns)
+    {
+        var tasks = data.Select(item => item!["value"]!.AsObject())
+            .Where(value => value["type"]!.GetValue<string>() == taskType)
+            .ToDictionary(value => value[taskParentColumn]!.GetValue<string>(), StringComparer.Ordinal);
+        foreach (var parent in data.Select(item => item!["value"]!.AsObject())
+                     .Where(value => value["type"]!.GetValue<string>() == parentType))
+        {
+            var task = tasks[parent["id"]!.GetValue<string>()];
+            foreach (var column in taskColumns) parent[column] = task[column]?.DeepClone();
+        }
+    }
+
     private static void RemoveRecords(JsonArray data, string type)
     {
         for (var index = data.Count - 1; index >= 0; index--)
@@ -838,6 +1545,10 @@ public sealed class InfrastructureIntegrationTests
     private static JsonObject FindValue(JsonArray data, string type) => data
         .Select(item => item!["value"]!.AsObject())
         .First(value => value["type"]!.GetValue<string>() == type);
+
+    private static JsonObject FindEnvelope(JsonArray data, string type) => data
+        .Select(item => item!.AsObject())
+        .First(item => item["value"]!["type"]!.GetValue<string>() == type);
 
     private static void AddHolidayVersion(JsonArray data, string versionName, string sourceName,
         string referenceDate) => data.Add(new JsonObject
@@ -864,6 +1575,29 @@ public sealed class InfrastructureIntegrationTests
 
     private static async Task<long> ScalarLongAsync(SqliteConnection connection, string sql) =>
         Convert.ToInt64(await ScalarAsync(connection, sql), CultureInfo.InvariantCulture);
+
+    private static async Task<IReadOnlyList<string>> ReadQueryPlanAsync(
+        SqliteConnection connection,
+        string sql)
+    {
+        var details = new List<string>();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"EXPLAIN QUERY PLAN {sql}";
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) details.Add(reader.GetString(3));
+        return details;
+    }
+
+    private static async Task ExecuteParameterizedAsync(
+        SqliteConnection connection,
+        string sql,
+        IReadOnlyDictionary<string, object?> values)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var pair in values) command.Parameters.AddWithValue(pair.Key, pair.Value ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync();
+    }
 
     private static async Task ExecuteAsync(SqliteConnection connection, string sql)
     {

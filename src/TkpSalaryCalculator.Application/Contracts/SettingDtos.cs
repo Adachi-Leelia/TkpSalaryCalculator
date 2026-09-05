@@ -100,6 +100,14 @@ public sealed record ClosingRuleHistorySnapshot(
     IReadOnlyList<ClosingRule> Rules,
     ClosingRuleHistoryVersion Version);
 
+/// <summary>年間給与見込み累計の現在設定を保持します。</summary>
+/// <param name="ClosingMonth">年間区分の最終月。</param>
+public sealed record AnnualSummarySettingDto(AnnualClosingMonth ClosingMonth);
+
+/// <summary>年間給与見込み累計の設定保存内容を保持します。</summary>
+/// <param name="ClosingMonth">1 月から 12 月までの年間締め月。</param>
+public sealed record SaveAnnualSummarySettingCommand(int ClosingMonth);
+
 /// <summary>月額手当の入力内容を保持します。</summary>
 /// <param name="Id">既存の識別子。新規手当の場合は <see langword="null"/>。</param>
 /// <param name="PayrollPeriodKey">対象の給与期間。</param>

@@ -46,6 +46,19 @@ public interface IPayrollPeriodCalculator
     PayrollPeriod FindPeriod(DateOnly workDate, IReadOnlyList<ClosingRule> closingRules);
 }
 
+/// <summary>年間区分の境界決定と給与期間集計の合算を副作用なく実行します。</summary>
+public interface IAnnualSalaryCalculator
+{
+    /// <summary>選択中の給与期間を含む年間区分と累計終点を計算します。</summary>
+    AnnualSalaryPeriodRange GetPeriodRange(
+        PayrollPeriodKey selected,
+        AnnualClosingMonth closingMonth);
+
+    /// <summary>給与期間キー順に並んだ期間集計を年間累計へ合算します。</summary>
+    AnnualSalaryCalculation Aggregate(
+        IReadOnlyList<PayrollPeriodSalaryCalculation> periods);
+}
+
 /// <summary>1 件の勤務記録を計算するために必要な、副作用のない入力をすべて保持します。</summary>
 /// <param name="WorkRecord">正規化済みの勤務記録。</param>
 /// <param name="SettingSnapshot">勤務日の暦月から選択されたスナップショット。</param>
@@ -65,10 +78,14 @@ public enum SalaryCalculationStatus
     Uncalculated,
 }
 
-/// <summary>金額を推測せず、不足している計算要件を識別します。</summary>
+/// <summary>金額を推測せず、不足しているタスクの計算要件を識別します。</summary>
+/// <param name="WorkTaskId">不足がある勤務タスク。</param>
 /// <param name="Code">機械判読可能な安定した理由コード。</param>
 /// <param name="RelatedId">任意の関連論理識別子。</param>
-public sealed record MissingCalculationRequirement(string Code, Guid? RelatedId);
+public sealed record MissingCalculationRequirement(
+    WorkTaskId WorkTaskId,
+    string Code,
+    Guid? RelatedId);
 
 /// <summary>適用された割増の 1 行を保持します。</summary>
 /// <param name="Rule">サービス、日付、祝日、曜日、時間条件の判定に使用した完全で不変の割増ルール。</param>
@@ -85,24 +102,48 @@ public sealed record AppliedPremium(
 /// <param name="Amount">円単位の加算額。</param>
 public sealed record AppliedCountBonus(CountBonusId CountBonusId, string DisplayName, YenAmount Amount);
 
-/// <summary>1 件の勤務記録に対する決定論的な結果を保持します。</summary>
-/// <param name="WorkRecordId">計算対象の記録。</param>
+/// <summary>1件の勤務タスクに対する決定論的な結果を保持します。</summary>
+/// <param name="WorkTaskId">計算対象のタスク。</param>
 /// <param name="Status">結果が完全かどうか。</param>
 /// <param name="AppliedRate">選択された単価。未計算の場合は <see langword="null"/>。</param>
 /// <param name="BasePay">丸め済みの基本給。未計算の場合は <see langword="null"/>。</param>
-/// <param name="Premiums">適用された個別の割増。</param>
-/// <param name="CountBonuses">適用された個別の件数加算。</param>
-/// <param name="Total">記録の合計。未計算の場合は <see langword="null"/>。</param>
-/// <param name="MissingRequirements">計算できなかった明示的な理由。</param>
-public sealed record WorkSalaryCalculation(
-    WorkRecordId WorkRecordId,
+/// <param name="Premiums">タスクへ適用された個別の割増。</param>
+/// <param name="TaskSubtotal">基本給と割増の小計。未計算の場合は <see langword="null"/>。</param>
+/// <param name="MissingRequirements">このタスクを計算できなかった明示的な理由。</param>
+public sealed record TaskSalaryCalculation(
+    WorkTaskId WorkTaskId,
     SalaryCalculationStatus Status,
     SnapshotRate? AppliedRate,
     YenAmount? BasePay,
     IReadOnlyList<AppliedPremium> Premiums,
+    YenAmount? TaskSubtotal,
+    IReadOnlyList<MissingCalculationRequirement> MissingRequirements);
+
+/// <summary>1件の訪問に対する決定論的な結果を保持します。</summary>
+/// <param name="WorkRecordId">計算対象の訪問。</param>
+/// <param name="Status">訪問内の全タスクを計算できたかどうか。</param>
+/// <param name="TaskCalculations">表示順に並んだタスクごとの計算結果。</param>
+/// <param name="CountBonuses">訪問へ適用された個別の件数加算。</param>
+/// <param name="Total">訪問の合計。未計算の場合は <see langword="null"/>。</param>
+/// <param name="MissingRequirements">全タスクから集約したタスクID付き不足理由。</param>
+public sealed record WorkSalaryCalculation(
+    WorkRecordId WorkRecordId,
+    SalaryCalculationStatus Status,
+    IReadOnlyList<TaskSalaryCalculation> TaskCalculations,
     IReadOnlyList<AppliedCountBonus> CountBonuses,
     YenAmount? Total,
-    IReadOnlyList<MissingCalculationRequirement> MissingRequirements);
+    IReadOnlyList<MissingCalculationRequirement> MissingRequirements)
+{
+    /// <summary>計算済みタスクの基本給与合計を取得します。</summary>
+    public YenAmount? BasePay => Status == SalaryCalculationStatus.Calculated
+        ? new YenAmount(TaskCalculations.Aggregate(0L,
+            static (sum, task) => checked(sum + task.BasePay!.Value.Value)))
+        : null;
+
+    /// <summary>全タスクへ適用された割増を表示順に取得します。</summary>
+    public IReadOnlyList<AppliedPremium> Premiums =>
+        TaskCalculations.SelectMany(static task => task.Premiums).ToArray();
+}
 
 /// <summary>副作用のない日別集計結果を保持します。</summary>
 /// <param name="WorkDate">現地勤務日。</param>
@@ -139,5 +180,12 @@ public sealed record PayrollPeriodSalaryCalculation(
     YenAmount PremiumSubtotal,
     YenAmount CountBonusSubtotal,
     YenAmount AllowanceSubtotal,
+    YenAmount CalculatedSubtotal,
+    int UncalculatedCount);
+
+/// <summary>年間範囲内の給与見込み累計を保持します。</summary>
+/// <param name="CalculatedSubtotal">計算済み給与期間の累計額。</param>
+/// <param name="UncalculatedCount">年間範囲内の未計算勤務記録数。</param>
+public sealed record AnnualSalaryCalculation(
     YenAmount CalculatedSubtotal,
     int UncalculatedCount);

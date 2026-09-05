@@ -13,16 +13,31 @@ public partial class BasicShiftEditorPage : ContentPage, IQueryAttributable
     {
         if (eventArgs.PropertyName != nameof(BasicShiftEditorViewModel.FirstInvalidField) ||
             string.IsNullOrWhiteSpace(viewModel.FirstInvalidField)) return;
-        VisualElement? target = viewModel.FirstInvalidField switch
+        Dispatcher.Dispatch(() => _ = FocusFirstInvalidFieldAsync());
+    }
+
+    private async Task FocusFirstInvalidFieldAsync()
+    {
+        if (viewModel.FirstInvalidField == "DisplayOrder")
         {
-            "ServiceId" => ServicePicker,
-            "TimeCategoryId" => TimeCategoryPicker,
-            "WorkMinutes" => WorkMinutesEntry,
-            "StartTime" => viewModel.ShowTimeRange ? TimeRangeStartTimePicker : DurationStartTimePicker,
-            "EndTime" => EndTimePicker,
-            "DisplayOrder" => DisplayOrderEntry,
+            await SettingsEditorFocus.FocusAsync(EditorScroll, DisplayOrderEntry);
+            return;
+        }
+        var task = viewModel.FirstInvalidTask;
+        if (task is null) return;
+        var automationId = viewModel.FirstInvalidField switch
+        {
+            "ServiceId" => task.ServiceAutomationId,
+            "TimeCategoryId" => task.TimeCategoryAutomationId,
+            "WorkMinutes" => task.WorkMinutesAutomationId,
+            "StartTime" => task.StartTimeAutomationId,
+            "EndTime" => task.EndTimeAutomationId,
             _ => null,
         };
-        Dispatcher.Dispatch(() => _ = SettingsEditorFocus.FocusAsync(EditorScroll, target));
+        if (automationId is null) return;
+        await Task.Yield();
+        var target = TaskList.GetVisualTreeDescendants().OfType<VisualElement>()
+            .FirstOrDefault(element => element.AutomationId == automationId);
+        await SettingsEditorFocus.FocusAsync(EditorScroll, target);
     }
 }

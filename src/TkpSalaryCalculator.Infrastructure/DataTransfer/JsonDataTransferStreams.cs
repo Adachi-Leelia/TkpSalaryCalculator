@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using TkpSalaryCalculator.Application.Contracts;
 using TkpSalaryCalculator.Application.Ports;
+using TkpSalaryCalculator.Infrastructure.Sqlite;
 
 namespace TkpSalaryCalculator.Infrastructure.DataTransfer;
 
@@ -12,7 +13,12 @@ public sealed class StreamingJsonExportStream : IJsonExportStream
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task WriteAsync(Stream destination, ExportDocumentHeader header,
+    public Task WriteAsync(Stream destination, ExportDocumentHeader header,
+        IAsyncEnumerable<DataTransferRecord> records, CancellationToken cancellationToken) =>
+        BackgroundOperation.RunAsync(
+            () => WriteCoreAsync(destination, header, records, cancellationToken), cancellationToken);
+
+    private static async Task WriteCoreAsync(Stream destination, ExportDocumentHeader header,
         IAsyncEnumerable<DataTransferRecord> records, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(destination);
@@ -68,7 +74,11 @@ public sealed class StreamingJsonImportStream : IJsonImportStream
 {
     private const int BufferSize = 64 * 1024;
 
-    public async IAsyncEnumerable<DataTransferRecord> ReadAsync(Stream source,
+    public IAsyncEnumerable<DataTransferRecord> ReadAsync(Stream source,
+        CancellationToken cancellationToken) =>
+        BackgroundOperation.StreamAsync(token => ReadCoreAsync(source, token), cancellationToken);
+
+    private static async IAsyncEnumerable<DataTransferRecord> ReadCoreAsync(Stream source,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);

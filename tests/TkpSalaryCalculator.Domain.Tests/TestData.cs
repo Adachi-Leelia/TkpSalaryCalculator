@@ -17,16 +17,29 @@ internal static class TestData
         TimeCategoryId? timeCategory = null,
         Guid? recordId = null)
     {
-        return new WorkRecord(
-            new WorkRecordId(recordId ?? Guid.Parse("40000000-0000-0000-0000-000000000001")),
-            date ?? new DateOnly(2026, 8, 15),
-            ServiceId,
-            timeCategory,
-            WorkInputMode.Duration,
-            new WorkMinutes(minutes),
-            start is null ? null : new MinuteOfDay(start.Value),
-            null);
+        var id = new WorkRecordId(recordId ?? Guid.Parse("40000000-0000-0000-0000-000000000001"));
+        return new WorkRecord(id, date ?? new DateOnly(2026, 8, 15),
+        [
+            new WorkTask(new WorkTaskId(id.Value), ServiceId, timeCategory, WorkInputMode.Duration,
+                new WorkMinutes(minutes), start is null ? null : new MinuteOfDay(start.Value), null,
+                new DisplayOrder(0)),
+        ]);
     }
+
+    public static WorkRecord CreateWorkRecord(
+        WorkRecordId id,
+        DateOnly date,
+        ServiceId serviceId,
+        TimeCategoryId? timeCategoryId,
+        WorkInputMode inputMode,
+        WorkMinutes workMinutes,
+        MinuteOfDay? startTime,
+        MinuteOfDay? endTime) =>
+        new(id, date,
+        [
+            new WorkTask(new WorkTaskId(id.Value), serviceId, timeCategoryId, inputMode,
+                workMinutes, startTime, endTime, new DisplayOrder(0)),
+        ]);
 
     public static SnapshotRate Rate(RateType type, long amount)
     {
@@ -170,12 +183,14 @@ internal static class TestData
 
     public static WorkSalaryCalculation CalculatedRecord(long total, Guid? recordId = null)
     {
+        var id = new WorkRecordId(recordId ?? Guid.NewGuid());
+        var taskId = new WorkTaskId(id.Value);
+        var rate = Rate(RateType.FixedPerRecord, total);
         return new(
-            new WorkRecordId(recordId ?? Guid.NewGuid()),
+            id,
             SalaryCalculationStatus.Calculated,
-            Rate(RateType.FixedPerRecord, total),
-            new YenAmount(total),
-            [],
+            [new TaskSalaryCalculation(taskId, SalaryCalculationStatus.Calculated, rate,
+                new YenAmount(total), [], new YenAmount(total), [])],
             [],
             new YenAmount(total),
             []);

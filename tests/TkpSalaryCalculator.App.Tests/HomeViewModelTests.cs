@@ -100,6 +100,13 @@ public sealed class HomeViewModelTests
         Assert.Equal("500円", fixture.ViewModel.AllowanceText);
         Assert.Equal("2件", fixture.ViewModel.UncalculatedCountText);
         Assert.True(fixture.ViewModel.HasUncalculatedRecords);
+        Assert.Equal("2026年1月分～8月分", fixture.ViewModel.AnnualRangeText);
+        Assert.Equal("10,000円", fixture.ViewModel.AnnualTotalText);
+        Assert.Equal("未計算2件を除く", fixture.ViewModel.AnnualUncalculatedText);
+        Assert.True(fixture.ViewModel.HasAnnualUncalculatedRecords);
+        Assert.Equal(
+            "年間給与見込み累計。集計範囲: 2026年1月分～8月分。金額: 10,000円。未計算2件を除く。",
+            fixture.ViewModel.AnnualAccessibilityText);
         Assert.True(fixture.ViewModel.BackupReminder.ShouldShow);
         Assert.Equal(Key(2026, 8), fixture.Session.PayrollPeriod);
     }
@@ -125,6 +132,9 @@ public sealed class HomeViewModelTests
         Assert.Equal("2,000円", fixture.ViewModel.CountBonusText);
         Assert.Equal("1,000円", fixture.ViewModel.AllowanceText);
         Assert.Equal("4件", fixture.ViewModel.UncalculatedCountText);
+        Assert.Equal("2026年1月分～9月分", fixture.ViewModel.AnnualRangeText);
+        Assert.Equal("9,000円", fixture.ViewModel.AnnualTotalText);
+        Assert.Equal("未計算4件を除く", fixture.ViewModel.AnnualUncalculatedText);
         Assert.Equal(Key(2026, 9), fixture.Session.PayrollPeriod);
     }
 
@@ -142,7 +152,27 @@ public sealed class HomeViewModelTests
 
         Assert.Equal("0件", fixture.ViewModel.UncalculatedCountText);
         Assert.False(fixture.ViewModel.HasUncalculatedRecords);
+        Assert.Equal(string.Empty, fixture.ViewModel.AnnualUncalculatedText);
+        Assert.False(fixture.ViewModel.HasAnnualUncalculatedRecords);
         Assert.False(fixture.ViewModel.UncalculatedDaysCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task UI017_AnnualSettingGenerationReloadsHomeWithTheNewAnnualPeriod()
+    {
+        var fixture = new HomeFixture();
+        var summary = Summary(2026, 8, 10_000, 10_000, 0, 0, 0, 0);
+        fixture.Salary.Add(summary, Annual(2026, 1, 2026, 12, 2026, 8, 10_000, 0));
+        await fixture.ViewModel.LoadIfNeededAsync();
+        Assert.Equal("2026年1月分～8月分", fixture.ViewModel.AnnualRangeText);
+
+        fixture.Salary.SetAnnual(summary.Period.Key, Annual(2026, 4, 2027, 3, 2026, 8, 5_000, 0));
+        fixture.Session.NotifyDataChanged(AppDataChangeKind.AnnualSummarySettings);
+        await fixture.ViewModel.LoadIfNeededAsync();
+
+        Assert.Equal(2, fixture.Salary.RequestedKeys.Count);
+        Assert.Equal("2026年4月分～8月分", fixture.ViewModel.AnnualRangeText);
+        Assert.Equal("5,000円", fixture.ViewModel.AnnualTotalText);
     }
 
     [Fact]
@@ -294,6 +324,21 @@ public sealed class HomeViewModelTests
 
     private static PayrollPeriodKey Key(int year, int month) => new(new YearMonth(year, month));
 
+    private static AnnualSalarySummaryDto Annual(
+        int startYear,
+        int startMonth,
+        int endYear,
+        int endMonth,
+        int accumulationEndYear,
+        int accumulationEndMonth,
+        long total,
+        int uncalculated) => new(
+            Key(startYear, startMonth),
+            Key(endYear, endMonth),
+            Key(accumulationEndYear, accumulationEndMonth),
+            new YenAmount(total),
+            uncalculated);
+
     private static PayrollPeriodSummaryDto Summary(
         int year,
         int month,
@@ -361,6 +406,7 @@ public sealed class HomeViewModelTests
     private sealed class SalaryStub : ISalaryQueryUseCase
     {
         private readonly Dictionary<PayrollPeriodKey, PayrollPeriodSummaryDto> summaries = [];
+        private readonly Dictionary<PayrollPeriodKey, AnnualSalarySummaryDto> annualSummaries = [];
         public List<PayrollPeriodKey> RequestedKeys { get; } = [];
         public PayrollPeriodKey? FailingKey { get; set; }
         public Func<PayrollPeriodKey, CancellationToken, Task<PayrollPeriodSummaryDto>>? GetPayrollPeriodAsyncOverride { get; set; }
@@ -371,7 +417,22 @@ public sealed class HomeViewModelTests
         public Task<DayScreenDto> GetDayScreenAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public void Add(PayrollPeriodSummaryDto summary) => summaries.Add(summary.Period.Key, summary);
+        public void Add(PayrollPeriodSummaryDto summary, AnnualSalarySummaryDto? annual = null)
+        {
+            summaries.Add(summary.Period.Key, summary);
+            annualSummaries.Add(summary.Period.Key, annual ?? Annual(
+                summary.Period.Key.Value.Year,
+                1,
+                summary.Period.Key.Value.Year,
+                12,
+                summary.Period.Key.Value.Year,
+                summary.Period.Key.Value.Month,
+                summary.CalculatedSubtotal.Value,
+                summary.UncalculatedCount));
+        }
+
+        public void SetAnnual(PayrollPeriodKey key, AnnualSalarySummaryDto annual) =>
+            annualSummaries[key] = annual;
 
         public Task<PayrollPeriodSummaryDto> GetPayrollPeriodAsync(
             PayrollPeriodKey payrollPeriodKey,
@@ -387,12 +448,35 @@ public sealed class HomeViewModelTests
             return Task.FromResult(summaries[payrollPeriodKey]);
         }
 
+        public async Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
+            PayrollPeriodKey payrollPeriodKey,
+            CancellationToken cancellationToken)
+        {
+            var monthly = await GetPayrollPeriodAsync(payrollPeriodKey, cancellationToken);
+            var annual = annualSummaries.TryGetValue(payrollPeriodKey, out var configured)
+                ? configured
+                : Annual(
+                    monthly.Period.Key.Value.Year,
+                    1,
+                    monthly.Period.Key.Value.Year,
+                    12,
+                    monthly.Period.Key.Value.Year,
+                    monthly.Period.Key.Value.Month,
+                    monthly.CalculatedSubtotal.Value,
+                    monthly.UncalculatedCount);
+            return new HomeSalarySummaryDto(monthly, annual);
+        }
+
         public Task<IReadOnlyList<CalendarDayDto>> GetCalendarMonthAsync(
             YearMonth yearMonth,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<DailySalaryDto> GetDayAsync(DateOnly workDate, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<WorkRecordCalculationDto> GetWorkRecordCalculationAsync(
+            WorkRecordId workRecordId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class PayrollPeriodStub(PayrollPeriod current) : IPayrollPeriodSettingsUseCase

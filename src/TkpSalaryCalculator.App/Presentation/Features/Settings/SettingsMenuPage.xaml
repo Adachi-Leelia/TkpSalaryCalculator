@@ -28,6 +28,7 @@
             <Button Command="{Binding OpenCountBonusesCommand}" Text="件数加算" />
             <Button Command="{Binding OpenMonthlyAllowancesCommand}" Text="月額手当" />
             <Button Command="{Binding OpenPayrollPeriodCommand}" Text="給与期間" />
+            <Button Command="{Binding OpenAnnualSummarySettingsCommand}" Text="年間累計" />
             <Label Style="{StaticResource SectionTitleStyle}" Text="入力補助" />
             <Label Style="{StaticResource SupportingTextStyle}" Text="よく使うサービス設定（全期間共通）は、サービス・単価画面で給与設定と区別して管理できます。" />
             <Button Command="{Binding OpenBasicShiftsCommand}" Text="基本シフト" />

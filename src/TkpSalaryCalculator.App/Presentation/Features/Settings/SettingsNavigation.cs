@@ -20,6 +20,7 @@ public interface ISettingsNavigator
     Task OpenCountBonusesAsync(CancellationToken cancellationToken);
     Task OpenCountBonusEditorAsync(Guid? countBonusId, CancellationToken cancellationToken);
     Task OpenPayrollPeriodAsync(CancellationToken cancellationToken);
+    Task OpenAnnualSummarySettingsAsync(CancellationToken cancellationToken);
     Task OpenMonthlyAllowancesAsync(CancellationToken cancellationToken);
     Task OpenMonthlyAllowanceEditorAsync(PayrollPeriodKey payrollPeriodKey, Guid? allowanceId, CancellationToken cancellationToken);
     Task OpenBasicShiftsAsync(CancellationToken cancellationToken);

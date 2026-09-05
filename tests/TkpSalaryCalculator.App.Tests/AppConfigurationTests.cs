@@ -163,6 +163,8 @@ public sealed class AppConfigurationTests
             "AddSingleton<IApplicationDatabaseInitializer, SqliteDatabaseInitializer>()",
             "AddSingleton<IInitialSetupUseCase, InitialSetupUseCase>()",
             "AddSingleton<IPayrollPeriodSettingsUseCase, PayrollPeriodSettingsUseCase>()",
+            "AddSingleton<IAnnualSummarySettingRepository, SqliteAnnualSummarySettingRepository>()",
+            "AddSingleton<IAnnualSummarySettingsUseCase, AnnualSummarySettingsUseCase>()",
             "AddSingleton<IAppSessionState>",
             "AddSingleton<AppStartupCoordinator>()",
             "AddSingleton<IConfirmationDialogService, ConfirmationDialogService>()",
@@ -174,6 +176,7 @@ public sealed class AppConfigurationTests
             "AddTransient<HomePage>()",
             "AddTransient<CalendarPage>()",
             "AddTransient<SettingsMenuPage>()",
+            "AddTransient<AnnualSummarySettingsPage>()",
         };
 
         foreach (var registration in requiredRegistrations)
@@ -184,6 +187,36 @@ public sealed class AppConfigurationTests
         var app = File.ReadAllText(AppPath("App.xaml.cs"));
         Assert.Contains("rootNavigator.Attach(window)", app, StringComparison.Ordinal);
         Assert.Contains("startupViewModel.SetStartupOperation(startupCoordinator.StartAsync)", app, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnnualSummarySettingsPageUsesPickerFixedSaveBarAndRequiredExplanation()
+    {
+        var page = XDocument.Load(AppPath(
+            "Presentation", "Features", "Settings", "AnnualSummarySettingsPage.xaml"));
+        AssertControlUsesCompiledBinding(page);
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "Picker" &&
+            AttributeValue(element, "AutomationId") == "AnnualSummarySettings.ClosingMonth" &&
+            AttributeValue(element, "ItemsSource") == "{Binding ClosingMonths}" &&
+            AttributeValue(element, "SelectedItem") == "{Binding SelectedClosingMonth}");
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "FixedSaveBar" &&
+            AttributeValue(element, "SaveCommand") == "{Binding SaveCommand}");
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "Label" &&
+            AttributeValue(element, "Text").Contains(
+                "年間累計の区切りだけを変更し、給与額や勤務記録は変更しません",
+                StringComparison.Ordinal));
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "ScrollView");
+        Assert.DoesNotContain(page.Descendants(), element =>
+            HasAttribute(element, "HeightRequest"));
+        Assert.Contains(page.Descendants(), element =>
+            element.Name.LocalName == "Label" &&
+            AttributeValue(element, "AutomationId") == "AnnualSummarySettings.PeriodExample" &&
+            AttributeValue(element, "Text") == "{Binding AnnualPeriodExample}" &&
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding AnnualPeriodExample}");
     }
 
     [Fact]
@@ -206,6 +239,11 @@ public sealed class AppConfigurationTests
                      "CountBonusText",
                      "AllowanceText",
                      "UncalculatedCountText",
+                     "AnnualRangeText",
+                     "AnnualTotalText",
+                     "AnnualUncalculatedText",
+                     "AnnualAccessibilityText",
+                     "HasAnnualUncalculatedRecords",
                      "CalendarCommand",
                      "CalculationDetailsCommand",
                      "MonthlyAllowancesCommand",
@@ -220,6 +258,8 @@ public sealed class AppConfigurationTests
         Assert.DoesNotContain("SemanticProperties.Description=\"給与算定開始日\"", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SemanticProperties.Description=\"給与算定終了日\"", source, StringComparison.Ordinal);
         Assert.Contains("SemanticProperties.Description=\"{Binding TotalAccessibilityText}\"", source, StringComparison.Ordinal);
+        Assert.Contains("SemanticProperties.Description=\"{Binding AnnualAccessibilityText}\"", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationId=\"Home.AnnualSalarySummary\"", source, StringComparison.Ordinal);
         Assert.Contains("SemanticProperties.Description=\"{Binding PayrollPeriodAccessibilityText}\"", File.ReadAllText(AppPath("Presentation", "Features", "Home", "HomeDestinationPage.xaml")), StringComparison.Ordinal);
 
         var uncalculatedRecords = home.Descendants().Single(element =>
@@ -258,21 +298,23 @@ public sealed class AppConfigurationTests
     {
         var calculation = XDocument.Load(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
         AssertControlUsesCompiledBinding(calculation);
+        var controls = calculation.Descendants().Select(element => element.Name.LocalName).ToArray();
+        Assert.Single(controls, name => name == "CollectionView");
+        Assert.DoesNotContain("ScrollView", controls);
+        var attributes = calculation.Descendants().SelectMany(element => element.Attributes()).ToArray();
+        Assert.DoesNotContain(attributes, attribute => attribute.Name.LocalName == "BindableLayout.ItemsSource");
         var calculationSource = File.ReadAllText(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
         foreach (var binding in new[]
                  {
                      "StartDateText",
                      "EndDateText",
-                     "PremiumTotals",
-                     "Allowances",
-                     "Days",
+                     "Rows",
+                     "DetailRowTemplateSelector",
                      "TotalLabel",
                      "ShowsPayrollPeriodBreakdown",
                      "HasPeriodUncalculated",
                      "HasDaySubtotal",
                      "AppliedRateText",
-                     "Premiums",
-                     "CountBonuses",
                      "SettingMonthText",
                      "MissingReasonText",
                  })
@@ -289,6 +331,55 @@ public sealed class AppConfigurationTests
         var routes = File.ReadAllText(AppPath("Presentation", "Features", "Home", "ShellHomeNavigator.cs"));
         Assert.Contains("typeof(CalculationDetailPage)", routes, StringComparison.Ordinal);
         Assert.DoesNotContain("Routing.RegisterRoute(NavigationRoutes.CalculationDetails, typeof(HomeDestinationPage))", routes, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A11Y009_MultiTaskVisitScreensExposeHierarchyActionsAndFlexibleInputs()
+    {
+        var editor = XDocument.Load(AppPath("Presentation", "Features", "Calendar", "WorkEditorPage.xaml"));
+        var day = XDocument.Load(AppPath("Presentation", "Features", "Calendar", "DayPage.xaml"));
+        var detail = XDocument.Load(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
+        AssertControlUsesCompiledBinding(editor);
+        AssertControlUsesCompiledBinding(day);
+        AssertControlUsesCompiledBinding(detail);
+
+        Assert.Contains(editor.Descendants(), element =>
+            AttributeValue(element, "BindableLayout.ItemsSource") == "{Binding Tasks}");
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "ScrollView" &&
+            AttributeValue(element, "IsEnabled") == "{Binding IsNotBusy}");
+        Assert.Contains(editor.Descendants(), element =>
+            AttributeValue(element, "Text") == "{Binding SettingsMonthChangeWarningText}" &&
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding SettingsMonthChangeWarningText}");
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            AttributeValue(element, "Text") == "タスクを追加" &&
+            HasAttribute(element, "SemanticProperties.Description"));
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            AttributeValue(element, "Text") == "削除" &&
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding DeleteAccessibilityText}");
+        Assert.DoesNotContain(editor.Descendants(), element =>
+            element.Name.LocalName is "Entry" or "Picker" or "DatePicker" or "TimePicker" or "Button" &&
+            HasAttribute(element, "HeightRequest"));
+        Assert.Contains(day.Descendants(), element =>
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding AccessibilityText}");
+        Assert.Contains(detail.Descendants(), element =>
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding AccessibilityText}");
+        Assert.Contains(detail.Descendants(), element =>
+            element.Name.LocalName == "Label" && AttributeValue(element, "Text") == "訪問合計");
+    }
+
+    [Fact]
+    public void BasicShiftEditor_DisablesEditorControlsWhileSaving()
+    {
+        var editor = XDocument.Load(AppPath(
+            "Presentation", "Features", "Settings", "BasicShiftEditorPage.xaml"));
+        AssertControlUsesCompiledBinding(editor);
+
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "ScrollView" &&
+            AttributeValue(element, "IsEnabled") == "{Binding IsNotBusy}");
     }
 
     private static string AppPath(params string[] segments) =>

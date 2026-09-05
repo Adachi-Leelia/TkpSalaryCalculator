@@ -154,7 +154,7 @@ public sealed class SalaryCalculatorTests
         var result = calculator.Calculate(TestData.Request(TestData.WorkRecord(30), snapshot));
 
         Assert.Equal(SalaryCalculationStatus.Uncalculated, result.Status);
-        Assert.Null(result.AppliedRate);
+        Assert.Null(Assert.Single(result.TaskCalculations).AppliedRate);
         Assert.Null(result.BasePay);
         Assert.Null(result.Total);
         Assert.Contains(result.MissingRequirements, item => item.Code == MissingCalculationRequirementCodes.Rate);
@@ -177,14 +177,14 @@ public sealed class SalaryCalculatorTests
         var record = TestData.WorkRecord(60, date: new DateOnly(2026, 8, 15), start: 23 * 60 + 30);
 
         Assert.Equal(new DateOnly(2026, 8, 15), record.WorkDate);
-        Assert.Equal(60, record.WorkMinutes.Value);
-        Assert.Equal(30, record.EndTime!.Value.Value);
+        Assert.Equal(60, Assert.Single(record.Tasks).WorkMinutes.Value);
+        Assert.Equal(30, Assert.Single(record.Tasks).EndTime!.Value.Value);
     }
 
     [Fact(DisplayName = "CALC-022 終了時刻が開始時刻以前なら翌日として時間差を検証する")]
     public void Calc022_EndAtNextDay()
     {
-        var record = new WorkRecord(
+        var record = TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 15),
             TestData.ServiceId,
@@ -194,7 +194,7 @@ public sealed class SalaryCalculatorTests
             new MinuteOfDay(23 * 60 + 30),
             new MinuteOfDay(30));
 
-        Assert.Equal(60, record.WorkMinutes.Value);
+        Assert.Equal(60, Assert.Single(record.Tasks).WorkMinutes.Value);
     }
 
     [Fact(DisplayName = "CALC-023 日付またぎ勤務は開始日が属する給与期間へ含める")]
@@ -202,7 +202,7 @@ public sealed class SalaryCalculatorTests
     {
         var periods = new PayrollPeriodCalculator();
         var rules = new[] { TestData.ClosingRule(2020, 1, 20) };
-        var record = new WorkRecord(
+        var record = TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 8, 20),
             TestData.ServiceId,
@@ -218,7 +218,7 @@ public sealed class SalaryCalculatorTests
         Assert.Equal(new YearMonth(2026, 8), period.Key.Value);
         Assert.Equal(new DateOnly(2026, 8, 20), period.EndDate);
         Assert.Equal(new YearMonth(2026, 9), nextDatePeriod.Key.Value);
-        Assert.Equal(60, record.WorkMinutes.Value);
+        Assert.Equal(60, Assert.Single(record.Tasks).WorkMinutes.Value);
     }
 
     [Fact(DisplayName = "CALC-024 同じルールの曜日と祝日の一致を重複加算しない")]
@@ -280,7 +280,7 @@ public sealed class SalaryCalculatorTests
             additionalRates: [TestData.CategoryRate(RateType.FixedPerRecord, 9999)]);
         var result = calculator.Calculate(TestData.Request(TestData.WorkRecord(45, timeCategory: null), snapshot));
 
-        Assert.Null(result.AppliedRate!.TimeCategoryId);
+        Assert.Null(Assert.Single(result.TaskCalculations).AppliedRate!.TimeCategoryId);
         Assert.Equal(900, result.BasePay!.Value.Value);
     }
 
@@ -292,7 +292,7 @@ public sealed class SalaryCalculatorTests
             additionalRates: [TestData.CategoryRate(RateType.FixedPerRecord, 850)]);
         var result = calculator.Calculate(TestData.Request(TestData.WorkRecord(30, timeCategory: TestData.CategoryId), snapshot));
 
-        Assert.Equal(TestData.CategoryId, result.AppliedRate!.TimeCategoryId);
+        Assert.Equal(TestData.CategoryId, Assert.Single(result.TaskCalculations).AppliedRate!.TimeCategoryId);
         Assert.Equal(850, result.BasePay!.Value.Value);
     }
 
@@ -301,7 +301,7 @@ public sealed class SalaryCalculatorTests
     {
         var record = TestData.WorkRecord(120, start: 23 * 60 + 30);
 
-        Assert.Equal(90, record.EndTime!.Value.Value);
+        Assert.Equal(90, Assert.Single(record.Tasks).EndTime!.Value.Value);
     }
 
     [Fact(DisplayName = "CALC-035 日付をまたぐ割増時間帯との重なりを求める")]

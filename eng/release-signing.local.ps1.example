@@ -1,0 +1,7 @@
+# Copy this file to release-signing.local.ps1, set the values from the team's
+# password manager, then run . .\eng\release-signing.local.ps1 before the
+# release build.  Do not commit the copied file or the keystore.
+$env:TKP_ANDROID_KEYSTORE_PATH = 'C:\secure-path\TkpSalaryCalculator-release.keystore'
+$env:TKP_ANDROID_KEYSTORE_PASSWORD = 'replace-with-keystore-password'
+$env:TKP_ANDROID_KEY_ALIAS = 'tkp-salary-calculator'
+$env:TKP_ANDROID_KEY_PASSWORD = 'replace-with-key-password'

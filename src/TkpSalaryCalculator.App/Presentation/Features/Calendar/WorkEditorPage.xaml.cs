@@ -51,18 +51,24 @@ public partial class WorkEditorPage : ContentPage, IQueryAttributable
 
     private async Task FocusFirstInvalidFieldAsync()
     {
-        VisualElement? target = viewModel.FirstInvalidField switch
+        var task = viewModel.FirstInvalidTask;
+        if (task is null) return;
+        var automationId = viewModel.FirstInvalidField switch
         {
-            "ServiceId" => ServicePicker,
-            "TimeCategoryId" => TimeCategoryPicker,
-            "WorkMinutes" => WorkMinutesEntry,
-            "StartTime" => StartTimePicker,
-            "EndTime" => EndTimePicker,
+            "ServiceId" => task.ServiceAutomationId,
+            "TimeCategoryId" => task.TimeCategoryAutomationId,
+            "WorkMinutes" => task.WorkMinutesAutomationId,
+            "StartTime" => task.StartTimeAutomationId,
+            "EndTime" => task.EndTimeAutomationId,
             _ => null,
         };
-        if (target is null) return;
+        if (automationId is null) return;
 
         await Task.Yield();
+        var target = TaskList.GetVisualTreeDescendants()
+            .OfType<VisualElement>()
+            .FirstOrDefault(element => element.AutomationId == automationId);
+        if (target is null) return;
         if (!target.IsVisible) return;
         await EditorScroll.ScrollToAsync(target, ScrollToPosition.MakeVisible, true);
         target.Focus();

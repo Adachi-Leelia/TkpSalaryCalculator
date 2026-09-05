@@ -176,29 +176,34 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
             [current.HolidayCalendarVersionId, candidate.HolidayCalendarVersionId], cancellationToken).ConfigureAwait(false);
         var currentCalendar = calendars[current.HolidayCalendarVersionId];
         var candidateCalendar = calendars[candidate.HolidayCalendarVersionId];
-        var calculationSnapshots = monthRecords.Select(x => x.WorkDate).Distinct().ToDictionary(
-            date => date,
-            date => (
-                Current: ApplicationSupport.ForCalculationDate(current, date, currentCalendar),
-                Candidate: ApplicationSupport.ForCalculationDate(candidate, date, candidateCalendar)));
-        long currentTotal = 0;
-        long replacementTotal = 0;
-        var affected = 0;
-        var uncalculated = 0;
-        foreach (var value in monthRecords)
+        return await Task.Run(() =>
         {
-            var domain = ApplicationSupport.ToDomain(value);
-            var snapshots = calculationSnapshots[value.WorkDate];
-            var before = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
-                snapshots.Current, currentCalendar));
-            var after = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
-                snapshots.Candidate, candidateCalendar));
-            currentTotal += before.Total?.Value ?? 0;
-            replacementTotal += after.Total?.Value ?? 0;
-            if (!Equals(before, after)) affected++;
-            if (after.Status == SalaryCalculationStatus.Uncalculated) uncalculated++;
-        }
-        return new(month, confirmation, affected, new YenAmount(currentTotal), new YenAmount(replacementTotal), uncalculated, []);
+            var calculationSnapshots = monthRecords.Select(x => x.WorkDate).Distinct().ToDictionary(
+                date => date,
+                date => (
+                    Current: ApplicationSupport.ForCalculationDate(current, date, currentCalendar),
+                    Candidate: ApplicationSupport.ForCalculationDate(candidate, date, candidateCalendar)));
+            long currentTotal = 0;
+            long replacementTotal = 0;
+            var affected = 0;
+            var uncalculated = 0;
+            foreach (var value in monthRecords)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var domain = ApplicationSupport.ToDomain(value);
+                var snapshots = calculationSnapshots[value.WorkDate];
+                var before = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
+                    snapshots.Current, currentCalendar));
+                var after = calculator.Calculate(new WorkSalaryCalculationRequest(domain,
+                    snapshots.Candidate, candidateCalendar));
+                currentTotal += before.Total?.Value ?? 0;
+                replacementTotal += after.Total?.Value ?? 0;
+                if (!SameCalculation(before, after)) affected++;
+                if (after.Status == SalaryCalculationStatus.Uncalculated) uncalculated++;
+            }
+            return new SettingReplacementPreviewDto(month, confirmation, affected, new YenAmount(currentTotal),
+                new YenAmount(replacementTotal), uncalculated, []);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ValidateConfirmationAsync(YearMonth month, SettingSnapshotReplacementDto replacement,
@@ -220,6 +225,34 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
             throw ChangedSincePreview();
     }
 
+    private static bool SameCalculation(WorkSalaryCalculation left, WorkSalaryCalculation right)
+    {
+        if (left.WorkRecordId != right.WorkRecordId || left.Status != right.Status || left.Total != right.Total ||
+            left.TaskCalculations.Count != right.TaskCalculations.Count)
+            return false;
+        if (!left.CountBonuses.Select(static value => (value.CountBonusId, value.DisplayName, value.Amount))
+            .SequenceEqual(right.CountBonuses.Select(static value =>
+                (value.CountBonusId, value.DisplayName, value.Amount))) ||
+            !left.MissingRequirements.SequenceEqual(right.MissingRequirements))
+            return false;
+
+        return left.TaskCalculations.Zip(right.TaskCalculations).All(pair =>
+        {
+            var (before, after) = pair;
+            return before.WorkTaskId == after.WorkTaskId && before.Status == after.Status &&
+                before.AppliedRate?.ServiceId == after.AppliedRate?.ServiceId &&
+                before.AppliedRate?.TimeCategoryId == after.AppliedRate?.TimeCategoryId &&
+                before.AppliedRate?.RateType == after.AppliedRate?.RateType &&
+                before.AppliedRate?.Amount == after.AppliedRate?.Amount &&
+                before.BasePay == after.BasePay && before.TaskSubtotal == after.TaskSubtotal &&
+                before.MissingRequirements.SequenceEqual(after.MissingRequirements) &&
+                before.Premiums.Select(static value =>
+                    (value.Rule.Id, value.Rule.DisplayName, value.ApplicableMinutes, value.Amount))
+                    .SequenceEqual(after.Premiums.Select(static value =>
+                        (value.Rule.Id, value.Rule.DisplayName, value.ApplicableMinutes, value.Amount)));
+        });
+    }
+
     private async Task<IReadOnlyList<WorkRecordDto>> LoadMonthRecordsAsync(YearMonth month, CancellationToken cancellationToken)
     {
         var start = new DateOnly(month.Year, month.Month, 1);
@@ -234,10 +267,14 @@ public sealed class MonthSettingsUseCase(ISettingSnapshotRepository settings, IW
     {
         var builder = new StringBuilder();
         foreach (var value in values.OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value))
-            builder.Append(value.Id.Value).Append('|').Append(value.WorkDate.DayNumber).Append('|')
-                .Append(value.ServiceId.Value).Append('|').Append(value.TimeCategoryId?.Value).Append('|')
-                .Append((int)value.InputMode).Append('|').Append(value.WorkMinutes.Value).Append('|')
-                .Append(value.StartTime?.Value).Append('|').Append(value.EndTime?.Value).Append(';');
+        {
+            Append(builder, "W", value.Id.Value, value.WorkDate.DayNumber,
+                value.SourceBasicShiftId?.Value, value.SourceWorkRecordId?.Value);
+            foreach (var task in value.Tasks.OrderBy(static task => task.DisplayOrder.Value))
+                Append(builder, "WT", task.Id.Value, task.ServiceId.Value, task.TimeCategoryId?.Value,
+                    (int)task.InputMode, task.WorkMinutes.Value, task.StartTime?.Value, task.EndTime?.Value,
+                    task.DisplayOrder.Value, task.SourceServicePresetId?.Value);
+        }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
     }
 

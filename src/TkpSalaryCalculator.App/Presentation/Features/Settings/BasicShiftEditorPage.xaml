@@ -4,16 +4,54 @@
     xmlns:settings="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Settings" xmlns:calendar="clr-namespace:TkpSalaryCalculator.App.Presentation.Features.Calendar"
     xmlns:controls="clr-namespace:TkpSalaryCalculator.App.Presentation.Controls"
     x:DataType="settings:BasicShiftEditorViewModel" Title="{Binding PageTitle}">
-    <Grid RowDefinitions="*,Auto"><ScrollView x:Name="EditorScroll"><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="10">
+    <Grid RowDefinitions="*,Auto"><ScrollView x:Name="EditorScroll" IsEnabled="{Binding IsNotBusy}"><VerticalStackLayout Padding="20" SafeAreaEdges="All" Spacing="10">
         <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" />
         <Label Text="曜日" /><Picker ItemsSource="{Binding Weekdays}" ItemDisplayBinding="{Binding DisplayName}" SelectedItem="{Binding SelectedWeekday}" />
-        <Label Text="サービス" /><Picker x:Name="ServicePicker" ItemsSource="{Binding Services}" ItemDisplayBinding="{Binding PickerText}" SelectedItem="{Binding SelectedService}" />
-        <Label Text="{Binding ServiceError}" TextColor="{StaticResource Error}" />
-        <Label Text="時間区分" /><Picker x:Name="TimeCategoryPicker" ItemsSource="{Binding TimeCategories}" ItemDisplayBinding="{Binding PickerText}" SelectedItem="{Binding SelectedTimeCategory}" />
-        <Label Text="{Binding TimeCategoryError}" TextColor="{StaticResource Error}" />
-        <Label Text="入力方式" /><Picker ItemsSource="{Binding InputModes}" ItemDisplayBinding="{Binding DisplayName}" SelectedItem="{Binding SelectedInputMode}" />
-        <VerticalStackLayout IsVisible="{Binding ShowDuration}" Spacing="6"><Label Text="勤務時間（分）" /><Entry x:Name="WorkMinutesEntry" Keyboard="Numeric" Text="{Binding WorkMinutesText}" /><Label Text="{Binding WorkMinutesError}" TextColor="{StaticResource Error}" /><VerticalStackLayout IsVisible="{Binding ShowStartTime}" Spacing="6"><Label Text="開始時刻（時刻条件付き割増がある場合）" /><TimePicker x:Name="DurationStartTimePicker" Time="{Binding StartTime}" /><Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" /></VerticalStackLayout></VerticalStackLayout>
-        <Grid IsVisible="{Binding ShowTimeRange}" ColumnDefinitions="*,*" ColumnSpacing="10"><VerticalStackLayout><Label Text="開始時刻" /><TimePicker x:Name="TimeRangeStartTimePicker" Time="{Binding StartTime}" /><Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" /></VerticalStackLayout><VerticalStackLayout Grid.Column="1"><Label Text="終了時刻" /><TimePicker x:Name="EndTimePicker" Time="{Binding EndTime}" /><Label Text="{Binding EndTimeError}" TextColor="{StaticResource Error}" /></VerticalStackLayout></Grid>
+        <Label Text="{Binding TaskCountText}" />
+                <VerticalStackLayout x:Name="TaskList" BindableLayout.ItemsSource="{Binding Tasks}" Spacing="12">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="calendar:WorkTaskEditorViewModel">
+                            <Border Padding="14" BackgroundColor="{StaticResource Surface}" SemanticProperties.Description="{Binding AccessibilityText}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                                <VerticalStackLayout Spacing="10">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                                        <Label FontAttributes="Bold" FontSize="18" Text="{Binding TaskTitle}" VerticalOptions="Center" />
+                                        <Button Grid.Column="1" Command="{Binding MoveUpCommand}" IsEnabled="{Binding CanMoveUp}" SemanticProperties.Description="このタスクを上へ移動" Style="{StaticResource SecondaryButtonStyle}" Text="↑" />
+                                        <Button Grid.Column="2" Command="{Binding MoveDownCommand}" IsEnabled="{Binding CanMoveDown}" SemanticProperties.Description="このタスクを下へ移動" Style="{StaticResource SecondaryButtonStyle}" Text="↓" />
+                                        <Button Grid.Column="3" Command="{Binding DeleteCommand}" IsEnabled="{Binding CanRemove}" SemanticProperties.Description="{Binding DeleteAccessibilityText}" Style="{StaticResource DestructiveButtonStyle}" Text="削除" />
+                                    </Grid>
+
+                                    <Label Text="サービス（必須）" />
+                                    <Picker AutomationId="{Binding ServiceAutomationId}" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding Services}" SelectedItem="{Binding SelectedService, Mode=TwoWay}" Title="サービスを選択" />
+                                    <Label Text="{Binding ServiceError}" TextColor="{StaticResource Error}" />
+                                    <Label IsVisible="{Binding HasTimeCategories}" Text="時間区分" />
+                                    <Picker AutomationId="{Binding TimeCategoryAutomationId}" IsVisible="{Binding HasTimeCategories}" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding TimeCategories}" SelectedItem="{Binding SelectedTimeCategory, Mode=TwoWay}" Title="時間区分または任意時間を選択" />
+                                    <Label Text="{Binding TimeCategoryError}" TextColor="{StaticResource Error}" />
+                                    <Label Text="入力方式" />
+                                    <Picker ItemDisplayBinding="{Binding DisplayName}" ItemsSource="{Binding InputModes}" SelectedItem="{Binding SelectedInputMode, Mode=TwoWay}" />
+                                    <VerticalStackLayout IsVisible="{Binding ShowDuration}" Spacing="6">
+                                        <Label Text="勤務時間（分、1～1,440）" />
+                                        <Entry AutomationId="{Binding WorkMinutesAutomationId}" Keyboard="Numeric" Text="{Binding WorkMinutesText, Mode=TwoWay}" />
+                                        <Label Text="{Binding WorkMinutesError}" TextColor="{StaticResource Error}" />
+                                    </VerticalStackLayout>
+                                    <VerticalStackLayout IsVisible="{Binding ShowStartTime}" Spacing="6">
+                                        <Label Text="開始時刻" />
+                                        <TimePicker AutomationId="{Binding StartTimeAutomationId}" Time="{Binding StartTime, Mode=TwoWay}" />
+                                        <Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" />
+                                    </VerticalStackLayout>
+                                    <VerticalStackLayout IsVisible="{Binding ShowEndTime}" Spacing="6">
+                                        <Label Text="終了時刻" />
+                                        <TimePicker AutomationId="{Binding EndTimeAutomationId}" Time="{Binding EndTime, Mode=TwoWay}" />
+                                        <Label Style="{StaticResource SupportingTextStyle}" Text="終了時刻が開始時刻以前の場合は翌日として扱います。" />
+                                        <Label Text="{Binding EndTimeError}" TextColor="{StaticResource Error}" />
+                                    </VerticalStackLayout>
+                                    <Label IsVisible="{Binding HasTaskIssues}" Text="{Binding TaskIssueMessage}" TextColor="{StaticResource Warning}" />
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+
+                <Button Command="{Binding AddTaskCommand}" SemanticProperties.Description="この基本シフトの末尾に空のタスクを追加" Style="{StaticResource SecondaryButtonStyle}" Text="タスクを追加" />
         <Label Text="同じ曜日内の表示順" /><Entry x:Name="DisplayOrderEntry" Keyboard="Numeric" Text="{Binding DisplayOrderText}" />
         <Label Text="{Binding DisplayOrderError}" TextColor="{StaticResource Error}" />
         <HorizontalStackLayout Spacing="10"><Switch IsToggled="{Binding IsEnabled}" /><Label VerticalOptions="Center" Text="反映候補として使用する" /></HorizontalStackLayout>

@@ -143,8 +143,13 @@ public sealed class HomeViewModel : ViewModelBase
     private string countBonusText = "0円";
     private string allowanceText = "0円";
     private string uncalculatedCountText = "0件";
+    private string annualRangeText = string.Empty;
+    private string annualTotalText = "0円";
+    private string annualUncalculatedText = string.Empty;
+    private string annualAccessibilityText = string.Empty;
     private bool hasWorkRecords;
     private bool hasUncalculatedRecords;
+    private bool hasAnnualUncalculatedRecords;
 
     public HomeViewModel(
         ISalaryQueryUseCase salaryQuery,
@@ -166,7 +171,8 @@ public sealed class HomeViewModel : ViewModelBase
         this.formatter = formatter ?? throw new ArgumentNullException(nameof(formatter));
         TrackDataChanges(sessionState,
             AppDataChangeKind.WorkRecords | AppDataChangeKind.Settings | AppDataChangeKind.ClosingRules |
-            AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BackupStatus);
+            AppDataChangeKind.MonthlyAllowances | AppDataChangeKind.BackupStatus |
+            AppDataChangeKind.AnnualSummarySettings);
 
         PeriodHeader = new PayrollPeriodHeaderViewModel(MoveByAsync, MoveToCurrentAsync, formatter, PresentError);
         BackupReminder = new BackupReminderViewModel(backupReminder, GetLocalToday, PresentError);
@@ -236,6 +242,36 @@ public sealed class HomeViewModel : ViewModelBase
     {
         get => uncalculatedCountText;
         private set => SetProperty(ref uncalculatedCountText, value);
+    }
+
+    public string AnnualRangeText
+    {
+        get => annualRangeText;
+        private set => SetProperty(ref annualRangeText, value);
+    }
+
+    public string AnnualTotalText
+    {
+        get => annualTotalText;
+        private set => SetProperty(ref annualTotalText, value);
+    }
+
+    public string AnnualUncalculatedText
+    {
+        get => annualUncalculatedText;
+        private set => SetProperty(ref annualUncalculatedText, value);
+    }
+
+    public string AnnualAccessibilityText
+    {
+        get => annualAccessibilityText;
+        private set => SetProperty(ref annualAccessibilityText, value);
+    }
+
+    public bool HasAnnualUncalculatedRecords
+    {
+        get => hasAnnualUncalculatedRecords;
+        private set => SetProperty(ref hasAnnualUncalculatedRecords, value);
     }
 
     public bool HasWorkRecords
@@ -313,6 +349,23 @@ public sealed class HomeViewModel : ViewModelBase
         HasUncalculatedRecords = value.UncalculatedCount > 0;
     }
 
+    private void ApplyAnnualSummary(AnnualSalarySummaryDto value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        AnnualRangeText = FormatAnnualRange(value.PeriodStart.Value, value.AccumulationEnd.Value);
+        AnnualTotalText = formatter.Money(value.CalculatedSubtotal);
+        HasAnnualUncalculatedRecords = value.UncalculatedCount > 0;
+        AnnualUncalculatedText = HasAnnualUncalculatedRecords
+            ? $"未計算{value.UncalculatedCount}件を除く"
+            : string.Empty;
+        AnnualAccessibilityText = $"年間給与見込み累計。集計範囲: {AnnualRangeText}。金額: {AnnualTotalText}。" +
+            (HasAnnualUncalculatedRecords ? $"{AnnualUncalculatedText}。" : string.Empty);
+    }
+
+    private static string FormatAnnualRange(YearMonth start, YearMonth end) => start.Year == end.Year
+        ? $"{start.Year}年{start.Month}月分～{end.Month}月分"
+        : $"{start.Year}年{start.Month}月分～{end.Year}年{end.Month}月分";
+
     private Task QueueSummaryRequestAsync(
         Func<CancellationToken, Task<PayrollPeriodKey>> getKey,
         bool reloadBackup = false)
@@ -341,11 +394,12 @@ public sealed class HomeViewModel : ViewModelBase
         if (await TryRunBusyAsync(async cancellationToken =>
         {
             var key = await getKey(cancellationToken);
-            var value = await salaryQuery.GetPayrollPeriodAsync(key, cancellationToken);
+            var value = await salaryQuery.GetHomeSalarySummaryAsync(key, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsLatestSummaryRequest(requestVersion)) return;
 
-            ApplySummary(value);
+            ApplySummary(value.MonthlySummary);
+            ApplyAnnualSummary(value.AnnualSummary);
             if (ConsumeBackupReloadRequest(requestVersion))
             {
                 await LoadBackupAsync(cancellationToken);

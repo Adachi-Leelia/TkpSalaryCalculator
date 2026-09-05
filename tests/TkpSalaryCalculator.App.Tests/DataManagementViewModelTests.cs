@@ -5,6 +5,21 @@ namespace TkpSalaryCalculator.App.Tests;
 public sealed class DataManagementViewModelTests
 {
     [Fact]
+    public async Task ImportConfirmationDistinguishesParentAndTaskCounts()
+    {
+        var dialog = new DialogStub();
+        var viewModel = new DataManagementViewModel(
+            new TransferStub(), new BackupReminderStub(), new DocumentStub(), new AppInformationStub(), dialog,
+            new NotificationStub(), new RootNavigatorStub(), new AppSessionState(new DateOnly(2026, 8, 21)),
+            new ClockStub(), new LocalDateStub(), new UserErrorPresenter());
+
+        await viewModel.ImportAsync();
+
+        Assert.Contains("基本シフト 2件（タスク 3件）", dialog.Message, StringComparison.Ordinal);
+        Assert.Contains("訪問 4件（タスク 5件）", dialog.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task UI012_ImportCompletionNotificationUsesLifetimeIndependentTokenAfterRootReplacement()
     {
         var transfers = new TransferStub();
@@ -114,7 +129,8 @@ public sealed class DataManagementViewModelTests
         public Task<DataTransferFormatDto> GetFormatAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task ExportAsync(Stream destination, string appVersion, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ImportPreviewDto> PrepareImportAsync(Stream source, CancellationToken cancellationToken) => Task.FromResult(new ImportPreviewDto(
-            new PreparedImportId(Guid.NewGuid()), 1, DateTimeOffset.UtcNow, 1, 0, 0, 0, null, null, null, null, []));
+            new PreparedImportId(Guid.NewGuid()), 1, DateTimeOffset.UtcNow, 1, 2, 3, 4, 5, 6,
+            null, null, null, null, []));
         public Task CommitImportAsync(PreparedImportId preparedImportId, CancellationToken cancellationToken)
         {
             if (CommitFailure is not null) return Task.FromException(CommitFailure);
@@ -147,8 +163,13 @@ public sealed class DataManagementViewModelTests
 
     private sealed class DialogStub : IConfirmationDialogService
     {
+        public string? Message { get; private set; }
         public Task<bool> ConfirmDiscardChangesAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
-        public Task<bool> ConfirmAsync(string title, string message, string acceptText, string cancelText, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> ConfirmAsync(string title, string message, string acceptText, string cancelText, CancellationToken cancellationToken = default)
+        {
+            Message = message;
+            return Task.FromResult(true);
+        }
     }
 
     private sealed class NotificationStub : IUserNotificationService

@@ -55,6 +55,8 @@ public enum DataTransferSection
     WorkRecords,
     /// <summary>祝日カレンダーのバージョンと日付。</summary>
     Holidays,
+    /// <summary>年間給与見込み累計の現在設定。</summary>
+    AnnualSummarySettings,
 }
 
 /// <summary>論理ストリーミングレコードの非ジェネリック基底型を提供します。</summary>
@@ -76,7 +78,9 @@ public sealed record DataTransferRecord<T>(DataTransferSection Section, long Seq
 /// <param name="ExportCreatedAtUtc">エクスポート文書に記録された作成日時。</param>
 /// <param name="SettingMonthCount">準備された設定月の件数。</param>
 /// <param name="BasicShiftCount">準備された基本シフトの件数。</param>
-/// <param name="WorkRecordCount">準備された勤務記録の件数。</param>
+/// <param name="BasicShiftTaskCount">準備された基本シフトタスクの件数。</param>
+/// <param name="WorkRecordCount">準備された訪問の件数。</param>
+/// <param name="WorkTaskCount">準備された訪問タスクの件数。</param>
 /// <param name="MonthlyAllowanceCount">準備された月額手当の件数。</param>
 /// <param name="OldestSettingMonth">準備された最古の設定月。存在しない場合があります。</param>
 /// <param name="LatestSettingMonth">準備された最新の設定月。存在しない場合があります。</param>
@@ -89,7 +93,9 @@ public sealed record ImportPreviewDto(
     DateTimeOffset ExportCreatedAtUtc,
     long SettingMonthCount,
     long BasicShiftCount,
+    long BasicShiftTaskCount,
     long WorkRecordCount,
+    long WorkTaskCount,
     long MonthlyAllowanceCount,
     YearMonth? OldestSettingMonth,
     YearMonth? LatestSettingMonth,

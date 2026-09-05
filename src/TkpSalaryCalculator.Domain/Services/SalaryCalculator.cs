@@ -39,35 +39,63 @@ public sealed class SalaryCalculator : ISalaryCalculator
             throw new ArgumentException("設定スナップショットと祝日カレンダーのバージョンが一致しません。", nameof(request));
         }
 
-        var missingRequirements = FindMissingRequirements(workRecord, snapshot, out var rate);
-        if (missingRequirements.Count != 0)
+        var taskCalculations = new List<TaskSalaryCalculation>(workRecord.Tasks.Count);
+        foreach (var task in workRecord.Tasks)
+        {
+            var missingRequirements = FindMissingRequirements(task, snapshot, out var rate);
+            if (missingRequirements.Count != 0)
+            {
+                taskCalculations.Add(new TaskSalaryCalculation(
+                    task.Id,
+                    SalaryCalculationStatus.Uncalculated,
+                    null,
+                    null,
+                    EmptyReadOnly<AppliedPremium>(),
+                    null,
+                    AsReadOnly(missingRequirements)));
+                continue;
+            }
+
+            var appliedRate = rate!;
+            var basePay = CalculateBasePay(appliedRate, task.WorkMinutes);
+            var premiums = CalculatePremiums(
+                task, workRecord.WorkDate, snapshot.Premiums, holidayCalendar, appliedRate);
+            var taskSubtotal = MoneyMath.Sum(
+                new[] { basePay.Value }.Concat(premiums.Select(static item => item.Amount.Value)));
+            taskCalculations.Add(new TaskSalaryCalculation(
+                task.Id,
+                SalaryCalculationStatus.Calculated,
+                appliedRate,
+                basePay,
+                AsReadOnly(premiums),
+                new YenAmount(taskSubtotal),
+                EmptyReadOnly<MissingCalculationRequirement>()));
+        }
+
+        var allMissingRequirements = taskCalculations
+            .SelectMany(static task => task.MissingRequirements)
+            .ToArray();
+        if (allMissingRequirements.Length != 0)
         {
             return new WorkSalaryCalculation(
                 workRecord.Id,
                 SalaryCalculationStatus.Uncalculated,
-                null,
-                null,
-                EmptyReadOnly<AppliedPremium>(),
+                AsReadOnly(taskCalculations),
                 EmptyReadOnly<AppliedCountBonus>(),
                 null,
-                AsReadOnly(missingRequirements));
+                AsReadOnly(allMissingRequirements));
         }
 
-        var appliedRate = rate!;
-        var basePay = CalculateBasePay(appliedRate, workRecord.WorkMinutes);
-        var premiums = CalculatePremiums(workRecord, snapshot.Premiums, holidayCalendar, appliedRate);
-        var countBonuses = CalculateCountBonuses(workRecord.ServiceId, snapshot.CountBonuses);
+        var countBonuses = CalculateCountBonuses(
+            workRecord.Tasks.Select(static task => task.ServiceId), snapshot.CountBonuses);
         var total = MoneyMath.Sum(
-            new[] { basePay.Value }
-                .Concat(premiums.Select(static item => item.Amount.Value))
+            taskCalculations.Select(static task => task.TaskSubtotal!.Value.Value)
                 .Concat(countBonuses.Select(static item => item.Amount.Value)));
 
         return new WorkSalaryCalculation(
             workRecord.Id,
             SalaryCalculationStatus.Calculated,
-            appliedRate,
-            basePay,
-            AsReadOnly(premiums),
+            AsReadOnly(taskCalculations),
             AsReadOnly(countBonuses),
             new YenAmount(total),
             EmptyReadOnly<MissingCalculationRequirement>());
@@ -84,8 +112,13 @@ public sealed class SalaryCalculator : ISalaryCalculator
             .Where(static record => record.Status == SalaryCalculationStatus.Calculated)
             .ToArray();
 
-        var basePaySubtotal = MoneyMath.Sum(calculatedRecords.Select(static record => record.BasePay!.Value.Value));
-        var premiumSubtotal = MoneyMath.Sum(calculatedRecords.SelectMany(static record => record.Premiums).Select(static item => item.Amount.Value));
+        var basePaySubtotal = MoneyMath.Sum(calculatedRecords
+            .SelectMany(static record => record.TaskCalculations)
+            .Select(static task => task.BasePay!.Value.Value));
+        var premiumSubtotal = MoneyMath.Sum(calculatedRecords
+            .SelectMany(static record => record.TaskCalculations)
+            .SelectMany(static task => task.Premiums)
+            .Select(static item => item.Amount.Value));
         var countBonusSubtotal = MoneyMath.Sum(calculatedRecords.SelectMany(static record => record.CountBonuses).Select(static item => item.Amount.Value));
         var calculatedSubtotal = MoneyMath.Sum(calculatedRecords.Select(static record => record.Total!.Value.Value));
 
@@ -132,27 +165,29 @@ public sealed class SalaryCalculator : ISalaryCalculator
     }
 
     private static List<MissingCalculationRequirement> FindMissingRequirements(
-        WorkRecord workRecord,
+        WorkTask workTask,
         SettingSnapshot snapshot,
         out SnapshotRate? rate)
     {
         var missing = new List<MissingCalculationRequirement>();
-        var serviceExists = snapshot.Services.Any(service => service.Id == workRecord.ServiceId);
+        var serviceExists = snapshot.Services.Any(service => service.Id == workTask.ServiceId);
         if (!serviceExists)
         {
             missing.Add(new MissingCalculationRequirement(
+                workTask.Id,
                 MissingCalculationRequirementCodes.Service,
-                workRecord.ServiceId.Value));
+                workTask.ServiceId.Value));
         }
 
         var timeCategoryExists = true;
-        if (workRecord.TimeCategoryId is { } timeCategoryId)
+        if (workTask.TimeCategoryId is { } timeCategoryId)
         {
             timeCategoryExists = snapshot.TimeCategories.Any(
-                category => category.Id == timeCategoryId && category.ServiceId == workRecord.ServiceId);
+                category => category.Id == timeCategoryId && category.ServiceId == workTask.ServiceId);
             if (!timeCategoryExists)
             {
                 missing.Add(new MissingCalculationRequirement(
+                    workTask.Id,
                     MissingCalculationRequirementCodes.TimeCategory,
                     timeCategoryId.Value));
             }
@@ -161,36 +196,37 @@ public sealed class SalaryCalculator : ISalaryCalculator
         rate = null;
         if (serviceExists && timeCategoryExists)
         {
-            if (workRecord.TimeCategoryId is { } selectedTimeCategoryId)
+            if (workTask.TimeCategoryId is { } selectedTimeCategoryId)
             {
                 rate = snapshot.Rates.SingleOrDefault(
-                    candidate => candidate.ServiceId == workRecord.ServiceId &&
+                    candidate => candidate.ServiceId == workTask.ServiceId &&
                                  candidate.TimeCategoryId == selectedTimeCategoryId);
             }
 
             rate ??= snapshot.Rates.SingleOrDefault(
-                candidate => candidate.ServiceId == workRecord.ServiceId &&
+                candidate => candidate.ServiceId == workTask.ServiceId &&
                              candidate.TimeCategoryId is null);
         }
 
         if (rate is null)
         {
             missing.Add(new MissingCalculationRequirement(
+                workTask.Id,
                 MissingCalculationRequirementCodes.Rate,
-                workRecord.TimeCategoryId?.Value ?? workRecord.ServiceId.Value));
+                workTask.TimeCategoryId?.Value ?? workTask.ServiceId.Value));
         }
 
-        if (workRecord.StartTime is null)
+        if (workTask.StartTime is null)
         {
             var timeConditionedPremium = snapshot.Premiums.FirstOrDefault(
                 premium => premium.IsEnabled &&
                            premium.StartTime is not null &&
-                           MatchesService(premium.ServiceIds, workRecord.ServiceId));
+                           MatchesService(premium.ServiceIds, workTask.ServiceId));
             if (timeConditionedPremium is not null)
             {
                 throw new ArgumentException(
                     $"割増ルール '{timeConditionedPremium.DisplayName}' の判定に必要な開始時刻がありません。",
-                    nameof(workRecord));
+                    nameof(workTask));
             }
         }
 
@@ -210,7 +246,8 @@ public sealed class SalaryCalculator : ISalaryCalculator
     }
 
     private static List<AppliedPremium> CalculatePremiums(
-        WorkRecord workRecord,
+        WorkTask workTask,
+        DateOnly workDate,
         IReadOnlyList<SnapshotPremium> rules,
         HolidayCalendar holidayCalendar,
         SnapshotRate rate)
@@ -219,13 +256,13 @@ public sealed class SalaryCalculator : ISalaryCalculator
         foreach (var rule in rules)
         {
             if (!rule.IsEnabled ||
-                !MatchesService(rule.ServiceIds, workRecord.ServiceId) ||
-                !MatchesDate(rule, workRecord.WorkDate, holidayCalendar))
+                !MatchesService(rule.ServiceIds, workTask.ServiceId) ||
+                !MatchesDate(rule, workDate, holidayCalendar))
             {
                 continue;
             }
 
-            var applicableMinutes = GetApplicableMinutes(workRecord, rule);
+            var applicableMinutes = GetApplicableMinutes(workTask, rule);
             if (applicableMinutes == 0)
             {
                 continue;
@@ -235,7 +272,7 @@ public sealed class SalaryCalculator : ISalaryCalculator
             {
                 PremiumCalculationType.Percentage => CalculatePercentagePremium(
                     rate,
-                    workRecord.WorkMinutes,
+                    workTask.WorkMinutes,
                     applicableMinutes,
                     rule.Percentage!.Value),
                 PremiumCalculationType.FixedPerHour => MoneyMath.CeilProduct(
@@ -275,11 +312,13 @@ public sealed class SalaryCalculator : ISalaryCalculator
     }
 
     private static List<AppliedCountBonus> CalculateCountBonuses(
-        ServiceId serviceId,
+        IEnumerable<ServiceId> serviceIds,
         IReadOnlyList<SnapshotCountBonus> rules)
     {
+        var services = serviceIds.ToHashSet();
         return [.. rules
-            .Where(rule => rule.IsEnabled && MatchesService(rule.ServiceIds, serviceId))
+            .Where(rule => rule.IsEnabled &&
+                (rule.ServiceIds.Count == 0 || rule.ServiceIds.Overlaps(services)))
             .Select(rule => new AppliedCountBonus(rule.Id, rule.DisplayName, rule.Amount))];
     }
 
@@ -301,20 +340,20 @@ public sealed class SalaryCalculator : ISalaryCalculator
                rule.Dates.Contains(workDate);
     }
 
-    private static int GetApplicableMinutes(WorkRecord workRecord, SnapshotPremium rule)
+    private static int GetApplicableMinutes(WorkTask workTask, SnapshotPremium rule)
     {
         if (rule.StartTime is null)
         {
-            return workRecord.WorkMinutes.Value;
+            return workTask.WorkMinutes.Value;
         }
 
-        if (workRecord.StartTime is null)
+        if (workTask.StartTime is null)
         {
             throw new InvalidOperationException("時刻条件付き割増の勤務区間が検証されていません。");
         }
 
-        var workStart = workRecord.StartTime.Value.Value;
-        var workEnd = workStart + workRecord.WorkMinutes.Value;
+        var workStart = workTask.StartTime.Value.Value;
+        var workEnd = workStart + workTask.WorkMinutes.Value;
         var ruleStart = rule.StartTime.Value.Value;
         var ruleEnd = rule.EndTime!.Value.Value;
         var crossesMidnight = ruleEnd <= ruleStart;
@@ -332,7 +371,7 @@ public sealed class SalaryCalculator : ISalaryCalculator
             }
         }
 
-        if (applicable > workRecord.WorkMinutes.Value)
+        if (applicable > workTask.WorkMinutes.Value)
         {
             throw new InvalidOperationException("割増対象時間が勤務時間を超えました。");
         }
@@ -358,9 +397,14 @@ public sealed class SalaryCalculator : ISalaryCalculator
             normalized.Add(new WorkSalaryCalculation(
                 record.WorkRecordId,
                 record.Status,
-                record.AppliedRate,
-                record.BasePay,
-                AsReadOnly(record.Premiums),
+                AsReadOnly(record.TaskCalculations.Select(static task => new TaskSalaryCalculation(
+                    task.WorkTaskId,
+                    task.Status,
+                    task.AppliedRate,
+                    task.BasePay,
+                    AsReadOnly(task.Premiums),
+                    task.TaskSubtotal,
+                    AsReadOnly(task.MissingRequirements)))),
                 AsReadOnly(record.CountBonuses),
                 record.Total,
                 AsReadOnly(record.MissingRequirements)));
@@ -376,18 +420,93 @@ public sealed class SalaryCalculator : ISalaryCalculator
             throw new ArgumentException("給与計算状態が不正です。", parameterName);
         }
 
-        ArgumentNullException.ThrowIfNull(record.Premiums, parameterName);
+        ArgumentNullException.ThrowIfNull(record.TaskCalculations, parameterName);
         ArgumentNullException.ThrowIfNull(record.CountBonuses, parameterName);
         ArgumentNullException.ThrowIfNull(record.MissingRequirements, parameterName);
-        if (record.Premiums.Any(static item => item is null) ||
+        if (record.TaskCalculations.Count == 0 ||
+            record.TaskCalculations.Any(static item => item is null) ||
             record.CountBonuses.Any(static item => item is null) ||
             record.MissingRequirements.Any(static item => item is null))
         {
-            throw new ArgumentException("計算結果のコレクションにnullを含めることはできません。", parameterName);
+            throw new ArgumentException("訪問計算には1件以上のタスクが必要で、コレクションにnullを含めることはできません。", parameterName);
         }
 
-        foreach (var missingRequirement in record.MissingRequirements)
+        var taskIds = new HashSet<WorkTaskId>();
+        foreach (var task in record.TaskCalculations)
         {
+            DomainIdGuard.NotEmpty(task.WorkTaskId.Value, parameterName);
+            if (!taskIds.Add(task.WorkTaskId))
+            {
+                throw new ArgumentException("同じ勤務タスクの計算結果が重複しています。", parameterName);
+            }
+
+            ValidateTaskCalculation(task, parameterName);
+        }
+
+        var taskMissingRequirements = record.TaskCalculations
+            .SelectMany(static task => task.MissingRequirements)
+            .ToArray();
+        if (!taskMissingRequirements.SequenceEqual(record.MissingRequirements))
+        {
+            throw new ArgumentException("訪問の不足要件がタスクごとの不足要件と一致しません。", parameterName);
+        }
+
+        foreach (var countBonus in record.CountBonuses)
+        {
+            DomainIdGuard.NotEmpty(countBonus.CountBonusId.Value, parameterName);
+            DomainModelGuard.NotBlank(countBonus.DisplayName, parameterName);
+            DomainValueGuard.NonNegative(countBonus.Amount, parameterName);
+        }
+
+        if (record.Status == SalaryCalculationStatus.Uncalculated)
+        {
+            if (record.Total is not null || record.CountBonuses.Count != 0 || record.MissingRequirements.Count == 0 ||
+                record.TaskCalculations.All(static task => task.Status == SalaryCalculationStatus.Calculated))
+            {
+                throw new ArgumentException("未計算訪問に件数加算や合計を含めず、不足タスクを1件以上指定してください。", parameterName);
+            }
+
+            return;
+        }
+
+        if (record.Total is null || record.MissingRequirements.Count != 0 ||
+            record.TaskCalculations.Any(static task => task.Status != SalaryCalculationStatus.Calculated))
+        {
+            throw new ArgumentException("計算済み訪問に未計算タスク、設定不足または合計欠落があります。", parameterName);
+        }
+
+        DomainValueGuard.NonNegative(record.Total.Value, parameterName);
+        var expectedTotal = MoneyMath.Sum(
+            record.TaskCalculations.Select(static task => task.TaskSubtotal!.Value.Value)
+                .Concat(record.CountBonuses.Select(static item => item.Amount.Value)));
+        if (expectedTotal != record.Total.Value.Value)
+        {
+            throw new ArgumentException("訪問合計がタスク小計と件数加算の合計に一致しません。", parameterName);
+        }
+    }
+
+    private static void ValidateTaskCalculation(TaskSalaryCalculation task, string parameterName)
+    {
+        if (!Enum.IsDefined(task.Status))
+        {
+            throw new ArgumentException("タスクの給与計算状態が不正です。", parameterName);
+        }
+
+        ArgumentNullException.ThrowIfNull(task.Premiums, parameterName);
+        ArgumentNullException.ThrowIfNull(task.MissingRequirements, parameterName);
+        if (task.Premiums.Any(static item => item is null) ||
+            task.MissingRequirements.Any(static item => item is null))
+        {
+            throw new ArgumentException("タスク計算結果のコレクションにnullを含めることはできません。", parameterName);
+        }
+
+        foreach (var missingRequirement in task.MissingRequirements)
+        {
+            if (missingRequirement.WorkTaskId != task.WorkTaskId)
+            {
+                throw new ArgumentException("不足要件のタスク識別子が計算対象と一致しません。", parameterName);
+            }
+
             if (string.IsNullOrWhiteSpace(missingRequirement.Code))
             {
                 throw new ArgumentException("不足要件コードは空白にできません。", parameterName);
@@ -399,45 +518,38 @@ public sealed class SalaryCalculator : ISalaryCalculator
             }
         }
 
-        if (record.Status == SalaryCalculationStatus.Uncalculated)
+        if (task.Status == SalaryCalculationStatus.Uncalculated)
         {
-            if (record.AppliedRate is not null || record.BasePay is not null || record.Total is not null ||
-                record.Premiums.Count != 0 || record.CountBonuses.Count != 0 || record.MissingRequirements.Count == 0)
+            if (task.AppliedRate is not null || task.BasePay is not null || task.TaskSubtotal is not null ||
+                task.Premiums.Count != 0 || task.MissingRequirements.Count == 0)
             {
-                throw new ArgumentException("未計算結果に推測額を含めず、不足要件を1件以上指定してください。", parameterName);
+                throw new ArgumentException("未計算タスクに推測額を含めず、不足要件を1件以上指定してください。", parameterName);
             }
 
             return;
         }
 
-        if (record.AppliedRate is null || record.BasePay is null || record.Total is null || record.MissingRequirements.Count != 0)
+        if (task.AppliedRate is null || task.BasePay is null || task.TaskSubtotal is null ||
+            task.MissingRequirements.Count != 0)
         {
-            throw new ArgumentException("計算済み結果に必要な単価、金額または内訳がありません。", parameterName);
+            throw new ArgumentException("計算済みタスクに必要な単価、金額または内訳がありません。", parameterName);
         }
 
-        DomainValueGuard.NonNegative(record.BasePay.Value, parameterName);
-        DomainValueGuard.NonNegative(record.Total.Value, parameterName);
-        foreach (var premium in record.Premiums)
+        DomainValueGuard.NonNegative(task.BasePay.Value, parameterName);
+        DomainValueGuard.NonNegative(task.TaskSubtotal.Value, parameterName);
+        foreach (var premium in task.Premiums)
         {
             ArgumentNullException.ThrowIfNull(premium.Rule, parameterName);
             DomainValueGuard.ValidWorkMinutes(premium.ApplicableMinutes, parameterName);
             DomainValueGuard.NonNegative(premium.Amount, parameterName);
         }
 
-        foreach (var countBonus in record.CountBonuses)
+        var expectedSubtotal = MoneyMath.Sum(
+            new[] { task.BasePay.Value.Value }
+                .Concat(task.Premiums.Select(static item => item.Amount.Value)));
+        if (expectedSubtotal != task.TaskSubtotal.Value.Value)
         {
-            DomainIdGuard.NotEmpty(countBonus.CountBonusId.Value, parameterName);
-            DomainModelGuard.NotBlank(countBonus.DisplayName, parameterName);
-            DomainValueGuard.NonNegative(countBonus.Amount, parameterName);
-        }
-
-        var expectedTotal = MoneyMath.Sum(
-            new[] { record.BasePay.Value.Value }
-                .Concat(record.Premiums.Select(static item => item.Amount.Value))
-                .Concat(record.CountBonuses.Select(static item => item.Amount.Value)));
-        if (expectedTotal != record.Total.Value.Value)
-        {
-            throw new ArgumentException("勤務記録合計が内訳の合計と一致しません。", parameterName);
+            throw new ArgumentException("タスク小計が基本給与と割増の合計に一致しません。", parameterName);
         }
     }
 

@@ -27,16 +27,26 @@ internal static class TestData
     public static WorkRecordDto Work(DateOnly date, WorkRecordId? id = null, BasicShiftId? shiftId = null,
         WorkMinutes? minutes = null)
     {
-        return new(id ?? new WorkRecordId(Guid.NewGuid()), date, ServiceId, CategoryId,
-        WorkInputMode.Duration, minutes ?? new WorkMinutes(60), null, null, null, shiftId, null);
+        var recordId = id ?? new WorkRecordId(Guid.NewGuid());
+        return new(recordId, date,
+        [
+            new WorkTaskDto(new WorkTaskId(recordId.Value), ServiceId, CategoryId,
+                WorkInputMode.Duration, minutes ?? new WorkMinutes(60), null, null,
+                new DisplayOrder(0), null),
+        ], shiftId, null);
     }
 
 
     public static SaveWorkRecordCommand SaveCommand(DateOnly date, WorkMinutes? minutes = null,
         MinuteOfDay? start = null, WorkInputMode mode = WorkInputMode.Duration, MinuteOfDay? end = null)
     {
-        return new(null, date, ServiceId, CategoryId, mode,
-            mode == WorkInputMode.Duration ? minutes ?? new WorkMinutes(60) : null, start, end, null, Guid.NewGuid());
+        var operationId = Guid.NewGuid();
+        return new(null, date,
+        [
+            new SaveWorkTaskCommand(new WorkTaskId(operationId), ServiceId, CategoryId, mode,
+                mode == WorkInputMode.Duration ? minutes ?? new WorkMinutes(60) : null,
+                start, end, new DisplayOrder(0), null),
+        ], operationId);
     }
 
 }
@@ -59,21 +69,30 @@ internal sealed class RecordingSalaryCalculator : ISalaryCalculator
 {
     private readonly SalaryCalculator inner = new();
     public List<WorkSalaryCalculationRequest> Requests { get; } = [];
+    public List<SynchronizationContext?> ExecutionContexts { get; } = [];
 
     public WorkSalaryCalculation Calculate(WorkSalaryCalculationRequest request)
     {
+        ExecutionContexts.Add(SynchronizationContext.Current);
         Requests.Add(request);
         return inner.Calculate(request);
     }
 
     public DailySalaryCalculation AggregateDay(
-        DateOnly workDate,
-        IReadOnlyList<WorkSalaryCalculation> records) => inner.AggregateDay(workDate, records);
+        DateOnly workDate, IReadOnlyList<WorkSalaryCalculation> records)
+    {
+        ExecutionContexts.Add(SynchronizationContext.Current);
+        return inner.AggregateDay(workDate, records);
+    }
 
     public PayrollPeriodSalaryCalculation AggregatePeriod(
         PayrollPeriod period,
         IReadOnlyList<DailySalaryCalculation> days,
-        IReadOnlyList<MonthlyAllowance> allowances) => inner.AggregatePeriod(period, days, allowances);
+        IReadOnlyList<MonthlyAllowance> allowances)
+    {
+        ExecutionContexts.Add(SynchronizationContext.Current);
+        return inner.AggregatePeriod(period, days, allowances);
+    }
 }
 
 internal interface ITransactionalFakeState
@@ -163,6 +182,32 @@ internal sealed class FakeMetadataRepository : IAppMetadataRepository, ITransact
 
 }
 
+internal sealed class FakeAnnualSummarySettingRepository : IAnnualSummarySettingRepository, ITransactionalFakeState
+{
+    public AnnualClosingMonth Value { get; set; } = AnnualClosingMonth.Default;
+    public int GetCalls { get; private set; }
+    public int SaveCalls { get; private set; }
+
+    public Task<AnnualClosingMonth> GetClosingMonthAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        GetCalls++;
+        return Task.FromResult(Value);
+    }
+
+    public Task SaveClosingMonthAsync(AnnualClosingMonth closingMonth, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SaveCalls++;
+        Value = closingMonth;
+        return Task.CompletedTask;
+    }
+
+    public object CaptureState() => Value;
+
+    public void RestoreState(object snapshot) => Value = (AnnualClosingMonth)snapshot;
+}
+
 internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactionalFakeState
 {
     private readonly Dictionary<Guid, WorkRecordId> operations = [];
@@ -171,22 +216,12 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
     public int? UpsertFailureAtCall { get; set; }
     public TaskCompletionSource? UpsertGate { get; set; }
     public int UpsertCalls { get; private set; }
-    public int InputHistoryCalls { get; private set; }
     public int FindCalls { get; private set; }
     public int StreamRangeCalls { get; private set; }
+    public List<(DateOnly Start, DateOnly End)> StreamRanges { get; } = [];
     public Task<bool> AnyAsync(CancellationToken cancellationToken)
     {
         return Task.FromResult(Values.Count != 0);
-    }
-
-    public Task<WorkInputHistory> GetInputHistoryAsync(CancellationToken cancellationToken)
-    {
-        InputHistoryCalls++;
-        IReadOnlyDictionary<ServicePresetId, long> usageCounts = Values
-            .Where(x => x.SourceServicePresetId is not null)
-            .GroupBy(x => x.SourceServicePresetId!.Value)
-            .ToDictionary(x => x.Key, x => (long)x.Count());
-        return Task.FromResult(new WorkInputHistory(usageCounts, Values.LastOrDefault()));
     }
 
     public Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken)
@@ -205,6 +240,7 @@ internal sealed class FakeWorkRepository : IWorkRecordRepository, ITransactional
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         StreamRangeCalls++;
+        StreamRanges.Add((startDate, endDate));
         foreach (var value in Values.Where(x => x.WorkDate >= startDate && x.WorkDate <= endDate).OrderBy(x => x.WorkDate).ThenBy(x => x.Id.Value))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -486,10 +522,23 @@ internal sealed class FakeAllowanceRepository : IMonthlyAllowanceRepository, ITr
 {
     public List<MonthlyAllowance> Values { get; } = [];
     public int GetForPeriodCalls { get; private set; }
+    public int GetForRangeCalls { get; private set; }
     public Task<IReadOnlyList<MonthlyAllowance>> GetForPeriodAsync(PayrollPeriodKey payrollPeriodKey, CancellationToken cancellationToken)
     {
         GetForPeriodCalls++;
         return Task.FromResult<IReadOnlyList<MonthlyAllowance>>([.. Values.Where(x => x.PayrollPeriodKey == payrollPeriodKey)]);
+    }
+
+    public Task<IReadOnlyList<MonthlyAllowance>> GetForRangeAsync(
+        PayrollPeriodKey start,
+        PayrollPeriodKey end,
+        CancellationToken cancellationToken)
+    {
+        GetForRangeCalls++;
+        return Task.FromResult<IReadOnlyList<MonthlyAllowance>>([.. Values
+            .Where(x => x.PayrollPeriodKey.Value.CompareTo(start.Value) >= 0 &&
+                        x.PayrollPeriodKey.Value.CompareTo(end.Value) <= 0)
+            .OrderBy(x => x.PayrollPeriodKey.Value)]);
     }
 
 
@@ -513,13 +562,15 @@ internal sealed class TestContext
     public FakeShiftRepository Shifts { get; } = new();
     public FakeClosingRepository Closing { get; } = new();
     public FakeAllowanceRepository Allowances { get; } = new();
+    public FakeAnnualSummarySettingRepository AnnualSettings { get; } = new();
     public FakeMetadataRepository Metadata { get; } = new();
     public FakeTransactionRunner Transactions { get; } = new();
     public FakeClock Clock { get; } = new(new DateTimeOffset(2026, 8, 15, 0, 0, 0, TimeSpan.Zero));
     public SalaryCalculator Salary { get; } = new();
     public PayrollPeriodCalculator Periods { get; } = new();
 
-    public TestContext() => Transactions.Register(Works, Settings, Presets, Shifts, Closing, Allowances, Metadata);
+    public TestContext() => Transactions.Register(
+        Works, Settings, Presets, Shifts, Closing, Allowances, AnnualSettings, Metadata);
 
     public WorkRecordUseCase WorkUseCase()
     {
@@ -640,8 +691,8 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
         if (!entries.TryGetValue(preparedImportId, out var entry) || entry.State != FakeStagingState.Created)
             throw new InvalidOperationException("staging is not validatable");
         entries[preparedImportId] = (FakeStagingState.Validated, entry.Records);
-        return Task.FromResult(new ImportPreviewDto(preparedImportId, 1, DateTimeOffset.UnixEpoch, 0, 0, entry.Records.Count, 0,
-            null, null, null, null, []));
+        return Task.FromResult(new ImportPreviewDto(preparedImportId, 1, DateTimeOffset.UnixEpoch, 0, 0, 0,
+            entry.Records.Count, entry.Records.Count, 0, null, null, null, null, []));
     }
     public Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId, DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {

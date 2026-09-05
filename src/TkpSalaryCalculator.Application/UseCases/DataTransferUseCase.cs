@@ -14,7 +14,7 @@ public sealed class DataTransferUseCase(IJsonExportStream exportStream, IJsonImp
     /// <summary>現在の安定したエクスポート形式識別子です。</summary>
     public const string FormatName = "tkp-salary-calculator";
     /// <summary>現在対応するエクスポート形式バージョンです。</summary>
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 3;
     private const int BatchSize = 256;
 
     private readonly IJsonExportStream exportStream = exportStream ?? throw new ArgumentNullException(nameof(exportStream));

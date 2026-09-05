@@ -77,10 +77,13 @@
                         <VerticalStackLayout BindableLayout.ItemsSource="{Binding SelectedWorkRows}" IsVisible="{Binding HasSelectedWorkRows}" Spacing="6">
                             <BindableLayout.ItemTemplate>
                                 <DataTemplate x:DataType="calendar:CalendarWorkSummaryRow">
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <Label Text="{Binding DurationText}" />
-                                        <Label Grid.Column="1" Text="{Binding AmountText}" />
-                                    </Grid>
+                                    <Border Padding="10" SemanticProperties.Description="{Binding AccessibilityText}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
+                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+                                            <Label FontAttributes="Bold" Text="{Binding TaskSummaryText}" />
+                                            <Label Grid.Column="1" FontAttributes="Bold" Text="{Binding AmountText}" />
+                                            <Label Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource SupportingTextStyle}" Text="{Binding TaskCountAndDurationText}" />
+                                        </Grid>
+                                    </Border>
                                 </DataTemplate>
                             </BindableLayout.ItemTemplate>
                         </VerticalStackLayout>
@@ -112,6 +115,7 @@
                         <Label Style="{StaticResource SectionTitleStyle}" Text="基本シフト反映確認" />
                         <Label FontAttributes="Bold" Text="{Binding SelectedDateText}" />
                         <Label Text="{Binding ShiftExistingWorkText}" />
+                        <Label Text="{Binding ShiftSelectedVisitCountText}" />
                         <Label
                             Style="{StaticResource SupportingTextStyle}"
                             Text="反映する候補を選択してください。類似する勤務がある候補も、内容を確認して選択できます。" />

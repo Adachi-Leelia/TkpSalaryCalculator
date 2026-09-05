@@ -44,7 +44,7 @@ public sealed class SalaryCalculatorReviewTests
                 categories: [Category(TestData.CategoryId, TestData.ServiceId, true)],
                 rates: [TestData.Rate(RateType.Hourly, 1200)]));
 
-        Assert.Null(result.AppliedRate!.TimeCategoryId);
+        Assert.Null(Assert.Single(result.TaskCalculations).AppliedRate!.TimeCategoryId);
         Assert.Equal(600, result.BasePay!.Value.Value);
     }
 
@@ -293,7 +293,7 @@ public sealed class SalaryCalculatorReviewTests
         ServiceId? serviceId = null,
         TimeCategoryId? categoryId = null)
     {
-        return new(
+        return TestData.CreateWorkRecord(
             new WorkRecordId(Guid.NewGuid()),
             date ?? new DateOnly(2026, 8, 15),
             serviceId ?? TestData.ServiceId,

@@ -109,22 +109,19 @@ public sealed class BasicShiftViewModel : ViewModelBase
             var weekdayShifts = await shifts.GetForWeekdayAsync(weekday, cancellationToken);
             var rows = weekdayShifts.Select(shift =>
             {
-                var service = services.GetValueOrDefault(shift.ServiceId, "現在の設定にないサービス");
-                var category = shift.TimeCategoryId is { } categoryId ? categories.GetValueOrDefault(categoryId, "現在の設定にない時間区分") : "任意時間";
-                var time = shift.InputMode == WorkInputMode.TimeRange && shift.StartTime is { } start && shift.EndTime is { } end
-                    ? $"{formatter.Time(start)}～{formatter.Time(end)} / {formatter.Duration(shift.WorkMinutes)}"
-                    : formatter.Duration(shift.WorkMinutes);
                 var warnings = new List<string>();
                 if (!shift.IsEnabled) warnings.Add("この基本シフトは無効になっています。");
-                if (!monthSettings.Snapshot.Services.Any(x => x.Id == shift.ServiceId && x.IsEnabled))
-                    warnings.Add("現在の設定でサービスを利用できません。");
-                if (shift.TimeCategoryId is { } timeCategoryId &&
-                    !monthSettings.Snapshot.TimeCategories.Any(x => x.Id == timeCategoryId && x.ServiceId == shift.ServiceId && x.IsEnabled))
-                    warnings.Add("現在の設定で時間区分を利用できません。");
-                if (shift.InputMode == WorkInputMode.TimeRange && (shift.StartTime is null || shift.EndTime is null))
-                    warnings.Add("開始時刻と終了時刻を設定してください。");
+                foreach (var task in shift.Tasks.OrderBy(task => task.DisplayOrder.Value))
+                {
+                    if (!monthSettings.Snapshot.Services.Any(x => x.Id == task.ServiceId && x.IsEnabled))
+                        warnings.Add($"タスク {task.DisplayOrder.Value + 1}: 現在の設定でサービスを利用できません。");
+                    if (task.TimeCategoryId is { } categoryId &&
+                        !monthSettings.Snapshot.TimeCategories.Any(x => x.Id == categoryId && x.ServiceId == task.ServiceId && x.IsEnabled))
+                        warnings.Add($"タスク {task.DisplayOrder.Value + 1}: 現在の設定で時間区分を利用できません。");
+                }
+                var (name, time) = BasicShiftDisplay.Summarize(shift, services, categories, formatter);
                 return new BasicShiftRow(
-                    shift.Id, $"{service} / {category}", time, $"表示順 {shift.DisplayOrder.Value}", shift.IsEnabled ? "使用中" : "無効",
+                    shift.Id, name, time, $"表示順 {shift.DisplayOrder.Value}", shift.IsEnabled ? "使用中" : "無効",
                     string.Join(Environment.NewLine, warnings),
                     () => navigator.OpenBasicShiftEditorAsync(shift.Id.Value, CancellationToken.None),
                     () => DeleteAsync(shift), PresentError);
@@ -158,7 +155,7 @@ public sealed class BasicShiftViewModel : ViewModelBase
     };
 }
 
-/// <summary>SCR-SHIFT-02 の勤務内容、表示順、有効状態を編集します。</summary>
+/// <summary>SCR-SHIFT-02 の全タスク、曜日、表示順、有効状態を編集します。</summary>
 public sealed class BasicShiftEditorViewModel : EditableViewModelBase
 {
     private readonly IBasicShiftUseCase shifts;
@@ -167,35 +164,24 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
     private readonly IUtcClock clock;
     private readonly ILocalDateConverter localDates;
     private readonly IAppSessionState sessionState;
-    private readonly IssuePresenter issuePresenter;
     private BasicShiftId? id;
+    private readonly IssuePresenter issuePresenter;
     private bool initializing;
+    private bool hasSaved;
     private IReadOnlyList<ServiceOptionViewModel> services = [];
-    private IReadOnlyList<TimeCategoryOptionViewModel> timeCategories = [];
-    private IReadOnlyList<SnapshotTimeCategory> allCategories = [];
+    private IReadOnlyList<SnapshotTimeCategory> categories = [];
     private IReadOnlyList<SnapshotPremium> premiums = [];
-    private ServiceOptionViewModel? selectedService;
-    private TimeCategoryOptionViewModel? selectedTimeCategory;
     private WeekdayOption selectedWeekday;
-    private WorkInputModeOption selectedInputMode = WorkInputModeOption.Duration;
-    private string workMinutesText = "60";
-    private TimeSpan startTime = new(9, 0, 0);
-    private TimeSpan endTime = new(10, 0, 0);
     private string displayOrderText = "0";
     private bool isEnabled = true;
-    private IReadOnlyDictionary<string, string> fieldErrors = new Dictionary<string, string>();
+    private string displayOrderError = string.Empty;
     private string? firstInvalidField;
 
     public BasicShiftEditorViewModel(
-        IBasicShiftUseCase shifts,
-        IWorkRecordUseCase workRecords,
-        ISettingsNavigator navigator,
-        IUtcClock clock,
-        ILocalDateConverter localDates,
-        IUserErrorPresenter errorPresenter,
-        IssuePresenter issuePresenter,
-        IConfirmationDialogService dialogs,
-        IAppSessionState sessionState) : base(errorPresenter, dialogs)
+        IBasicShiftUseCase shifts, IWorkRecordUseCase workRecords, ISettingsNavigator navigator,
+        IUtcClock clock, ILocalDateConverter localDates, IUserErrorPresenter errorPresenter,
+        IssuePresenter issuePresenter, IConfirmationDialogService dialogs, IAppSessionState sessionState)
+        : base(errorPresenter, dialogs)
     {
         this.shifts = shifts ?? throw new ArgumentNullException(nameof(shifts));
         this.workRecords = workRecords ?? throw new ArgumentNullException(nameof(workRecords));
@@ -204,86 +190,49 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         this.localDates = localDates ?? throw new ArgumentNullException(nameof(localDates));
         this.sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
         this.issuePresenter = issuePresenter ?? throw new ArgumentNullException(nameof(issuePresenter));
-        TrackDataChanges(this.sessionState, AppDataChangeKind.BasicShifts | AppDataChangeKind.Settings);
+        TrackDataChanges(sessionState, AppDataChangeKind.BasicShifts | AppDataChangeKind.Settings);
         Weekdays = BasicShiftViewModel.OrderedWeekdays.Select(x => new WeekdayOption(x, BasicShiftViewModel.WeekdayName(x))).ToArray();
         selectedWeekday = Weekdays[0];
-        InputModes = [WorkInputModeOption.Duration, WorkInputModeOption.TimeRange];
-        SaveCommand = new AsyncCommand(SaveAsync, PresentError);
+        SaveCommand = new AsyncCommand(SaveAsync, PresentError, () => IsNotBusy && !hasSaved);
+        AddTaskCommand = new AsyncCommand(AddTaskAsync, PresentError, () => IsNotBusy && !hasSaved);
+        PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(IsBusy)) return;
+            SaveCommand.NotifyCanExecuteChanged();
+            AddTaskCommand.NotifyCanExecuteChanged();
+        };
     }
 
     public string PageTitle => id is null ? "基本シフトを追加" : "基本シフトを編集";
     public IReadOnlyList<WeekdayOption> Weekdays { get; }
-    public IReadOnlyList<WorkInputModeOption> InputModes { get; }
-    public IReadOnlyList<ServiceOptionViewModel> Services { get => services; private set => SetProperty(ref services, value); }
-    public IReadOnlyList<TimeCategoryOptionViewModel> TimeCategories { get => timeCategories; private set => SetProperty(ref timeCategories, value); }
+    public IReadOnlyList<WorkInputModeOption> InputModes { get; } = [WorkInputModeOption.Duration, WorkInputModeOption.TimeRange];
+    public System.Collections.ObjectModel.ObservableCollection<WorkTaskEditorViewModel> Tasks { get; } = [];
+    public string TaskCountText => $"タスク {Tasks.Count}件";
     public WeekdayOption SelectedWeekday
     {
         get => selectedWeekday;
         set
         {
             if (!SetProperty(ref selectedWeekday, value)) return;
-            OnPropertyChanged(nameof(ShowStartTime));
+            foreach (var task in Tasks) task.RefreshDateRules();
             Changed();
         }
     }
-    public ServiceOptionViewModel? SelectedService
-    {
-        get => selectedService;
-        set
-        {
-            if (!SetProperty(ref selectedService, value)) return;
-            RebuildCategories(value?.Id);
-            OnPropertyChanged(nameof(ShowStartTime));
-            Changed();
-        }
-    }
-    public TimeCategoryOptionViewModel? SelectedTimeCategory { get => selectedTimeCategory; set { if (SetProperty(ref selectedTimeCategory, value)) Changed(); } }
-    public WorkInputModeOption SelectedInputMode
-    {
-        get => selectedInputMode;
-        set
-        {
-            if (!SetProperty(ref selectedInputMode, value)) return;
-            OnPropertyChanged(nameof(ShowDuration)); OnPropertyChanged(nameof(ShowTimeRange)); OnPropertyChanged(nameof(ShowStartTime)); Changed();
-        }
-    }
-    public bool ShowDuration => SelectedInputMode.Value == WorkInputMode.Duration;
-    public bool ShowTimeRange => SelectedInputMode.Value == WorkInputMode.TimeRange;
-    public bool ShowStartTime => ShowTimeRange || SelectedService is { } service && HasApplicableTimedPremium(service.Id);
-    public string WorkMinutesText { get => workMinutesText; set { if (SetProperty(ref workMinutesText, value)) Changed(); } }
-    public TimeSpan StartTime { get => startTime; set { if (SetProperty(ref startTime, value)) Changed(); } }
-    public TimeSpan EndTime { get => endTime; set { if (SetProperty(ref endTime, value)) Changed(); } }
     public string DisplayOrderText { get => displayOrderText; set { if (SetProperty(ref displayOrderText, value)) Changed(); } }
     public bool IsEnabled { get => isEnabled; set { if (SetProperty(ref isEnabled, value)) Changed(); } }
-    public IReadOnlyDictionary<string, string> FieldErrors
-    {
-        get => fieldErrors;
-        private set
-        {
-            if (!SetProperty(ref fieldErrors, value)) return;
-            OnPropertyChanged(nameof(ServiceError));
-            OnPropertyChanged(nameof(TimeCategoryError));
-            OnPropertyChanged(nameof(WorkMinutesError));
-            OnPropertyChanged(nameof(StartTimeError));
-            OnPropertyChanged(nameof(EndTimeError));
-            OnPropertyChanged(nameof(DisplayOrderError));
-        }
-    }
-    public string ServiceError => FieldErrors.GetValueOrDefault("ServiceId", string.Empty);
-    public string TimeCategoryError => FieldErrors.GetValueOrDefault("TimeCategoryId", string.Empty);
-    public string WorkMinutesError => FieldErrors.GetValueOrDefault("WorkMinutes", string.Empty);
-    public string StartTimeError => FieldErrors.GetValueOrDefault("StartTime", string.Empty);
-    public string EndTimeError => FieldErrors.GetValueOrDefault("EndTime", string.Empty);
-    public string DisplayOrderError => FieldErrors.GetValueOrDefault("DisplayOrder", string.Empty);
-    public string? FirstInvalidField
-    {
-        get => firstInvalidField;
-        private set => SetProperty(ref firstInvalidField, value);
-    }
+    public string DisplayOrderError { get => displayOrderError; private set => SetProperty(ref displayOrderError, value); }
+    public WorkTaskEditorViewModel? FirstInvalidTask { get; private set; }
+    public string? FirstInvalidField { get => firstInvalidField; private set => SetProperty(ref firstInvalidField, value); }
     public AsyncCommand SaveCommand { get; }
+    public AsyncCommand AddTaskCommand { get; }
 
-    public void Initialize(BasicShiftId? value) { id = value; InvalidateTrackedLoad(); OnPropertyChanged(nameof(PageTitle)); }
-
+    public void Initialize(BasicShiftId? value)
+    {
+        id = value;
+        hasSaved = false;
+        InvalidateTrackedLoad();
+        OnPropertyChanged(nameof(PageTitle));
+    }
     public Task LoadAsync() => LoadTrackedAsync(LoadCoreAsync, force: true);
     public Task LoadIfNeededAsync() => LoadTrackedAsync(LoadCoreAsync, force: false);
 
@@ -294,9 +243,9 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
         {
             var today = localDates.ToLocalDate(clock.UtcNow);
             var monthSettings = await workRecords.GetSettingsForDateAsync(today, cancellationToken);
-            allCategories = monthSettings.Snapshot.TimeCategories;
+            categories = monthSettings.Snapshot.TimeCategories;
             premiums = monthSettings.Snapshot.Premiums;
-            Services = monthSettings.Snapshot.Services.OrderBy(x => x.DisplayOrder.Value)
+            services = monthSettings.Snapshot.Services.OrderBy(x => x.DisplayOrder.Value)
                 .Select(x => new ServiceOptionViewModel(x.Id, x.DisplayName, x.IsEnabled)).ToArray();
             BasicShiftDto? existing = null;
             if (id is { } shiftId)
@@ -308,91 +257,136 @@ public sealed class BasicShiftEditorViewModel : EditableViewModelBase
                 }
                 if (existing is null) throw new ApplicationErrorException("SHIFT_NOT_FOUND", "編集する基本シフトが見つかりませんでした。");
             }
-            Apply(existing);
+            SelectedWeekday = existing is null ? Weekdays[0] : Weekdays.First(x => x.Value == existing.Weekday);
+            DisplayOrderText = (existing?.DisplayOrder.Value ?? 0).ToString();
+            IsEnabled = existing?.IsEnabled ?? true;
+            Tasks.Clear();
+            if (existing is null) Tasks.Add(CreateTask(null));
+            else foreach (var task in existing.Tasks.OrderBy(x => x.DisplayOrder.Value)) Tasks.Add(CreateTask(task));
+            UpdatePositions();
         }
         finally { initializing = false; }
         ClearValidation();
         MarkSaved();
     }
 
-    public Task SaveAsync() => RunBusyAsync(async cancellationToken =>
+    private WorkTaskEditorViewModel CreateTask(BasicShiftTaskDto? task)
     {
-        if (SelectedService is null) throw new ApplicationErrorException("SHIFT_SERVICE_REQUIRED", "サービスを選択してください。", "ServiceId");
-        if (!int.TryParse(DisplayOrderText, out var order) || order < 0) throw new ApplicationErrorException("SHIFT_ORDER_INVALID", "表示順は0以上の整数で入力してください。", "DisplayOrder");
-        WorkMinutes? minutes = null;
-        MinuteOfDay? start = null;
-        MinuteOfDay? end = null;
-        if (SelectedInputMode.Value == WorkInputMode.Duration)
+        var taskId = new WorkTaskId(task?.Id.Value ?? Guid.NewGuid());
+        var existing = task is null ? null : new WorkTaskDto(taskId, task.ServiceId, task.TimeCategoryId,
+            task.InputMode, task.WorkMinutes, task.StartTime, task.EndTime, task.DisplayOrder, task.ServicePresetId);
+        return new WorkTaskEditorViewModel(taskId, existing, [],
+            services.Where(service => service.IsEnabled || service.Id == task?.ServiceId).ToArray(),
+            categories, InputModes, HasApplicableTimedPremium, _ => Changed(),
+            item => MoveTaskAsync(item, -1), item => MoveTaskAsync(item, 1), DeleteTaskAsync);
+    }
+
+    public Task AddTaskAsync()
+    {
+        if (IsBusy || hasSaved) return Task.CompletedTask;
+        Tasks.Add(CreateTask(null));
+        UpdatePositions();
+        Changed();
+        return Task.CompletedTask;
+    }
+    private Task MoveTaskAsync(WorkTaskEditorViewModel task, int offset)
+    {
+        var index = Tasks.IndexOf(task);
+        if (IsBusy || hasSaved || index < 0 || index + offset < 0 || index + offset >= Tasks.Count) return Task.CompletedTask;
+        Tasks.Move(index, index + offset);
+        UpdatePositions();
+        Changed();
+        return Task.CompletedTask;
+    }
+    private Task DeleteTaskAsync(WorkTaskEditorViewModel task)
+    {
+        if (IsBusy || hasSaved || Tasks.Count <= 1 || !Tasks.Remove(task)) return Task.CompletedTask;
+        UpdatePositions();
+        Changed();
+        return Task.CompletedTask;
+    }
+    private void UpdatePositions()
+    {
+        for (var index = 0; index < Tasks.Count; index++) Tasks[index].UpdatePosition(index, Tasks.Count);
+        OnPropertyChanged(nameof(TaskCountText));
+    }
+
+    public Task SaveAsync()
+    {
+        if (hasSaved) return Task.CompletedTask;
+        return RunBusyAsync(async cancellationToken =>
         {
-            if (!int.TryParse(WorkMinutesText, out var parsed) || parsed is < 1 or > 1440)
-                throw new ApplicationErrorException("SHIFT_DURATION_INVALID", "勤務時間は1分から1,440分で入力してください。", "WorkMinutes");
-            minutes = new WorkMinutes(parsed);
-            start = ShowStartTime ? new MinuteOfDay((int)StartTime.TotalMinutes) : null;
-        }
-        else
-        {
-            start = new MinuteOfDay((int)StartTime.TotalMinutes);
-            end = new MinuteOfDay((int)EndTime.TotalMinutes);
-        }
-        await shifts.SaveAsync(new SaveBasicShiftCommand(
-            id, SelectedWeekday.Value, null, SelectedService.Id, SelectedTimeCategory?.Id,
-            SelectedInputMode.Value, minutes, start, end, new DisplayOrder(order), IsEnabled), cancellationToken);
-        sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts | AppDataChangeKind.BackupStatus);
-        MarkSaved();
-        await navigator.GoBackAsync("基本シフトを保存しました。反映済みの勤務記録は変更されません。", cancellationToken);
+            ClearValidation();
+            if (!int.TryParse(DisplayOrderText, out var order) || order < 0)
+                throw new ApplicationErrorException("SHIFT_ORDER_INVALID", "表示順は0以上の整数で入力してください。", "DisplayOrder");
+            var values = new List<SaveBasicShiftTaskCommand>();
+            foreach (var task in Tasks)
+            {
+                var field = $"Tasks[{task.Id.Value:D}]";
+                if (task.SelectedService is null)
+                    throw new ApplicationErrorException("SHIFT_SERVICE_REQUIRED", "サービスを選択してください。", $"{field}.ServiceId");
+                WorkMinutes? minutes = null;
+                if (task.ShowDuration)
+                {
+                    if (!int.TryParse(task.WorkMinutesText, out var parsed) || parsed is < 1 or > 1440)
+                        throw new ApplicationErrorException("SHIFT_DURATION_INVALID", "勤務時間は1分から1,440分で入力してください。", $"{field}.WorkMinutes");
+                    minutes = new WorkMinutes(parsed);
+                }
+                values.Add(new SaveBasicShiftTaskCommand(new BasicShiftTaskId(task.Id.Value),
+                    task.SelectedPreset?.Id ?? task.OriginalSourceServicePresetId, task.SelectedService.Id,
+                    task.SelectedTimeCategory?.Id, task.SelectedInputMode.Value, minutes,
+                    task.ShowStartTime ? new MinuteOfDay((int)task.StartTime.TotalMinutes) : null,
+                    task.ShowEndTime ? new MinuteOfDay((int)task.EndTime.TotalMinutes) : null,
+                    new DisplayOrder(task.DisplayOrder)));
+            }
+            var saved = await shifts.SaveAsync(new SaveBasicShiftCommand(id, SelectedWeekday.Value,
+                values, new DisplayOrder(order), IsEnabled), cancellationToken);
+            id = saved.Id;
+            hasSaved = true;
+            SaveCommand.NotifyCanExecuteChanged();
+            AddTaskCommand.NotifyCanExecuteChanged();
+            sessionState.NotifyDataChanged(AppDataChangeKind.BasicShifts | AppDataChangeKind.BackupStatus);
+            MarkSaved();
+            await navigator.GoBackAsync("基本シフトを保存しました。反映済みの勤務記録は変更されません。", cancellationToken);
+        });
+    }
+
+    private bool HasApplicableTimedPremium(ServiceId serviceId) => premiums.Any(premium =>
+    {
+        if (!premium.IsEnabled || premium.StartTime is null ||
+            (premium.ServiceIds.Count != 0 && !premium.ServiceIds.Contains(serviceId))) return false;
+
+        var hasDateCondition = premium.Weekdays.Count != 0 || premium.UsesNationalHolidays || premium.Dates.Count != 0;
+        return !hasDateCondition ||
+            premium.Weekdays.Contains(SelectedWeekday.Value) ||
+            premium.UsesNationalHolidays ||
+            premium.Dates.Any(date => date.DayOfWeek == SelectedWeekday.Value);
     });
-
-    private void Apply(BasicShiftDto? value)
-    {
-        selectedWeekday = value is null ? Weekdays[0] : Weekdays.First(x => x.Value == value.Weekday);
-        OnPropertyChanged(nameof(SelectedWeekday));
-        selectedService = value is null ? Services.FirstOrDefault(x => x.IsEnabled) : Services.FirstOrDefault(x => x.Id == value.ServiceId);
-        OnPropertyChanged(nameof(SelectedService));
-        RebuildCategories(selectedService?.Id);
-        selectedTimeCategory = value is null ? TimeCategories[0] : TimeCategories.FirstOrDefault(x => x.Id == value.TimeCategoryId) ?? TimeCategories[0];
-        OnPropertyChanged(nameof(SelectedTimeCategory));
-        SelectedInputMode = value?.InputMode == WorkInputMode.TimeRange ? WorkInputModeOption.TimeRange : WorkInputModeOption.Duration;
-        WorkMinutesText = (value?.WorkMinutes.Value ?? 60).ToString();
-        if (value?.StartTime is { } start) StartTime = TimeSpan.FromMinutes(start.Value);
-        if (value?.EndTime is { } end) EndTime = TimeSpan.FromMinutes(end.Value);
-        DisplayOrderText = (value?.DisplayOrder.Value ?? 0).ToString();
-        IsEnabled = value?.IsEnabled ?? true;
-    }
-
-    private void RebuildCategories(ServiceId? serviceId)
-    {
-        TimeCategories = new[] { TimeCategoryOptionViewModel.Arbitrary }.Concat(allCategories
-            .Where(x => x.ServiceId == serviceId).OrderBy(x => x.DisplayOrder.Value)
-            .Select(x => new TimeCategoryOptionViewModel(x.Id, x.DisplayName, x.StandardMinutes, x.IsEnabled))).ToArray();
-        selectedTimeCategory = TimeCategories.FirstOrDefault();
-        OnPropertyChanged(nameof(SelectedTimeCategory));
-    }
-
-    private bool HasApplicableTimedPremium(ServiceId serviceId) => premiums.Any(x =>
-        x.IsEnabled && x.StartTime is not null &&
-        (x.ServiceIds.Count == 0 || x.ServiceIds.Contains(serviceId)) &&
-        (x.Weekdays.Count == 0 || x.Weekdays.Contains(SelectedWeekday.Value)));
 
     protected override void OnErrorPresented(Exception exception)
     {
-        if (exception is not ApplicationErrorException applicationError)
+        if (exception is not ApplicationErrorException error) return;
+        var presentation = issuePresenter.Present([new IssueDto(error.Code, error.Field, error.Message)]);
+        DisplayOrderError = presentation.FieldErrors.GetValueOrDefault("DisplayOrder", string.Empty);
+        foreach (var task in Tasks)
         {
-            ClearValidation();
+            var prefix = $"Tasks[{task.Id.Value:D}].";
+            if (error.Field?.StartsWith(prefix, StringComparison.Ordinal) != true) continue;
+            var field = error.Field[prefix.Length..];
+            task.AddError(field, error.Message);
+            FirstInvalidTask = task;
+            FirstInvalidField = field;
             return;
         }
-
-        var presentation = issuePresenter.Present(
-            [new IssueDto(applicationError.Code, applicationError.Field, applicationError.Message)]);
-        FieldErrors = presentation.FieldErrors;
         FirstInvalidField = presentation.FirstInvalidField;
     }
-
     private void ClearValidation()
     {
-        FieldErrors = new Dictionary<string, string>();
+        DisplayOrderError = string.Empty;
+        foreach (var task in Tasks) task.SetErrors([]);
+        FirstInvalidTask = null;
         FirstInvalidField = null;
     }
-
     private void Changed()
     {
         if (initializing) return;
