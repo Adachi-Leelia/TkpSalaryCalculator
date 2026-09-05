@@ -30,6 +30,7 @@
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\EditableViewModelBase.cs" Link="Production\EditableViewModelBase.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\IssuePresenter.cs" Link="Production\IssuePresenter.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\JapaneseDisplayFormatter.cs" Link="Production\JapaneseDisplayFormatter.cs" />
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\BasicShiftDisplay.cs" Link="Production\BasicShiftDisplay.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Services\IConfirmationDialogService.cs" Link="Production\IConfirmationDialogService.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Services\PlatformServiceContracts.cs" Link="Production\PlatformServiceContracts.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Features\Setup\InitialSetupFlowViewModel.cs" Link="Production\InitialSetupFlowViewModel.cs" />

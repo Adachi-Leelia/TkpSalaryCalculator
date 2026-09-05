@@ -39,6 +39,7 @@ public sealed class CalculationDetailViewModelTests
             row => Assert.IsType<CalculationSectionHeaderRowViewModel>(row),
             row => Assert.IsType<CalculationAllowanceRowViewModel>(row),
             row => Assert.IsType<CalculationDayRowViewModel>(row),
+            row => Assert.IsType<CalculationVisitRowViewModel>(row),
             row => Assert.IsType<CalculationWorkRecordRowViewModel>(row),
             row => Assert.IsType<CalculationPremiumRowViewModel>(row),
             row => Assert.IsType<CalculationCountBonusRowViewModel>(row),
@@ -55,6 +56,59 @@ public sealed class CalculationDetailViewModelTests
         Assert.Equal("夜間割増", Assert.Single(viewModel.Rows.OfType<CalculationPremiumRowViewModel>()).DisplayName);
         Assert.Equal("30分", Assert.Single(viewModel.Rows.OfType<CalculationPremiumRowViewModel>()).ApplicableTimeText);
         Assert.Equal("訪問件数", Assert.Single(viewModel.Rows.OfType<CalculationCountBonusRowViewModel>()).DisplayName);
+    }
+
+    [Fact]
+    public async Task UI020_MultiTaskVisitShowsVisitTasksCountBonusAndVisitTotalInHierarchy()
+    {
+        var secondServiceId = new ServiceId(Guid.Parse("10000000-0000-0000-0000-000000000002"));
+        var firstTaskId = new WorkTaskId(Guid.Parse("41000000-0000-0000-0000-000000000001"));
+        var secondTaskId = new WorkTaskId(Guid.Parse("41000000-0000-0000-0000-000000000002"));
+        var firstTask = new WorkTaskDto(firstTaskId, ServiceId, null, WorkInputMode.Duration,
+            new WorkMinutes(30), null, null, new DisplayOrder(0), null);
+        var secondTask = new WorkTaskDto(secondTaskId, secondServiceId, null, WorkInputMode.Duration,
+            new WorkMinutes(45), null, null, new DisplayOrder(1), null);
+        var firstCalculation = new TaskSalaryCalculation(firstTaskId, SalaryCalculationStatus.Calculated,
+            new SnapshotRate(ServiceId, null, RateType.FixedPerRecord, new YenAmount(1_000)),
+            new YenAmount(1_000), [], new YenAmount(1_000), []);
+        var secondCalculation = new TaskSalaryCalculation(secondTaskId, SalaryCalculationStatus.Calculated,
+            new SnapshotRate(secondServiceId, null, RateType.FixedPerRecord, new YenAmount(800)),
+            new YenAmount(800), [], new YenAmount(800), []);
+        var visitCalculation = new WorkSalaryCalculation(
+            RecordId, SalaryCalculationStatus.Calculated, [firstCalculation, secondCalculation],
+            [new AppliedCountBonus(new CountBonusId(Guid.NewGuid()), "訪問件数", new YenAmount(150))],
+            new YenAmount(1_950), []);
+        var visit = new WorkRecordDto(RecordId, WorkDate, [firstTask, secondTask], null, null);
+        var salaryRecord = new WorkRecordSalaryDto(visit, visitCalculation, null, null, new YearMonth(2026, 8),
+        [
+            new WorkTaskSalaryDto(firstTask, firstCalculation, "身体1", null),
+            new WorkTaskSalaryDto(secondTask, secondCalculation, "生活3", null),
+        ]);
+        var summary = Summary([salaryRecord]) with
+        {
+            Days = [new DailySalaryDto(WorkDate, [salaryRecord], new YenAmount(1_800), new YenAmount(0),
+                new YenAmount(150), new YenAmount(1_950), 0)],
+            BasePaySubtotal = new YenAmount(1_800),
+            PremiumSubtotal = new YenAmount(0),
+            CountBonusSubtotal = new YenAmount(150),
+            CalculatedSubtotal = new YenAmount(2_450),
+        };
+        var viewModel = CreateViewModel(new SalaryStub { Summary = summary });
+        viewModel.SetWorkRecord(WorkDate, RecordId);
+
+        await viewModel.LoadAsync();
+
+        var visitRow = Assert.Single(viewModel.Rows.OfType<CalculationVisitRowViewModel>());
+        Assert.Equal("タスク 2件", visitRow.TaskCountText);
+        Assert.Equal("身体1、生活3", visitRow.TaskSummaryText);
+        Assert.Equal(["タスク 1", "タスク 2"],
+            viewModel.Rows.OfType<CalculationWorkRecordRowViewModel>().Select(row => row.TaskTitle));
+        Assert.Equal(["1,000円", "800円"],
+            viewModel.Rows.OfType<CalculationWorkRecordRowViewModel>().Select(row => row.TaskSubtotalText));
+        Assert.Equal("150円", Assert.Single(viewModel.Rows.OfType<CalculationCountBonusRowViewModel>()).AmountText);
+        var total = Assert.Single(viewModel.Rows.OfType<CalculationWorkRecordTotalRowViewModel>());
+        Assert.True(total.HasTotal);
+        Assert.Equal("1,950円", total.TotalText);
     }
 
     [Fact]
@@ -123,6 +177,60 @@ public sealed class CalculationDetailViewModelTests
         Assert.Contains("基本単価", row.MissingReasonText);
         Assert.Contains("サービス・単価", row.MissingReasonText);
         Assert.Equal("未計算", row.TotalText);
+        Assert.False(row.HasTotal);
+        Assert.Empty(viewModel.Rows.OfType<CalculationCountBonusRowViewModel>());
+    }
+
+    [Fact]
+    public async Task UI021_DiagnosticPremiumFromUncalculatedVisitIsNotIncludedInPeriodPremiumTotals()
+    {
+        var firstTaskId = new WorkTaskId(Guid.Parse("41000000-0000-0000-0000-000000000011"));
+        var secondTaskId = new WorkTaskId(Guid.Parse("41000000-0000-0000-0000-000000000012"));
+        var secondServiceId = new ServiceId(Guid.Parse("10000000-0000-0000-0000-000000000012"));
+        var premiumRule = new SnapshotPremium(
+            new PremiumId(Guid.Parse("70000000-0000-0000-0000-000000000011")),
+            "夜間割増", PremiumCalculationType.FixedPerRecord, null, new YenAmount(300),
+            null, null, false, new HashSet<DayOfWeek>(), new HashSet<DateOnly>(),
+            new HashSet<ServiceId>(), true);
+        var firstTask = new WorkTaskDto(firstTaskId, ServiceId, null, WorkInputMode.Duration,
+            new WorkMinutes(30), null, null, new DisplayOrder(0), null);
+        var secondTask = new WorkTaskDto(secondTaskId, secondServiceId, null, WorkInputMode.Duration,
+            new WorkMinutes(45), null, null, new DisplayOrder(1), null);
+        var firstCalculation = new TaskSalaryCalculation(
+            firstTaskId, SalaryCalculationStatus.Calculated,
+            new SnapshotRate(ServiceId, null, RateType.FixedPerRecord, new YenAmount(1_000)),
+            new YenAmount(1_000), [new AppliedPremium(premiumRule, new WorkMinutes(30), new YenAmount(300))],
+            new YenAmount(1_300), []);
+        var missing = new MissingCalculationRequirement(
+            secondTaskId, MissingCalculationRequirementCodes.Rate, secondServiceId.Value);
+        var secondCalculation = new TaskSalaryCalculation(
+            secondTaskId, SalaryCalculationStatus.Uncalculated, null, null, [], null, [missing]);
+        var calculation = new WorkSalaryCalculation(
+            RecordId, SalaryCalculationStatus.Uncalculated, [firstCalculation, secondCalculation], [], null, [missing]);
+        var work = new WorkRecordDto(RecordId, WorkDate, [firstTask, secondTask], null, null);
+        var record = new WorkRecordSalaryDto(work, calculation, null, null, new YearMonth(2026, 8),
+        [
+            new WorkTaskSalaryDto(firstTask, firstCalculation, "身体1", null),
+            new WorkTaskSalaryDto(secondTask, secondCalculation, "生活3", null),
+        ]);
+        var summary = Summary([record]) with
+        {
+            Days = [new DailySalaryDto(WorkDate, [record], new YenAmount(0), new YenAmount(0),
+                new YenAmount(0), new YenAmount(0), 1)],
+            BasePaySubtotal = new YenAmount(0),
+            PremiumSubtotal = new YenAmount(0),
+            CountBonusSubtotal = new YenAmount(0),
+            CalculatedSubtotal = new YenAmount(500),
+            UncalculatedCount = 1,
+        };
+        var viewModel = CreateViewModel(new SalaryStub { Summary = summary });
+        viewModel.SetPayrollPeriod(PeriodKey);
+
+        await viewModel.LoadAsync();
+
+        Assert.Empty(viewModel.PremiumTotals);
+        Assert.Empty(viewModel.Rows.OfType<CalculationPremiumTotalRowViewModel>());
+        Assert.Single(viewModel.Rows.OfType<CalculationPremiumRowViewModel>());
     }
 
     [Fact]

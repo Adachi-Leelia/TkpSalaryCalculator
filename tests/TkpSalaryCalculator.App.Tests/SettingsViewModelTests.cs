@@ -528,9 +528,7 @@ public sealed class SettingsViewModelTests
     [Fact]
     public async Task BasicShiftList_ResolvesNamesWithoutLoadingRankedInputCandidates()
     {
-        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
-            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
-            new DisplayOrder(0), true);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
         var shifts = new BasicShiftStub(shift);
         var work = new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200)));
         var viewModel = new BasicShiftViewModel(
@@ -549,9 +547,7 @@ public sealed class SettingsViewModelTests
     [Fact]
     public async Task BasicShiftDelete_NotifiesShiftAndBackupGenerations()
     {
-        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
-            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
-            new DisplayOrder(0), true);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
         var shifts = new BasicShiftStub(shift);
         var session = new AppSessionState(new DateOnly(2026, 8, 22));
         var viewModel = new BasicShiftViewModel(
@@ -572,9 +568,7 @@ public sealed class SettingsViewModelTests
     [Fact]
     public async Task BasicShiftSave_NotifiesShiftAndBackupGenerations()
     {
-        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
-            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
-            new DisplayOrder(0), true);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
         var shifts = new BasicShiftStub(shift);
         var session = new AppSessionState(new DateOnly(2026, 8, 22));
         var viewModel = new BasicShiftEditorViewModel(
@@ -583,6 +577,8 @@ public sealed class SettingsViewModelTests
             new IssuePresenter(), new DialogStub { Result = true }, session);
         viewModel.Initialize(null);
         await viewModel.LoadAsync();
+        viewModel.Tasks[0].SelectedService = viewModel.Tasks[0].Services[0];
+        viewModel.Tasks[0].WorkMinutesText = "60";
         var shiftGeneration = session.GetDataGeneration(AppDataChangeKind.BasicShifts);
         var backupGeneration = session.GetDataGeneration(AppDataChangeKind.BackupStatus);
 
@@ -596,9 +592,7 @@ public sealed class SettingsViewModelTests
     [Fact]
     public async Task UI008_BasicShiftEditorIdentifiesDisplayOrderAsFirstInvalidField()
     {
-        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, null,
-            Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null,
-            new DisplayOrder(0), true);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
         var shifts = new BasicShiftStub(shift);
         var viewModel = new BasicShiftEditorViewModel(
             shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
@@ -613,6 +607,113 @@ public sealed class SettingsViewModelTests
         Assert.Equal("DisplayOrder", viewModel.FirstInvalidField);
         Assert.Equal("表示順は0以上の整数で入力してください。", viewModel.DisplayOrderError);
         Assert.Null(shifts.SavedCommand);
+    }
+
+    [Fact]
+    public async Task SHIFT011_NewShiftHasUnselectedTaskAndLastTaskCannotBeDeleted()
+    {
+        var (viewModel, shifts) = await ShiftEditorAsync(existing: false);
+        var first = Assert.Single(viewModel.Tasks);
+        Assert.Null(first.SelectedService);
+        Assert.False(first.DeleteCommand.CanExecute(null));
+        first.DeleteCommand.Execute(null);
+        Assert.Single(viewModel.Tasks);
+        await viewModel.SaveAsync();
+        Assert.Null(shifts.SavedCommand);
+        Assert.Same(first, viewModel.FirstInvalidTask);
+        Assert.Equal("ServiceId", viewModel.FirstInvalidField);
+        Assert.NotEmpty(first.ServiceError);
+    }
+
+    [Fact]
+    public async Task SHIFT011_EditorAddsReordersDeletesAndSavesEveryTaskWithStableIds()
+    {
+        var (viewModel, shifts) = await ShiftEditorAsync(existing: true);
+        var first = Assert.Single(viewModel.Tasks);
+        await viewModel.AddTaskAsync();
+        var second = viewModel.Tasks[1];
+        second.SelectedService = second.Services[0];
+        second.SelectedInputMode = WorkInputModeOption.TimeRange;
+        second.StartTime = TimeSpan.FromHours(23);
+        second.EndTime = TimeSpan.FromMinutes(30);
+        second.MoveUpCommand.Execute(null);
+        Assert.Equal([second.Id, first.Id], viewModel.Tasks.Select(task => task.Id));
+        Assert.Equal([0, 1], viewModel.Tasks.Select(task => task.DisplayOrder));
+        Assert.Equal(TimeSpan.FromHours(9), first.StartTime);
+        await viewModel.AddTaskAsync();
+        viewModel.Tasks[2].DeleteCommand.Execute(null);
+        Assert.Equal(2, viewModel.Tasks.Count);
+
+        await viewModel.SaveAsync();
+        await viewModel.SaveAsync();
+
+        Assert.Equal(1, shifts.SaveCalls);
+        var saved = shifts.SavedCommand!;
+        Assert.Equal([second.Id.Value, first.Id.Value], saved.Tasks.Select(task => task.Id.Value));
+        Assert.Equal([0, 1], saved.Tasks.Select(task => task.DisplayOrder.Value));
+        Assert.Equal(1380, saved.Tasks[0].StartTime!.Value.Value);
+        Assert.Equal(30, saved.Tasks[0].EndTime!.Value.Value);
+        Assert.Equal(60, saved.Tasks[1].WorkMinutes!.Value.Value);
+    }
+
+    [Fact]
+    public async Task SHIFT011_EditorPointsValidationToSecondTaskAndClearsItAfterCorrection()
+    {
+        var (viewModel, shifts) = await ShiftEditorAsync(existing: true);
+        await viewModel.AddTaskAsync();
+        var second = viewModel.Tasks[1];
+        second.SelectedService = second.Services[0];
+        second.WorkMinutesText = "1441";
+
+        await viewModel.SaveAsync();
+
+        Assert.Null(shifts.SavedCommand);
+        Assert.Same(second, viewModel.FirstInvalidTask);
+        Assert.Equal("WorkMinutes", viewModel.FirstInvalidField);
+        Assert.NotEmpty(second.WorkMinutesError);
+        Assert.False(viewModel.Tasks[0].HasErrors);
+        second.WorkMinutesText = "30";
+        Assert.Null(viewModel.FirstInvalidField);
+        Assert.False(second.HasErrors);
+        await viewModel.SaveAsync();
+        Assert.Equal(2, shifts.SavedCommand!.Tasks.Count);
+    }
+
+    [Fact]
+    public async Task SHIFT011_EditorReloadsAllTasksAndListIncludesEveryTask()
+    {
+        var (editor, shifts) = await ShiftEditorAsync(existing: true);
+        await editor.AddTaskAsync();
+        var second = editor.Tasks[1];
+        second.SelectedService = second.Services[0];
+        second.WorkMinutesText = "45";
+        await editor.SaveAsync();
+        editor.Initialize(shifts.SavedCommand!.Id);
+        await editor.LoadAsync();
+        Assert.Equal([60, 45], editor.Tasks.Select(task => int.Parse(task.WorkMinutesText)));
+        Assert.Equal(shifts.SavedCommand.Tasks.Select(task => task.Id.Value), editor.Tasks.Select(task => task.Id.Value));
+        var list = new BasicShiftViewModel(shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new DialogStub(), new FixedClock(), new FixedLocalDate(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), new AppSessionState(new DateOnly(2026, 8, 22)));
+        await list.LoadAsync();
+        var row = Assert.Single(Assert.Single(list.Groups, group => group.HasRows).Rows);
+        Assert.Contains("タスク 2件", row.WorkText);
+        Assert.Contains("タスク 1", row.TimeText);
+        Assert.Contains("タスク 2: 45分", row.TimeText);
+    }
+
+    private static async Task<(BasicShiftEditorViewModel Editor, BasicShiftStub Shifts)> ShiftEditorAsync(bool existing)
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), DayOfWeek.Monday,
+            [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
+        var shifts = new BasicShiftStub(shift);
+        var editor = new BasicShiftEditorViewModel(shifts, new WorkSettingsStub(new MonthSettingsDto(August, Snapshot(1_200))),
+            new SettingsNavigatorStub(), new FixedClock(), new FixedLocalDate(), new UserErrorPresenter(),
+            new IssuePresenter(), new DialogStub(), new AppSessionState(new DateOnly(2026, 8, 22)));
+        editor.Initialize(existing ? shift.Id : null);
+        await editor.LoadAsync();
+        return (editor, shifts);
     }
 
     private static SettingsMonthContext Context(MonthSettingsStub settings, IAppSessionState session) =>
@@ -697,6 +798,7 @@ public sealed class SettingsViewModelTests
 
     private sealed class BasicShiftStub(BasicShiftDto shift) : IBasicShiftUseCase
     {
+        public int SaveCalls { get; private set; }
         public SaveBasicShiftCommand? SavedCommand { get; private set; }
         public BasicShiftId? DeletedId { get; private set; }
 
@@ -706,11 +808,12 @@ public sealed class SettingsViewModelTests
         public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken)
         {
             SavedCommand = command;
-            return Task.FromResult(new BasicShiftDto(
-                command.Id ?? new BasicShiftId(Guid.NewGuid()), command.Weekday, command.ServicePresetId,
-                command.ServiceId, command.TimeCategoryId, command.InputMode,
-                command.WorkMinutes ?? shift.WorkMinutes, command.StartTime, command.EndTime,
-                command.DisplayOrder, command.IsEnabled));
+            SaveCalls++;
+            shift = new BasicShiftDto(command.Id ?? new BasicShiftId(Guid.NewGuid()), command.Weekday,
+                command.Tasks.Select(task => new BasicShiftTaskDto(task.Id, task.ServicePresetId, task.ServiceId,
+                    task.TimeCategoryId, task.InputMode, task.WorkMinutes ?? new WorkMinutes(60),
+                    task.StartTime, task.EndTime, task.DisplayOrder)).ToArray(), command.DisplayOrder, command.IsEnabled);
+            return Task.FromResult(shift);
         }
         public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken)
         {

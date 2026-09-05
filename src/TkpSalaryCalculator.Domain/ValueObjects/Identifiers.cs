@@ -15,6 +15,20 @@ public readonly record struct WorkRecordId
 
 }
 
+/// <summary>訪問内の勤務タスクを識別します。</summary>
+public readonly record struct WorkTaskId
+{
+    /// <summary>識別子を生成します。</summary>
+    public WorkTaskId(Guid Value) { DomainIdGuard.NotEmpty(Value, nameof(Value)); this.Value = Value; }
+    /// <summary>GUID値を取得します。</summary>
+    public Guid Value { get; }
+    /// <summary>GUID値へ分解します。</summary>
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
+}
+
 /// <summary>設定月をまたいでサービス定義を識別します。</summary>
 public readonly record struct ServiceId
 {
@@ -163,6 +177,20 @@ public readonly record struct BasicShiftId
         Value = this.Value;
     }
 
+}
+
+/// <summary>基本シフト内の勤務タスクを識別します。</summary>
+public readonly record struct BasicShiftTaskId
+{
+    /// <summary>識別子を生成します。</summary>
+    public BasicShiftTaskId(Guid Value) { DomainIdGuard.NotEmpty(Value, nameof(Value)); this.Value = Value; }
+    /// <summary>GUID値を取得します。</summary>
+    public Guid Value { get; }
+    /// <summary>GUID値へ分解します。</summary>
+    public void Deconstruct(out Guid Value)
+    {
+        Value = this.Value;
+    }
 }
 
 internal static class DomainIdGuard

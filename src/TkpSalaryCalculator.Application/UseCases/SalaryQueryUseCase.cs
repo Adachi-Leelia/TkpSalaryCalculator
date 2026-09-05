@@ -167,14 +167,12 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
             var calculationSnapshot = ApplicationSupport.ForCalculationDate(snapshot, record.WorkDate, holiday);
             var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(
                 ApplicationSupport.ToDomain(record), calculationSnapshot, holiday));
-            var serviceName = snapshot.Services.FirstOrDefault(x => x.Id == record.ServiceId)?.DisplayName;
-            var categoryName = record.TimeCategoryId is { } categoryId
-                ? snapshot.TimeCategories.FirstOrDefault(x => x.Id == categoryId)?.DisplayName
-                : null;
+            var serviceNames = snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
+            var categoryNames = snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
             var period = periodCalculator.FindPeriod(record.WorkDate, closingRuleHistory);
             return new WorkRecordCalculationDto(
                 period,
-                new WorkRecordSalaryDto(record, calculation, serviceName, categoryName, settingMonth));
+                BuildSalaryRecord(record, calculation, serviceNames, categoryNames, settingMonth));
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -373,14 +371,29 @@ public sealed class SalaryQueryUseCase(IWorkRecordRepository records, ISettingSn
         var aggregate = calculator.AggregateDay(date, calculated);
         var serviceNames = snapshot.Services.ToDictionary(x => x.Id, x => x.DisplayName);
         var categoryNames = snapshot.TimeCategories.ToDictionary(x => x.Id, x => x.DisplayName);
-        return new(date, [.. values.Zip(calculated, (value, result) => new WorkRecordSalaryDto(
-                value,
-                result,
-                serviceNames.GetValueOrDefault(value.ServiceId),
-                value.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null,
-                settingMonth))],
+        return new(date, [.. values.Zip(calculated, (value, result) => BuildSalaryRecord(
+                value, result, serviceNames, categoryNames, settingMonth))],
             aggregate.BasePaySubtotal, aggregate.PremiumSubtotal, aggregate.CountBonusSubtotal,
             aggregate.CalculatedSubtotal, aggregate.UncalculatedCount);
+    }
+
+    private static WorkRecordSalaryDto BuildSalaryRecord(
+        WorkRecordDto record,
+        WorkSalaryCalculation calculation,
+        IReadOnlyDictionary<ServiceId, string> serviceNames,
+        IReadOnlyDictionary<TimeCategoryId, string> categoryNames,
+        YearMonth settingMonth)
+    {
+        var calculationByTaskId = calculation.TaskCalculations.ToDictionary(static value => value.WorkTaskId);
+        var taskDetails = record.Tasks.Select(task => new WorkTaskSalaryDto(
+            task,
+            calculationByTaskId[task.Id],
+            serviceNames.GetValueOrDefault(task.ServiceId),
+            task.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null))
+            .ToArray();
+        var first = taskDetails[0];
+        return new WorkRecordSalaryDto(record, calculation, first.ServiceDisplayName,
+            first.TimeCategoryDisplayName, settingMonth, taskDetails);
     }
 
     private static Task<T> RunCalculationAsync<T>(Func<T> calculation, CancellationToken cancellationToken)

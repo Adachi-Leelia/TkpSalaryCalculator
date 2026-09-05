@@ -183,7 +183,8 @@ public sealed class DataManagementViewModel : ViewModelBase
             : $"{Environment.NewLine}警告:{Environment.NewLine}{string.Join(Environment.NewLine, value.Warnings.Select(x => $"・{x.Message}"))}";
         return $"作成日時: {value.ExportCreatedAtUtc.ToLocalTime():yyyy年M月d日 H:mm}{Environment.NewLine}" +
                $"データ形式: v{value.FormatVersion}{Environment.NewLine}" +
-               $"設定年月 {value.SettingMonthCount}件 / 基本シフト {value.BasicShiftCount}件 / 勤務記録 {value.WorkRecordCount}件 / 月額手当 {value.MonthlyAllowanceCount}件{Environment.NewLine}" +
+               $"設定年月 {value.SettingMonthCount}件 / 基本シフト {value.BasicShiftCount}件（タスク {value.BasicShiftTaskCount}件） / " +
+               $"訪問 {value.WorkRecordCount}件（タスク {value.WorkTaskCount}件） / 月額手当 {value.MonthlyAllowanceCount}件{Environment.NewLine}" +
                $"{settingRange}{Environment.NewLine}{workRange}{Environment.NewLine}{Environment.NewLine}" +
                $"現在の設定・基本シフト・勤務記録・月額手当はすべて失われ、この内容へ置き換わります。{warnings}";
     }

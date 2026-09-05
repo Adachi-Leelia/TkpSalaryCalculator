@@ -333,6 +333,55 @@ public sealed class AppConfigurationTests
         Assert.DoesNotContain("Routing.RegisterRoute(NavigationRoutes.CalculationDetails, typeof(HomeDestinationPage))", routes, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void A11Y009_MultiTaskVisitScreensExposeHierarchyActionsAndFlexibleInputs()
+    {
+        var editor = XDocument.Load(AppPath("Presentation", "Features", "Calendar", "WorkEditorPage.xaml"));
+        var day = XDocument.Load(AppPath("Presentation", "Features", "Calendar", "DayPage.xaml"));
+        var detail = XDocument.Load(AppPath("Presentation", "Features", "Home", "CalculationDetailPage.xaml"));
+        AssertControlUsesCompiledBinding(editor);
+        AssertControlUsesCompiledBinding(day);
+        AssertControlUsesCompiledBinding(detail);
+
+        Assert.Contains(editor.Descendants(), element =>
+            AttributeValue(element, "BindableLayout.ItemsSource") == "{Binding Tasks}");
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "ScrollView" &&
+            AttributeValue(element, "IsEnabled") == "{Binding IsNotBusy}");
+        Assert.Contains(editor.Descendants(), element =>
+            AttributeValue(element, "Text") == "{Binding SettingsMonthChangeWarningText}" &&
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding SettingsMonthChangeWarningText}");
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            AttributeValue(element, "Text") == "タスクを追加" &&
+            HasAttribute(element, "SemanticProperties.Description"));
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            AttributeValue(element, "Text") == "削除" &&
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding DeleteAccessibilityText}");
+        Assert.DoesNotContain(editor.Descendants(), element =>
+            element.Name.LocalName is "Entry" or "Picker" or "DatePicker" or "TimePicker" or "Button" &&
+            HasAttribute(element, "HeightRequest"));
+        Assert.Contains(day.Descendants(), element =>
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding AccessibilityText}");
+        Assert.Contains(detail.Descendants(), element =>
+            AttributeValue(element, "SemanticProperties.Description") == "{Binding AccessibilityText}");
+        Assert.Contains(detail.Descendants(), element =>
+            element.Name.LocalName == "Label" && AttributeValue(element, "Text") == "訪問合計");
+    }
+
+    [Fact]
+    public void BasicShiftEditor_DisablesEditorControlsWhileSaving()
+    {
+        var editor = XDocument.Load(AppPath(
+            "Presentation", "Features", "Settings", "BasicShiftEditorPage.xaml"));
+        AssertControlUsesCompiledBinding(editor);
+
+        Assert.Contains(editor.Descendants(), element =>
+            element.Name.LocalName == "ScrollView" &&
+            AttributeValue(element, "IsEnabled") == "{Binding IsNotBusy}");
+    }
+
     private static string AppPath(params string[] segments) =>
         Path.Combine([RepositoryRoot, "src", "TkpSalaryCalculator.App", .. segments]);
 

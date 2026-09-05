@@ -4,19 +4,19 @@ using TkpSalaryCalculator.Domain.ValueObjects;
 
 namespace TkpSalaryCalculator.Domain.Models;
 
-/// <summary>給与計算へ渡す正規化済みの勤務記録を表します。</summary>
-public sealed record WorkRecord
+/// <summary>訪問内で独立して給与計算する、正規化済みの勤務タスクを表します。</summary>
+public sealed record WorkTask
 {
-    /// <summary>勤務記録を生成します。</summary>
-    public WorkRecord(
-        WorkRecordId Id,
-        DateOnly WorkDate,
+    /// <summary>勤務タスクを生成します。</summary>
+    public WorkTask(
+        WorkTaskId Id,
         ServiceId ServiceId,
         TimeCategoryId? TimeCategoryId,
         WorkInputMode InputMode,
         WorkMinutes WorkMinutes,
         MinuteOfDay? StartTime,
-        MinuteOfDay? EndTime)
+        MinuteOfDay? EndTime,
+        DisplayOrder DisplayOrder)
     {
         DomainIdGuard.NotEmpty(Id.Value, nameof(Id));
         DomainIdGuard.NotEmpty(ServiceId.Value, nameof(ServiceId));
@@ -41,23 +41,21 @@ public sealed record WorkRecord
             DomainValueGuard.ValidMinuteOfDay(endTime, nameof(EndTime));
         }
 
+        DomainValueGuard.NonNegative(DisplayOrder, nameof(DisplayOrder));
         var normalizedEnd = ValidateAndNormalizeInterval(InputMode, WorkMinutes, StartTime, EndTime);
 
         this.Id = Id;
-        this.WorkDate = WorkDate;
         this.ServiceId = ServiceId;
         this.TimeCategoryId = TimeCategoryId;
         this.InputMode = InputMode;
         this.WorkMinutes = WorkMinutes;
         this.StartTime = StartTime;
         this.EndTime = normalizedEnd;
+        this.DisplayOrder = DisplayOrder;
     }
 
-    /// <summary>勤務記録識別子を取得します。</summary>
-    public WorkRecordId Id { get; }
-
-    /// <summary>勤務開始日のローカル日付を取得します。</summary>
-    public DateOnly WorkDate { get; }
+    /// <summary>タスク識別子を取得します。</summary>
+    public WorkTaskId Id { get; }
 
     /// <summary>サービス識別子を取得します。</summary>
     public ServiceId ServiceId { get; }
@@ -77,20 +75,8 @@ public sealed record WorkRecord
     /// <summary>正規化済みの終了時刻を取得します。</summary>
     public MinuteOfDay? EndTime { get; }
 
-    /// <summary>勤務記録の各値へ分解します。</summary>
-    public void Deconstruct(
-        out WorkRecordId Id,
-        out DateOnly WorkDate,
-        out ServiceId ServiceId,
-        out TimeCategoryId? TimeCategoryId,
-        out WorkInputMode InputMode,
-        out WorkMinutes WorkMinutes,
-        out MinuteOfDay? StartTime,
-        out MinuteOfDay? EndTime)
-    {
-        (Id, WorkDate, ServiceId, TimeCategoryId, InputMode, WorkMinutes, StartTime, EndTime) =
-            (this.Id, this.WorkDate, this.ServiceId, this.TimeCategoryId, this.InputMode, this.WorkMinutes, this.StartTime, this.EndTime);
-    }
+    /// <summary>訪問内の0始まりの表示順を取得します。</summary>
+    public DisplayOrder DisplayOrder { get; }
 
     private static MinuteOfDay? ValidateAndNormalizeInterval(
         WorkInputMode inputMode,
@@ -137,6 +123,86 @@ public sealed record WorkRecord
 
         return derivedEnd;
     }
+}
+
+/// <summary>1件以上の勤務タスクをまとめる訪問集約を表します。</summary>
+public sealed record WorkRecord
+{
+    /// <summary>訪問を生成します。</summary>
+    public WorkRecord(WorkRecordId Id, DateOnly WorkDate, IReadOnlyList<WorkTask> Tasks)
+    {
+        DomainIdGuard.NotEmpty(Id.Value, nameof(Id));
+        ArgumentNullException.ThrowIfNull(Tasks);
+        var tasks = Tasks.ToArray();
+        if (tasks.Length == 0)
+        {
+            throw new ArgumentException("訪問には1件以上のタスクが必要です。", nameof(Tasks));
+        }
+
+        if (tasks.Any(static task => task is null))
+        {
+            throw new ArgumentException("タスクにnullを含めることはできません。", nameof(Tasks));
+        }
+
+        if (tasks.Select(static task => task.Id).Distinct().Count() != tasks.Length)
+        {
+            throw new ArgumentException("同じタスク識別子を重複して使用することはできません。", nameof(Tasks));
+        }
+
+        var ordered = tasks.OrderBy(static task => task.DisplayOrder.Value).ToArray();
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            if (ordered[index].DisplayOrder.Value != index)
+            {
+                throw new ArgumentException("タスクの表示順は重複のない0始まりの連番である必要があります。", nameof(Tasks));
+            }
+        }
+
+        this.Id = Id;
+        this.WorkDate = WorkDate;
+        this.Tasks = new ReadOnlyCollection<WorkTask>(ordered);
+    }
+
+    /// <summary>旧1タスク契約を訪問集約へ変換します。</summary>
+    public WorkRecord(
+        WorkRecordId Id,
+        DateOnly WorkDate,
+        ServiceId ServiceId,
+        TimeCategoryId? TimeCategoryId,
+        WorkInputMode InputMode,
+        WorkMinutes WorkMinutes,
+        MinuteOfDay? StartTime,
+        MinuteOfDay? EndTime)
+        : this(Id, WorkDate,
+        [
+            new WorkTask(new WorkTaskId(Id.Value), ServiceId, TimeCategoryId, InputMode, WorkMinutes,
+                StartTime, EndTime, new DisplayOrder(0)),
+        ])
+    {
+    }
+
+    /// <summary>訪問識別子を取得します。</summary>
+    public WorkRecordId Id { get; }
+
+    /// <summary>訪問のローカル勤務日を取得します。</summary>
+    public DateOnly WorkDate { get; }
+
+    /// <summary>表示順に並んだ勤務タスクを取得します。</summary>
+    public IReadOnlyList<WorkTask> Tasks { get; }
+
+    // タスク3まで旧1タスク呼出し元をコンパイル可能に保つ一時アダプター。
+    /// <summary>先頭タスクのサービス識別子を取得します。</summary>
+    public ServiceId ServiceId => Tasks[0].ServiceId;
+    /// <summary>先頭タスクの時間区分識別子を取得します。</summary>
+    public TimeCategoryId? TimeCategoryId => Tasks[0].TimeCategoryId;
+    /// <summary>先頭タスクの入力方式を取得します。</summary>
+    public WorkInputMode InputMode => Tasks[0].InputMode;
+    /// <summary>先頭タスクの勤務分数を取得します。</summary>
+    public WorkMinutes WorkMinutes => Tasks[0].WorkMinutes;
+    /// <summary>先頭タスクの開始時刻を取得します。</summary>
+    public MinuteOfDay? StartTime => Tasks[0].StartTime;
+    /// <summary>先頭タスクの終了時刻を取得します。</summary>
+    public MinuteOfDay? EndTime => Tasks[0].EndTime;
 }
 
 /// <summary>設定スナップショット内のサービスを表します。</summary>

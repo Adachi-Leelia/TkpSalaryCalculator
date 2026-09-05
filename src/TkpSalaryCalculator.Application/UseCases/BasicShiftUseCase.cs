@@ -38,15 +38,30 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
     {
         ArgumentNullException.ThrowIfNull(command);
         cancellationToken.ThrowIfCancellationRequested();
-        ApplicationSupport.ValidateId(command.ServiceId.Value, nameof(command.ServiceId));
-        if (command.TimeCategoryId is { } categoryId) ApplicationSupport.ValidateId(categoryId.Value, nameof(command.TimeCategoryId));
+        if (command.Id is { } id) ApplicationSupport.ValidateId(id.Value, nameof(command.Id));
         if (!Enum.IsDefined(command.Weekday)) throw new ApplicationErrorException("SHIFT_WEEKDAY_INVALID", "曜日を選び直してください。", "Weekday");
-        var (Minutes, Start, End, Issues) = ApplicationSupport.Normalize(command.InputMode, command.WorkMinutes, command.StartTime, command.EndTime, false);
-        if (Issues.Count != 0 || Minutes is null)
-            throw new ApplicationErrorException(Issues[0].Code, Issues[0].Message, Issues[0].Field);
+        if (command.Tasks is null || command.Tasks.Count == 0)
+            throw new ApplicationErrorException("SHIFT_TASK_REQUIRED", "基本シフトには1件以上のタスクを登録してください。", "Tasks");
+        if (command.Tasks.Any(task => task is null || task.Id.Value == Guid.Empty) ||
+            command.Tasks.Select(task => task.Id).Distinct().Count() != command.Tasks.Count)
+            throw new ApplicationErrorException("SHIFT_TASK_ID_INVALID", "タスクの識別子が不正または重複しています。", "Tasks");
+        if (command.Tasks.Select(task => task.DisplayOrder).Distinct().Count() != command.Tasks.Count)
+            throw new ApplicationErrorException("SHIFT_TASK_ORDER_INVALID", "タスクの表示順が重複しています。", "Tasks");
+        var tasks = command.Tasks.OrderBy(task => task.DisplayOrder.Value).Select((task, index) =>
+        {
+            var field = $"Tasks[{task.Id.Value:D}]";
+            if (task.ServiceId.Value == Guid.Empty)
+                throw new ApplicationErrorException("SHIFT_SERVICE_REQUIRED", "サービスを選択してください。", $"{field}.ServiceId");
+            if (task.TimeCategoryId is { } categoryId) ApplicationSupport.ValidateId(categoryId.Value, $"{field}.TimeCategoryId");
+            if (task.ServicePresetId is { } presetId) ApplicationSupport.ValidateId(presetId.Value, $"{field}.ServicePresetId");
+            var (minutes, start, end, issues) = ApplicationSupport.Normalize(task.InputMode, task.WorkMinutes, task.StartTime, task.EndTime, false);
+            if (issues.Count != 0 || minutes is null)
+                throw new ApplicationErrorException(issues[0].Code, issues[0].Message, $"{field}.{issues[0].Field}");
+            return new BasicShiftTaskDto(task.Id, task.ServicePresetId, task.ServiceId, task.TimeCategoryId,
+                task.InputMode, minutes.Value, start, end, new DisplayOrder(index));
+        }).ToArray();
         var dto = new BasicShiftDto(command.Id ?? new BasicShiftId(Guid.NewGuid()), command.Weekday,
-            command.ServicePresetId, command.ServiceId, command.TimeCategoryId, command.InputMode,
-            Minutes.Value, Start, End, command.DisplayOrder, command.IsEnabled);
+            tasks, command.DisplayOrder, command.IsEnabled);
         await transactions.ExecuteAsync(async token =>
         {
             await shifts.UpsertAsync(dto, token).ConfigureAwait(false);
@@ -105,17 +120,18 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
                 var candidate = preview.Candidates.FirstOrDefault(x => x.Shift.Id == id)
                     ?? throw new ApplicationErrorException("SHIFT_NOT_FOUND", "選択した基本シフトが見つかりませんでした。");
                 if (!candidate.CanApply)
-                    throw new ApplicationErrorException(candidate.Issues.FirstOrDefault()?.Code ?? "SHIFT_CANNOT_APPLY",
-                        candidate.Issues.FirstOrDefault()?.Message ?? "選択した基本シフトは反映できません。");
+                {
+                    var issue = candidate.Issues.FirstOrDefault(issue => issue.Code != "SHIFT_SIMILAR_MANUAL_RECORD");
+                    throw new ApplicationErrorException(issue?.Code ?? "SHIFT_CANNOT_APPLY",
+                        issue?.Message ?? "選択した基本シフトは反映できません。", issue?.Field);
+                }
                 selected.Add(candidate.Shift);
             }
             var results = new List<SaveWorkRecordResultDto>(selected.Count);
             var calculationSnapshot = ApplicationSupport.ForCalculationDate(snapshot, command.WorkDate, calendar);
             foreach (var shift in selected)
             {
-                var work = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), command.WorkDate, shift.ServiceId,
-                    shift.TimeCategoryId, shift.InputMode, shift.WorkMinutes, shift.StartTime, shift.EndTime,
-                    shift.ServicePresetId, shift.Id, null);
+                var work = CreateVisit(shift, command.WorkDate);
                 var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(work),
                     calculationSnapshot, calendar));
                 await records.UpsertAsync(work, token).ConfigureAwait(false);
@@ -136,24 +152,37 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
             var issues = new List<IssueDto>();
             var already = existing.Any(x => x.SourceBasicShiftId == shift.Id);
             if (!shift.IsEnabled) issues.Add(ApplicationSupport.Issue("SHIFT_DISABLED", "この基本シフトは無効になっています。"));
-            issues.AddRange(ApplicationSupport.ValidateSelection(snapshot, shift.ServiceId, shift.TimeCategoryId));
-            if (ApplicationSupport.RequiresStartTime(snapshot, shift.ServiceId, workDate, calendar) && shift.StartTime is null)
-                issues.Add(ApplicationSupport.Issue("SHIFT_START_REQUIRED_FOR_PREMIUM", "時刻条件付き割増を計算するため、基本シフトに開始時刻を設定してください。"));
+            foreach (var task in shift.Tasks.OrderBy(task => task.DisplayOrder.Value))
+            {
+                var field = $"Tasks[{task.Id.Value:D}]";
+                issues.AddRange(ApplicationSupport.ValidateSelection(snapshot, task.ServiceId, task.TimeCategoryId)
+                    .Select(issue => issue with { Field = $"{field}.{issue.Field}", Message = $"タスク {task.DisplayOrder.Value + 1}: {issue.Message}" }));
+                if (ApplicationSupport.RequiresStartTime(snapshot, task.ServiceId, workDate, calendar) && task.StartTime is null)
+                    issues.Add(ApplicationSupport.Issue("SHIFT_START_REQUIRED_FOR_PREMIUM",
+                        $"タスク {task.DisplayOrder.Value + 1}: 時刻条件付き割増を計算するため、基本シフトに開始時刻を設定してください。", $"{field}.StartTime"));
+            }
             if (already) issues.Add(ApplicationSupport.Issue("SHIFT_ALREADY_APPLIED", "この基本シフトは選択した日へ既に反映されています。"));
-            var similar = existing.Any(x => x.SourceBasicShiftId is null && x.ServiceId == shift.ServiceId &&
-                x.TimeCategoryId == shift.TimeCategoryId && x.WorkMinutes == shift.WorkMinutes && x.StartTime == shift.StartTime);
+            var taskCounts = shift.Tasks.GroupBy(task => new TaskContent(task.ServiceId, task.TimeCategoryId,
+                task.InputMode, task.WorkMinutes, task.StartTime, task.EndTime)).ToDictionary(group => group.Key, group => group.Count());
+            var similar = existing.Any(work => work.SourceBasicShiftId is null && work.Tasks.Count == shift.Tasks.Count &&
+                work.Tasks.GroupBy(task => new TaskContent(task.ServiceId, task.TimeCategoryId, task.InputMode,
+                    task.WorkMinutes, task.StartTime, task.EndTime))
+                    .All(group => taskCounts.GetValueOrDefault(group.Key) == group.Count()));
             if (similar) issues.Add(ApplicationSupport.Issue("SHIFT_SIMILAR_MANUAL_RECORD", "似た内容の手入力勤務があります。重複しないか確認してください。"));
             var blocking = !shift.IsEnabled || already || issues.Any(x => x.Code is "WORK_SERVICE_UNAVAILABLE" or "WORK_TIME_CATEGORY_UNAVAILABLE" or "SHIFT_START_REQUIRED_FOR_PREMIUM");
             if (!blocking)
             {
-                var candidate = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), workDate, shift.ServiceId,
-                    shift.TimeCategoryId, shift.InputMode, shift.WorkMinutes, shift.StartTime, shift.EndTime,
-                    shift.ServicePresetId, shift.Id, null);
+                var candidate = CreateVisit(shift, workDate, preserveTaskIds: true);
                 var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(candidate),
                     calculationSnapshot, calendar));
                 if (calculation.Status == SalaryCalculationStatus.Uncalculated)
                 {
-                    issues.Add(ApplicationSupport.Issue("SHIFT_CALCULATION_SETTINGS_REQUIRED", "給与計算に必要な単価設定が不足しているため、この基本シフトは反映できません。"));
+                    foreach (var issue in ApplicationSupport.CalculationIssues(calculation))
+                    {
+                        var task = shift.Tasks.FirstOrDefault(task => issue.Field?.StartsWith($"Tasks[{task.Id.Value:D}]", StringComparison.Ordinal) == true);
+                        issues.Add(issue with { Code = "SHIFT_CALCULATION_SETTINGS_REQUIRED",
+                            Message = $"タスク {task?.DisplayOrder.Value + 1}: {issue.Message}" });
+                    }
                     blocking = true;
                 }
             }
@@ -161,4 +190,14 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
         }).ToArray();
         return new(workDate, candidates, existing.Count);
     }
+
+    private static WorkRecordDto CreateVisit(BasicShiftDto shift, DateOnly workDate, bool preserveTaskIds = false) =>
+        new(new WorkRecordId(Guid.NewGuid()), workDate,
+            shift.Tasks.OrderBy(task => task.DisplayOrder.Value).Select(task => new WorkTaskDto(
+                new WorkTaskId(preserveTaskIds ? task.Id.Value : Guid.NewGuid()), task.ServiceId, task.TimeCategoryId,
+                task.InputMode, task.WorkMinutes, task.StartTime, task.EndTime, task.DisplayOrder, task.ServicePresetId)).ToArray(),
+            shift.Id, null);
+
+    private sealed record TaskContent(ServiceId ServiceId, TimeCategoryId? TimeCategoryId, WorkInputMode InputMode,
+        WorkMinutes WorkMinutes, MinuteOfDay? StartTime, MinuteOfDay? EndTime);
 }

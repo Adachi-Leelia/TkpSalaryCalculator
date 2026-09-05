@@ -45,32 +45,32 @@ public interface IServicePresetRepository
     Task DeleteAsync(ServicePresetId id, CancellationToken cancellationToken);
 }
 
-/// <summary>ストレージ技術を公開せずに、正規化済み勤務記録を保存します。</summary>
+/// <summary>ストレージ技術を公開せずに、正規化済みの訪問と全勤務タスクを集約単位で保存します。</summary>
 public interface IWorkRecordRepository
 {
     /// <summary>保存済み勤務記録が 1 件以上存在するかどうかを判定します。</summary>
     Task<bool> AnyAsync(CancellationToken cancellationToken);
 
-    /// <summary>識別子で勤務記録を 1 件検索します。</summary>
+    /// <summary>識別子で、全タスクを含む訪問を1件検索します。</summary>
     Task<WorkRecordDto?> FindAsync(WorkRecordId id, CancellationToken cancellationToken);
 
-    /// <summary>新規保存操作の識別子で、既に確定した勤務記録を検索します。</summary>
+    /// <summary>新規保存操作の識別子で、既に確定した全タスクを含む訪問を検索します。</summary>
     Task<WorkRecordDto?> FindBySaveOperationIdAsync(Guid operationId, CancellationToken cancellationToken);
 
-    /// <summary>記録を日付の昇順、次に安定した識別子順でストリーミングします。</summary>
+    /// <summary>全タスクを含む訪問を日付の昇順、次に安定した識別子順でストリーミングします。</summary>
     IAsyncEnumerable<WorkRecordDto> StreamRangeAsync(
         DateOnly startDate,
         DateOnly endDate,
         CancellationToken cancellationToken);
 
-    /// <summary>現在のトランザクション内で、正規化済み記録を保存します。</summary>
+    /// <summary>現在のトランザクション内で、訪問と全タスクを一括置換します。</summary>
     Task UpsertAsync(WorkRecordDto workRecord, CancellationToken cancellationToken);
 
-    /// <summary>操作識別子の永続一意制約を使用して、新規勤務を一度だけ保存します。</summary>
+    /// <summary>操作識別子の永続一意制約を使用して、訪問と全タスクを一度だけ保存します。</summary>
     /// <returns>この呼出しで挿入した場合は <see langword="true"/>、既に同じ操作が確定済みの場合は <see langword="false"/>。</returns>
     Task<bool> TryInsertAsync(WorkRecordDto workRecord, Guid operationId, CancellationToken cancellationToken);
 
-    /// <summary>現在のトランザクション内で記録を削除します。</summary>
+    /// <summary>現在のトランザクション内で訪問と所属する全タスクを削除します。</summary>
     Task DeleteAsync(WorkRecordId id, CancellationToken cancellationToken);
 }
 
@@ -160,10 +160,10 @@ public interface IMonthlyAllowanceRepository
     Task DeleteAsync(MonthlyAllowanceId id, CancellationToken cancellationToken);
 }
 
-/// <summary>現在の基本シフトを保存します。</summary>
+/// <summary>現在の基本シフトと全勤務タスクを集約単位で保存します。</summary>
 public interface IBasicShiftRepository
 {
-    /// <summary>指定曜日のシフトを表示順で取得します。</summary>
+    /// <summary>指定曜日の全タスクを含むシフトを表示順で取得します。</summary>
     Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(
         DayOfWeek weekday,
         CancellationToken cancellationToken);
@@ -173,10 +173,10 @@ public interface IBasicShiftRepository
         IReadOnlyCollection<DayOfWeek> weekdays,
         CancellationToken cancellationToken);
 
-    /// <summary>現在のシフトを 1 件検索します。</summary>
+    /// <summary>現在の全タスクを含むシフトを1件検索します。</summary>
     Task<BasicShiftDto?> FindAsync(BasicShiftId id, CancellationToken cancellationToken);
 
-    /// <summary>現在のトランザクション内で、現在のシフトを保存します。</summary>
+    /// <summary>現在のトランザクション内で、現在のシフトと全タスクを一括置換します。</summary>
     Task UpsertAsync(BasicShiftDto basicShift, CancellationToken cancellationToken);
 
     /// <summary>作成済み勤務記録から識別子を削除せず、現在のシフトを削除します。</summary>

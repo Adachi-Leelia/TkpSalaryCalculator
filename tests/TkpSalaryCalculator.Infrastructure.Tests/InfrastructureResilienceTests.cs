@@ -185,20 +185,23 @@ public sealed partial class InfrastructureResilienceTests
         {
             "invalid date encoding",
             """
-            INSERT INTO work_record(id, work_date, service_id, input_mode, work_minutes,
-                created_at_utc, updated_at_utc)
-            SELECT '30000000-0000-4000-8000-000000000003', '20260816', id, 'Duration', 30,
-                '2026-08-16T00:00:00.0000000Z', '2026-08-16T00:00:00.0000000Z'
-            FROM service_definition LIMIT 1;
+            INSERT INTO work_record(id, work_date, save_operation_id, created_at_utc, updated_at_utc)
+            VALUES('30000000-0000-4000-8000-000000000003', '20260816',
+                '30000000-0000-4000-8000-000000000003',
+                '2026-08-16T00:00:00.0000000Z', '2026-08-16T00:00:00.0000000Z');
             """
         },
         {
             "invalid minute-of-day",
             """
-            INSERT INTO work_record(id, work_date, service_id, input_mode, work_minutes,
-                start_time_minutes, end_time_minutes, created_at_utc, updated_at_utc)
-            SELECT '30000000-0000-4000-8000-000000000004', '2026-08-16', id, 'TimeRange', 30,
-                1440, 30, '2026-08-16T00:00:00.0000000Z', '2026-08-16T00:00:00.0000000Z'
+            INSERT INTO work_record(id, work_date, save_operation_id, created_at_utc, updated_at_utc)
+            VALUES('30000000-0000-4000-8000-000000000004', '2026-08-16',
+                '30000000-0000-4000-8000-000000000004',
+                '2026-08-16T00:00:00.0000000Z', '2026-08-16T00:00:00.0000000Z');
+            INSERT INTO work_task(id, work_record_id, service_id, input_mode, work_minutes,
+                start_time_minutes, end_time_minutes, display_order)
+            SELECT '30000000-0000-4000-8000-000000000014',
+                '30000000-0000-4000-8000-000000000004', id, 'TimeRange', 30, 1440, 30, 0
             FROM service_definition LIMIT 1;
             """
         },

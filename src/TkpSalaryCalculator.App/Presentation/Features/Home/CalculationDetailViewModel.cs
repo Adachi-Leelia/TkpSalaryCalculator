@@ -97,7 +97,7 @@ public sealed class CalculationDetailViewModel : ViewModelBase
             OnPropertyChanged(nameof(IsEmpty));
         }
     }
-    public bool IsEmpty => !Rows.Any(row => row is CalculationWorkRecordRowViewModel);
+    public bool IsEmpty => !Rows.Any(row => row is CalculationVisitRowViewModel);
     public AsyncCommand ReloadCommand { get; }
 
     public void SetPayrollPeriod(PayrollPeriodKey value)
@@ -203,6 +203,7 @@ public sealed class CalculationDetailViewModel : ViewModelBase
             .ToArray();
         var premiumTotals = summary.Days
             .SelectMany(day => day.Records)
+            .Where(record => record.Calculation.Status == SalaryCalculationStatus.Calculated)
             .SelectMany(record => record.Calculation.Premiums)
             .GroupBy(premium => new { premium.Rule.Id, premium.Rule.DisplayName })
             .Select(group => new CalculationPremiumTotalRowViewModel(
@@ -281,37 +282,80 @@ public sealed class CalculationDetailViewModel : ViewModelBase
     {
         var record = value.WorkRecord;
         var calculation = value.Calculation;
-        var serviceName = value.ServiceDisplayName ?? "サービス設定が見つかりません";
-        var title = string.IsNullOrWhiteSpace(value.TimeCategoryDisplayName)
-            ? serviceName
-            : $"{serviceName} / {value.TimeCategoryDisplayName}";
-        var time = record.StartTime is { } start && record.EndTime is { } end
-            ? $"{formatter.Time(start)}～{formatter.Time(end)} / {formatter.Duration(record.WorkMinutes)}"
-            : formatter.Duration(record.WorkMinutes);
-        var rate = calculation.AppliedRate is { } appliedRate
-            ? $"{RateTypeText(appliedRate.RateType)} {formatter.Money(appliedRate.Amount)}"
-            : "適用単価なし";
-        var missing = calculation.MissingRequirements
-            .Select(requirement => MissingReason(requirement.Code))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        rows.Add(new CalculationWorkRecordRowViewModel(
-            title,
-            time,
-            rate,
-            calculation.BasePay is { } basePay ? formatter.Money(basePay) : "未計算"));
-        rows.AddRange(calculation.Premiums.Select(premium => new CalculationPremiumRowViewModel(
-            premium.Rule.DisplayName,
-            PremiumRuleText(premium.Rule),
-            formatter.Duration(premium.ApplicableMinutes),
-            formatter.Money(premium.Amount))));
-        rows.AddRange(calculation.CountBonuses.Select(bonus => new CalculationCountBonusRowViewModel(
-            bonus.DisplayName,
-            formatter.Money(bonus.Amount))));
+        var calculationByTaskId = calculation.TaskCalculations.ToDictionary(task => task.WorkTaskId);
+        var suppliedTaskDetails = value.Tasks?.ToDictionary(task => task.WorkTask.Id);
+        var taskDetails = record.Tasks.OrderBy(task => task.DisplayOrder.Value).Select((task, index) =>
+        {
+            if (suppliedTaskDetails?.GetValueOrDefault(task.Id) is { } detail) return detail;
+            var taskCalculation = calculationByTaskId.GetValueOrDefault(task.Id) ??
+                calculation.TaskCalculations.ElementAtOrDefault(index) ??
+                throw new InvalidOperationException("訪問のタスク計算内訳が不足しています。");
+            return new WorkTaskSalaryDto(
+                task,
+                taskCalculation,
+                index == 0 ? value.ServiceDisplayName : null,
+                index == 0 ? value.TimeCategoryDisplayName : null);
+        }).ToArray();
+
+        var taskNames = taskDetails.Select(TaskDisplayName).ToArray();
+        rows.Add(new CalculationVisitRowViewModel(
+            formatter.Date(record.WorkDate),
+            string.Join("、", taskNames),
+            $"タスク {taskDetails.Length}件",
+            calculation.Status == SalaryCalculationStatus.Calculated ? "計算済み" : "未計算"));
+
+        for (var index = 0; index < taskDetails.Length; index++)
+        {
+            var detail = taskDetails[index];
+            var task = detail.WorkTask;
+            var taskCalculation = detail.Calculation;
+            var time = task.StartTime is { } start && task.EndTime is { } end
+                ? $"{formatter.Time(start)}～{formatter.Time(end)} / {formatter.Duration(task.WorkMinutes)}"
+                : formatter.Duration(task.WorkMinutes);
+            var rate = taskCalculation.AppliedRate is { } appliedRate
+                ? $"{RateTypeText(appliedRate.RateType)} {formatter.Money(appliedRate.Amount)}"
+                : "適用単価なし";
+            var missing = taskCalculation.MissingRequirements
+                .Select(requirement => MissingReason(requirement.Code))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            rows.Add(new CalculationWorkRecordRowViewModel(
+                $"タスク {index + 1}",
+                TaskDisplayName(detail),
+                time,
+                rate,
+                taskCalculation.BasePay is { } basePay ? formatter.Money(basePay) : "未計算",
+                taskCalculation.TaskSubtotal is { } subtotal ? formatter.Money(subtotal) : "未計算",
+                string.Join("\n", missing)));
+            rows.AddRange(taskCalculation.Premiums.Select(premium => new CalculationPremiumRowViewModel(
+                premium.Rule.DisplayName,
+                PremiumRuleText(premium.Rule),
+                formatter.Duration(premium.ApplicableMinutes),
+                formatter.Money(premium.Amount))));
+        }
+
+        if (calculation.Status == SalaryCalculationStatus.Calculated)
+            rows.AddRange(calculation.CountBonuses.Select(bonus => new CalculationCountBonusRowViewModel(
+                bonus.DisplayName,
+                formatter.Money(bonus.Amount))));
+        var visitMissing = calculation.Status == SalaryCalculationStatus.Uncalculated
+            ? string.Join("\n", calculation.MissingRequirements
+                .Select(requirement => MissingReason(requirement.Code))
+                .Distinct(StringComparer.Ordinal)
+                .Append("計算できないタスクがあります。訪問の件数加算と訪問合計は表示しません。"))
+            : string.Empty;
         rows.Add(new CalculationWorkRecordTotalRowViewModel(
             calculation.Total is { } total ? formatter.Money(total) : "未計算",
             formatter.SettingsMonth(value.SettingMonth ?? new YearMonth(record.WorkDate.Year, record.WorkDate.Month)),
-            missing.Length == 0 ? string.Empty : string.Join("\n", missing)));
+            visitMissing));
+    }
+
+    private static string TaskDisplayName(WorkTaskSalaryDto value)
+    {
+        var serviceName = value.ServiceDisplayName ?? "サービス設定が見つかりません";
+        return string.IsNullOrWhiteSpace(value.TimeCategoryDisplayName)
+            ? serviceName
+            : $"{serviceName} / {value.TimeCategoryDisplayName}";
     }
 
     private string PremiumRuleText(SnapshotPremium rule)
@@ -397,18 +441,35 @@ public sealed record CalculationDayRowViewModel(
     public bool HasUncalculated => !string.IsNullOrWhiteSpace(UncalculatedText);
 }
 
+public sealed record CalculationVisitRowViewModel(
+    string DateText,
+    string TaskSummaryText,
+    string TaskCountText,
+    string StatusText) : CalculationDetailRowViewModel
+{
+    public string AccessibilityText => $"訪問、{DateText}、{TaskCountText}、{TaskSummaryText}、{StatusText}";
+}
+
 public sealed record CalculationWorkRecordRowViewModel(
+    string TaskTitle,
     string DisplayName,
     string WorkTimeText,
     string AppliedRateText,
-    string BasePayText) : CalculationDetailRowViewModel;
+    string BasePayText,
+    string TaskSubtotalText,
+    string MissingReasonText) : CalculationDetailRowViewModel
+{
+    public bool HasMissingReason => !string.IsNullOrWhiteSpace(MissingReasonText);
+    public string AccessibilityText => $"{TaskTitle}、{DisplayName}、{WorkTimeText}、タスク小計 {TaskSubtotalText}";
+}
 
 public sealed record CalculationWorkRecordTotalRowViewModel(
-    string TotalText,
+    string? TotalText,
     string SettingMonthText,
     string MissingReasonText) : CalculationDetailRowViewModel
 {
     public bool HasMissingReason => !string.IsNullOrWhiteSpace(MissingReasonText);
+    public bool HasTotal => !HasMissingReason && !string.IsNullOrWhiteSpace(TotalText);
 }
 
 public sealed record CalculationPremiumRowViewModel(

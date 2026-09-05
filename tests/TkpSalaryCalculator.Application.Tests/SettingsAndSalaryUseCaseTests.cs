@@ -97,6 +97,36 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task PreviewReplacement_CountsAffectedVisitOnceWhenAllOfItsTasksChange()
+    {
+        var context = new TestContext();
+        var month = new YearMonth(2026, 8);
+        var current = TestData.Snapshot();
+        context.Settings.Months[month] = current;
+        context.Works.Values.Add(new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 1),
+        [
+            new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), null),
+            new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(1), null),
+        ], null, null));
+        var replacement = new SettingSnapshotReplacementDto(current.Services, current.TimeCategories,
+            [
+                new SnapshotRate(TestData.ServiceId, TestData.CategoryId, RateType.FixedPerRecord,
+                    new YenAmount(2000)),
+                current.Rates.Single(static rate => rate.TimeCategoryId is null),
+            ], current.Premiums, current.CountBonuses);
+        var useCase = new MonthSettingsUseCase(context.Settings, context.Works, context.Holidays,
+            context.Salary, context.Transactions, context.Metadata, context.Clock);
+
+        var result = await useCase.PreviewReplacementAsync(month, replacement, default);
+
+        Assert.Equal(1, result.AffectedWorkRecordCount);
+        Assert.Equal(2000, result.CurrentCalculatedSubtotal.Value);
+        Assert.Equal(4000, result.ReplacementCalculatedSubtotal.Value);
+    }
+
+    [Fact]
     public async Task PreviewReplacement_ReusesCurrentAndCandidateSnapshotPerWorkDate()
     {
         var context = new TestContext();
@@ -119,6 +149,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         var result = await useCase.PreviewReplacementAsync(month, replacement, default);
 
         Assert.Equal(result.CurrentCalculatedSubtotal, result.ReplacementCalculatedSubtotal);
+        Assert.Equal(0, result.AffectedWorkRecordCount);
         Assert.Equal(40, calculator.Requests.Count);
         Assert.Equal(2, calculator.Requests.Select(x => x.SettingSnapshot)
             .Distinct(ReferenceEqualityComparer.Instance).Count());
@@ -361,6 +392,50 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task PERF010_MultipleTasksKeepCalendarPeriodAndAnnualReadsBatchedByRange()
+    {
+        var context = new TestContext();
+        var selected = new PayrollPeriodKey(new YearMonth(2026, 8));
+        context.Closing.Values.Add(new ClosingRule(
+            new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)),
+            null));
+        var work = TestData.Work(new DateOnly(2026, 8, 15));
+        var secondTask = work.Tasks[0] with
+        {
+            Id = new WorkTaskId(Guid.NewGuid()),
+            DisplayOrder = new DisplayOrder(1),
+        };
+        context.Works.Values.Add(work with { Tasks = [work.Tasks[0], secondTask] });
+        var useCase = new SalaryQueryUseCase(
+            context.Works,
+            context.Settings,
+            context.Holidays,
+            context.Closing,
+            context.Allowances,
+            context.Shifts,
+            context.Salary,
+            context.Periods,
+            new AnnualSalaryCalculator(),
+            context.AnnualSettings);
+
+        var home = await useCase.GetHomeSalarySummaryAsync(selected, default);
+        var calendar = await useCase.GetCalendarMonthAsync(new YearMonth(2026, 8), default);
+        var period = await useCase.GetPayrollPeriodAsync(selected, default);
+
+        Assert.Equal(2_000, home.MonthlySummary.CalculatedSubtotal.Value);
+        Assert.Equal(2_000, calendar.Single(day => day.Date == work.WorkDate).CalculatedSubtotal.Value);
+        Assert.Equal(2, Assert.Single(Assert.Single(period.Days).Records).Tasks!.Count);
+        Assert.Equal(3, context.Works.StreamRangeCalls);
+        Assert.Equal(3, context.Settings.EffectiveMonthsBatchCalls);
+        Assert.Equal(3, context.Holidays.GetManyCalls);
+        Assert.Equal(2, context.Closing.GetHistoryCalls);
+        Assert.Equal(1, context.Allowances.GetForRangeCalls);
+        Assert.Equal(1, context.Allowances.GetForPeriodCalls);
+        Assert.Equal(1, context.Shifts.GetForWeekdaysCalls);
+    }
+
+    [Fact]
     public async Task ANNUALAPP002_HomeSummaryIncludesAllowanceOnlyPeriodsAndReturnsZeroWithoutData()
     {
         var context = new TestContext();
@@ -549,14 +624,45 @@ public sealed class SettingsAndSalaryUseCaseTests
     }
 
     [Fact]
+    public async Task WorkRecordCalculationConvertsEveryTaskFromTheParentChildContract()
+    {
+        var context = new TestContext();
+        var selected = new WorkRecordDto(
+            new WorkRecordId(Guid.NewGuid()),
+            new DateOnly(2026, 8, 10),
+            [
+                new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                    WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), null),
+                new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                    WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(1), null),
+            ],
+            null,
+            null);
+        context.Works.Values.Add(selected);
+        context.Closing.Values.Add(new ClosingRule(
+            new ClosingRuleId(Guid.NewGuid()),
+            new PayrollPeriodKey(new YearMonth(1, 1)),
+            20));
+        var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
+            context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
+
+        var result = await useCase.GetWorkRecordCalculationAsync(selected.Id, default);
+
+        Assert.Equal(2, result.Record.Calculation.TaskCalculations.Count);
+        Assert.Equal(2_000, result.Record.Calculation.Total?.Value);
+        Assert.Equal(2, result.Record.Tasks?.Count);
+        Assert.All(result.Record.Tasks!, task => Assert.Equal("訪問", task.ServiceDisplayName));
+        Assert.Equal(selected.Tasks.Select(static task => task.Id),
+            result.Record.Tasks!.Select(static task => task.WorkTask.Id));
+    }
+
+    [Fact]
     public async Task CalendarDayAndMonthQueries_UseOrchestratedApplicationModels()
     {
         var context = new TestContext();
         var date = new DateOnly(2026, 8, 1);
         context.Works.Values.Add(TestData.Work(date));
-        context.Shifts.Values.Add(new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), date.DayOfWeek, null,
-            TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration, new WorkMinutes(60), null, null,
-            new DisplayOrder(0), true));
+        context.Shifts.Values.Add(new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), date.DayOfWeek, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true));
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
             context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);
 
@@ -613,9 +719,7 @@ public sealed class SettingsAndSalaryUseCaseTests
         var context = new TestContext();
         var date = new DateOnly(2026, 8, 1);
         for (var index = 0; index < 20; index++) context.Works.Values.Add(TestData.Work(date));
-        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), date.DayOfWeek, null,
-            TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration, new WorkMinutes(60), null, null,
-            new DisplayOrder(0), true);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), date.DayOfWeek, [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
         context.Shifts.Values.Add(shift);
         var useCase = new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays, context.Closing,
             context.Allowances, context.Shifts, context.Salary, context.Periods, context.AnnualSettings);

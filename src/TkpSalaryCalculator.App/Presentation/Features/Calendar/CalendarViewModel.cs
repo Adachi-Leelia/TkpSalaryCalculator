@@ -98,8 +98,11 @@ public sealed class CalendarViewModel : ViewModelBase
         {
             if (!SetProperty(ref shiftCandidates, value)) return;
             ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
+            OnPropertyChanged(nameof(ShiftSelectedVisitCountText));
         }
     }
+
+    public string ShiftSelectedVisitCountText => $"反映予定の訪問: {ShiftCandidates.Count(x => x.CanChoose && x.IsSelected)}件";
 
     public bool IsShiftConfirmationVisible
     {
@@ -240,17 +243,16 @@ public sealed class CalendarViewModel : ViewModelBase
         ShiftCandidates = preview.Candidates.Select(candidate =>
         {
             var shift = candidate.Shift;
-            var service = serviceNames.GetValueOrDefault(shift.ServiceId, "現在の設定にないサービス");
-            var category = shift.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
-            var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
-            var time = shift.InputMode == WorkInputMode.TimeRange && shift.StartTime is { } start && shift.EndTime is { } end
-                ? $"{formatter.Time(start)}～{formatter.Time(end)} / {formatter.Duration(shift.WorkMinutes)}"
-                : formatter.Duration(shift.WorkMinutes);
+            var (name, time) = BasicShiftDisplay.Summarize(shift, serviceNames, categoryNames, formatter);
             var row = new ShiftCandidateRowViewModel(
                 shift.Id, name, time, candidate.CanApply,
                 candidate.CanApply && !candidate.HasSimilarManualRecord,
                 string.Join(Environment.NewLine, candidate.Issues.Select(x => x.Message)));
-            row.SelectionChanged += (_, _) => ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
+            row.SelectionChanged += (_, _) =>
+            {
+                ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(ShiftSelectedVisitCountText));
+            };
             return row;
         }).ToArray();
         ShiftExistingWorkText = preview.ExistingWorkRecordCount == 0

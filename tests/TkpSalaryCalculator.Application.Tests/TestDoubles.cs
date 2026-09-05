@@ -35,8 +35,13 @@ internal static class TestData
     public static SaveWorkRecordCommand SaveCommand(DateOnly date, WorkMinutes? minutes = null,
         MinuteOfDay? start = null, WorkInputMode mode = WorkInputMode.Duration, MinuteOfDay? end = null)
     {
-        return new(null, date, ServiceId, CategoryId, mode,
-            mode == WorkInputMode.Duration ? minutes ?? new WorkMinutes(60) : null, start, end, null, Guid.NewGuid());
+        var operationId = Guid.NewGuid();
+        return new(null, date,
+        [
+            new SaveWorkTaskCommand(new WorkTaskId(operationId), ServiceId, CategoryId, mode,
+                mode == WorkInputMode.Duration ? minutes ?? new WorkMinutes(60) : null,
+                start, end, new DisplayOrder(0), null),
+        ], operationId);
     }
 
 }
@@ -681,8 +686,8 @@ internal sealed class FakeStagingRepository : IImportStagingRepository, ITransac
         if (!entries.TryGetValue(preparedImportId, out var entry) || entry.State != FakeStagingState.Created)
             throw new InvalidOperationException("staging is not validatable");
         entries[preparedImportId] = (FakeStagingState.Validated, entry.Records);
-        return Task.FromResult(new ImportPreviewDto(preparedImportId, 1, DateTimeOffset.UnixEpoch, 0, 0, entry.Records.Count, 0,
-            null, null, null, null, []));
+        return Task.FromResult(new ImportPreviewDto(preparedImportId, 1, DateTimeOffset.UnixEpoch, 0, 0, 0,
+            entry.Records.Count, entry.Records.Count, 0, null, null, null, null, []));
     }
     public Task<bool> TryConsumeAndReplaceLiveDataAsync(PreparedImportId preparedImportId, DateTimeOffset importedAtUtc, CancellationToken cancellationToken)
     {

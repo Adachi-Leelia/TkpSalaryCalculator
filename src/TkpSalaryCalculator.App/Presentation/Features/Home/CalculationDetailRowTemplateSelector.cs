@@ -7,6 +7,7 @@ public sealed class CalculationDetailRowTemplateSelector : DataTemplateSelector
     public required DataTemplate PremiumTotalTemplate { get; set; }
     public required DataTemplate AllowanceTemplate { get; set; }
     public required DataTemplate DayTemplate { get; set; }
+    public required DataTemplate VisitTemplate { get; set; }
     public required DataTemplate WorkRecordTemplate { get; set; }
     public required DataTemplate PremiumTemplate { get; set; }
     public required DataTemplate CountBonusTemplate { get; set; }
@@ -18,6 +19,7 @@ public sealed class CalculationDetailRowTemplateSelector : DataTemplateSelector
         CalculationPremiumTotalRowViewModel => PremiumTotalTemplate,
         CalculationAllowanceRowViewModel => AllowanceTemplate,
         CalculationDayRowViewModel => DayTemplate,
+        CalculationVisitRowViewModel => VisitTemplate,
         CalculationWorkRecordRowViewModel => WorkRecordTemplate,
         CalculationPremiumRowViewModel => PremiumTemplate,
         CalculationCountBonusRowViewModel => CountBonusTemplate,

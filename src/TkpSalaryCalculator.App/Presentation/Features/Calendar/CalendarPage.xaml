@@ -112,6 +112,7 @@
                         <Label Style="{StaticResource SectionTitleStyle}" Text="基本シフト反映確認" />
                         <Label FontAttributes="Bold" Text="{Binding SelectedDateText}" />
                         <Label Text="{Binding ShiftExistingWorkText}" />
+                        <Label Text="{Binding ShiftSelectedVisitCountText}" />
                         <Label
                             Style="{StaticResource SupportingTextStyle}"
                             Text="反映する候補を選択してください。類似する勤務がある候補も、内容を確認して選択できます。" />

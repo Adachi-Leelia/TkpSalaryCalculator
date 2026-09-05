@@ -112,7 +112,7 @@ public sealed class WorkRecordUseCase(
         var snapshot = await settings.GetEffectiveForMonthAsync(ApplicationSupport.ToYearMonth(command.WorkDate), cancellationToken).ConfigureAwait(false);
         var existing = command.Id is null ? null : await records.FindAsync(command.Id.Value, cancellationToken).ConfigureAwait(false);
         if (command.Id is not null && existing is null)
-            return new(null, null, null, null, false,
+            return new([], null, false,
                 [ApplicationSupport.Issue("WORK_NOT_FOUND", "更新する勤務記録が見つかりませんでした。")]);
         var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
         return PreviewCore(command, snapshot, existing, calendar);
@@ -130,7 +130,7 @@ public sealed class WorkRecordUseCase(
         if (command.WorkDate != screen.InputOptions.WorkDate)
             throw new ArgumentException("画面データと同じ勤務日を指定してください。", nameof(command));
         if (command.Id is not null && screen.ExistingRecord?.Id != command.Id)
-            return Task.FromResult(new WorkRecordPreviewDto(null, null, null, null, false,
+            return Task.FromResult(new WorkRecordPreviewDto([], null, false,
                 [ApplicationSupport.Issue("WORK_NOT_FOUND", "更新する勤務記録が見つかりませんでした。")]));
 
         return Task.FromResult(PreviewCore(
@@ -174,13 +174,22 @@ public sealed class WorkRecordUseCase(
                 throw new ApplicationErrorException("WORK_NOT_FOUND", "更新する勤務記録が見つかりませんでした。");
             var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, token).ConfigureAwait(false);
             var preview = PreviewCore(normalizedCommand, snapshot, existing, calendar);
-            if (!preview.CanSave || preview.Calculation is null || preview.NormalizedWorkMinutes is null)
-                throw new ApplicationErrorException("WORK_INPUT_INVALID", "入力内容を修正してから保存してください。");
-            var dto = new WorkRecordDto(
-                normalizedCommand.Id!.Value, normalizedCommand.WorkDate, normalizedCommand.ServiceId,
-                normalizedCommand.TimeCategoryId, normalizedCommand.InputMode, preview.NormalizedWorkMinutes.Value,
-                preview.NormalizedStartTime, preview.NormalizedEndTime, normalizedCommand.SourceServicePresetId,
-                existing?.SourceBasicShiftId, existing?.SourceWorkRecordId);
+            if (!preview.CanSave || preview.Calculation is null || preview.Tasks.Count != normalizedCommand.Tasks.Count)
+                throw new ApplicationErrorException("WORK_INPUT_INVALID",
+                    "入力内容を修正してから保存してください。", preview.Issues.FirstOrDefault()?.Field);
+            var normalizedById = preview.Tasks.ToDictionary(static task => task.WorkTaskId);
+            var normalizedTasks = normalizedCommand.Tasks
+                .OrderBy(static task => task.DisplayOrder.Value)
+                .Select((task, index) =>
+                {
+                    var normalized = normalizedById[task.Id];
+                    return new WorkTaskDto(task.Id, task.ServiceId, task.TimeCategoryId, task.InputMode,
+                        normalized.NormalizedWorkMinutes!.Value, normalized.NormalizedStartTime,
+                        normalized.NormalizedEndTime, new DisplayOrder(index), task.SourceServicePresetId);
+                })
+                .ToArray();
+            var dto = new WorkRecordDto(normalizedCommand.Id!.Value, normalizedCommand.WorkDate,
+                normalizedTasks, existing?.SourceBasicShiftId, existing?.SourceWorkRecordId);
             if (command.Id is null)
             {
                 var operationId = command.OperationId!.Value;
@@ -217,10 +226,10 @@ public sealed class WorkRecordUseCase(
 
     private static bool SameInput(WorkRecordDto left, WorkRecordDto right)
     {
-        return left.WorkDate == right.WorkDate && left.ServiceId == right.ServiceId &&
-        left.TimeCategoryId == right.TimeCategoryId && left.InputMode == right.InputMode &&
-        left.WorkMinutes == right.WorkMinutes && left.StartTime == right.StartTime && left.EndTime == right.EndTime &&
-        left.SourceServicePresetId == right.SourceServicePresetId;
+        return left.WorkDate == right.WorkDate &&
+            left.SourceBasicShiftId == right.SourceBasicShiftId &&
+            left.SourceWorkRecordId == right.SourceWorkRecordId &&
+            left.Tasks.SequenceEqual(right.Tasks);
     }
 
 
@@ -261,10 +270,23 @@ public sealed class WorkRecordUseCase(
             var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
             foreach (var value in source)
             {
-                issues.AddRange(ApplicationSupport.ValidateSelection(snapshot, value.ServiceId, value.TimeCategoryId));
-                if (ApplicationSupport.RequiresStartTime(snapshot, value.ServiceId, targetDate, calendar) && value.StartTime is null)
-                    issues.Add(ApplicationSupport.Issue("COPY_DAY_START_REQUIRED_FOR_PREMIUM", "複製先では時刻条件付き割増が適用されるため、開始時刻のない勤務を複製できません。"));
-                else
+                var canCalculate = true;
+                foreach (var task in value.Tasks)
+                {
+                    var validation = ApplicationSupport.ValidateSelection(snapshot, task.ServiceId, task.TimeCategoryId)
+                        .Select(issue => ApplicationSupport.ForTask(issue, task.Id))
+                        .ToArray();
+                    issues.AddRange(validation);
+                    canCalculate &= validation.Length == 0;
+                    if (ApplicationSupport.RequiresStartTime(snapshot, task.ServiceId, targetDate, calendar) && task.StartTime is null)
+                    {
+                        issues.Add(ApplicationSupport.Issue("COPY_DAY_START_REQUIRED_FOR_PREMIUM",
+                            "複製先では時刻条件付き割増が適用されるため、開始時刻のない勤務を複製できません。",
+                            ApplicationSupport.TaskField(task.Id, "StartTime")));
+                        canCalculate = false;
+                    }
+                }
+                if (canCalculate)
                 {
                     var candidate = value with { Id = new WorkRecordId(Guid.NewGuid()), WorkDate = targetDate };
                     var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(candidate),
@@ -304,12 +326,25 @@ public sealed class WorkRecordUseCase(
             var results = new List<SaveWorkRecordResultDto>(source.Count);
             foreach (var old in source)
             {
-                var validation = ApplicationSupport.ValidateSelection(snapshot, old.ServiceId, old.TimeCategoryId);
-                if (validation.Count != 0)
-                    throw new ApplicationErrorException(validation[0].Code, validation[0].Message, validation[0].Field);
-                if (ApplicationSupport.RequiresStartTime(snapshot, old.ServiceId, targetDate, calendar) && old.StartTime is null)
-                    throw new ApplicationErrorException("COPY_DAY_START_REQUIRED_FOR_PREMIUM", "複製先では時刻条件付き割増が適用されるため、開始時刻のない勤務を複製できません。");
-                var copied = old with { Id = new WorkRecordId(Guid.NewGuid()), WorkDate = targetDate, SourceBasicShiftId = null, SourceWorkRecordId = old.Id };
+                foreach (var task in old.Tasks)
+                {
+                    var validation = ApplicationSupport.ValidateSelection(snapshot, task.ServiceId, task.TimeCategoryId);
+                    if (validation.Count != 0)
+                    {
+                        var issue = ApplicationSupport.ForTask(validation[0], task.Id);
+                        throw new ApplicationErrorException(issue.Code, issue.Message, issue.Field);
+                    }
+                    if (ApplicationSupport.RequiresStartTime(snapshot, task.ServiceId, targetDate, calendar) && task.StartTime is null)
+                        throw new ApplicationErrorException("COPY_DAY_START_REQUIRED_FOR_PREMIUM",
+                            "複製先では時刻条件付き割増が適用されるため、開始時刻のない勤務を複製できません。",
+                            ApplicationSupport.TaskField(task.Id, "StartTime"));
+                }
+                var copied = new WorkRecordDto(
+                    new WorkRecordId(Guid.NewGuid()),
+                    targetDate,
+                    old.Tasks.Select(task => task with { Id = new WorkTaskId(Guid.NewGuid()) }).ToArray(),
+                    null,
+                    old.Id);
                 var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(copied),
                     ApplicationSupport.ForCalculationDate(snapshot, targetDate, calendar), calendar));
                 await records.UpsertAsync(copied, token).ConfigureAwait(false);
@@ -347,19 +382,78 @@ public sealed class WorkRecordUseCase(
         WorkRecordDto? existing,
         HolidayCalendar calendar)
     {
-        var keepsExistingSelection = existing is not null && existing.ServiceId == command.ServiceId &&
-            existing.TimeCategoryId == command.TimeCategoryId;
-        var selectionIssues = ApplicationSupport.ValidateSelection(snapshot, command.ServiceId, command.TimeCategoryId, keepsExistingSelection);
-        var (Minutes, Start, End, Issues) = ApplicationSupport.Normalize(command.InputMode, command.WorkMinutes, command.StartTime, command.EndTime,
-            ApplicationSupport.RequiresStartTime(snapshot, command.ServiceId, command.WorkDate, calendar));
-        var errors = selectionIssues.Concat(Issues).ToList();
-        if (errors.Count != 0 || Minutes is null)
-            return new(Minutes, Start, End, null, false, errors);
-        var dto = new WorkRecordDto(
-            command.Id ?? new WorkRecordId(Guid.NewGuid()), command.WorkDate, command.ServiceId, command.TimeCategoryId,
-            command.InputMode, Minutes.Value, Start, End, command.SourceServicePresetId, null, null);
+        if (command.Tasks is null || command.Tasks.Count == 0)
+        {
+            var issue = ApplicationSupport.Issue("WORK_TASK_REQUIRED",
+                "訪問には1件以上のタスクを登録してください。", "Tasks");
+            return new([], null, false, [issue]);
+        }
+        if (command.Tasks.Any(static task => task is null))
+        {
+            var issue = ApplicationSupport.Issue("WORK_TASK_INVALID",
+                "読み取れないタスクがあります。タスクを追加し直してください。", "Tasks");
+            return new([], null, false, [issue]);
+        }
+
+        var errors = new List<IssueDto>();
+        var previews = new List<WorkTaskPreviewDto>(command.Tasks.Count);
+        var existingById = existing?.Tasks.ToDictionary(static task => task.Id) ?? [];
+        var duplicateIds = command.Tasks.GroupBy(static task => task.Id)
+            .Where(static group => group.Count() > 1)
+            .Select(static group => group.Key)
+            .ToHashSet();
+        var duplicateOrders = command.Tasks.GroupBy(static task => task.DisplayOrder.Value)
+            .Where(static group => group.Count() > 1)
+            .Select(static group => group.Key)
+            .ToHashSet();
+
+        foreach (var task in command.Tasks)
+        {
+            var taskIssues = new List<IssueDto>();
+            if (task.Id.Value == Guid.Empty)
+                taskIssues.Add(ApplicationSupport.Issue("WORK_TASK_ID_REQUIRED",
+                    "タスク識別子がありません。タスクを追加し直してください。", "Id"));
+            if (duplicateIds.Contains(task.Id))
+                taskIssues.Add(ApplicationSupport.Issue("WORK_TASK_ID_DUPLICATE",
+                    "同じタスク識別子を重複して使用できません。", "Id"));
+            if (task.DisplayOrder.Value < 0 || duplicateOrders.Contains(task.DisplayOrder.Value))
+                taskIssues.Add(ApplicationSupport.Issue("WORK_TASK_ORDER_INVALID",
+                    "タスクの表示順が重複しないように並べ直してください。", "DisplayOrder"));
+
+            var keepsExistingSelection = existingById.TryGetValue(task.Id, out var existingTask) &&
+                existingTask.ServiceId == task.ServiceId &&
+                existingTask.TimeCategoryId == task.TimeCategoryId;
+            taskIssues.AddRange(ApplicationSupport.ValidateSelection(
+                snapshot, task.ServiceId, task.TimeCategoryId, keepsExistingSelection));
+            var (minutes, start, end, normalizationIssues) = ApplicationSupport.Normalize(
+                task.InputMode, task.WorkMinutes, task.StartTime, task.EndTime,
+                ApplicationSupport.RequiresStartTime(snapshot, task.ServiceId, command.WorkDate, calendar));
+            taskIssues.AddRange(normalizationIssues);
+
+            var fieldIssues = taskIssues.Select(issue => ApplicationSupport.ForTask(issue, task.Id)).ToArray();
+            errors.AddRange(fieldIssues);
+            previews.Add(new WorkTaskPreviewDto(task.Id, minutes, start, end,
+                fieldIssues.Length == 0 && minutes is not null, fieldIssues));
+        }
+
+        if (previews.Any(static task => !task.CanSave))
+            return new(previews, null, false, errors);
+
+        var normalizedById = previews.ToDictionary(static task => task.WorkTaskId);
+        var normalizedTasks = command.Tasks
+            .OrderBy(static task => task.DisplayOrder.Value)
+            .Select((task, index) =>
+            {
+                var normalized = normalizedById[task.Id];
+                return new WorkTaskDto(task.Id, task.ServiceId, task.TimeCategoryId, task.InputMode,
+                    normalized.NormalizedWorkMinutes!.Value, normalized.NormalizedStartTime,
+                    normalized.NormalizedEndTime, new DisplayOrder(index), task.SourceServicePresetId);
+            })
+            .ToArray();
+        var dto = new WorkRecordDto(command.Id ?? new WorkRecordId(Guid.NewGuid()), command.WorkDate,
+            normalizedTasks, existing?.SourceBasicShiftId, existing?.SourceWorkRecordId);
         var calculation = ApplicationSupport.Calculate(dto, snapshot, calendar, calculator);
         errors.AddRange(ApplicationSupport.CalculationIssues(calculation));
-        return new(Minutes, Start, End, calculation, true, errors);
+        return new(previews, calculation, true, errors);
     }
 }

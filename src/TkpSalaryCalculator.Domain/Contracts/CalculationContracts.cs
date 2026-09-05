@@ -78,10 +78,21 @@ public enum SalaryCalculationStatus
     Uncalculated,
 }
 
-/// <summary>金額を推測せず、不足している計算要件を識別します。</summary>
+/// <summary>金額を推測せず、不足しているタスクの計算要件を識別します。</summary>
+/// <param name="WorkTaskId">不足がある勤務タスク。</param>
 /// <param name="Code">機械判読可能な安定した理由コード。</param>
 /// <param name="RelatedId">任意の関連論理識別子。</param>
-public sealed record MissingCalculationRequirement(string Code, Guid? RelatedId);
+public sealed record MissingCalculationRequirement(
+    WorkTaskId WorkTaskId,
+    string Code,
+    Guid? RelatedId)
+{
+    /// <summary>旧1タスク結果を組み立てるための一時互換コンストラクターです。</summary>
+    public MissingCalculationRequirement(string Code, Guid? RelatedId)
+        : this(default, Code, RelatedId)
+    {
+    }
+}
 
 /// <summary>適用された割増の 1 行を保持します。</summary>
 /// <param name="Rule">サービス、日付、祝日、曜日、時間条件の判定に使用した完全で不変の割増ルール。</param>
@@ -98,24 +109,100 @@ public sealed record AppliedPremium(
 /// <param name="Amount">円単位の加算額。</param>
 public sealed record AppliedCountBonus(CountBonusId CountBonusId, string DisplayName, YenAmount Amount);
 
-/// <summary>1 件の勤務記録に対する決定論的な結果を保持します。</summary>
-/// <param name="WorkRecordId">計算対象の記録。</param>
+/// <summary>1件の勤務タスクに対する決定論的な結果を保持します。</summary>
+/// <param name="WorkTaskId">計算対象のタスク。</param>
 /// <param name="Status">結果が完全かどうか。</param>
 /// <param name="AppliedRate">選択された単価。未計算の場合は <see langword="null"/>。</param>
 /// <param name="BasePay">丸め済みの基本給。未計算の場合は <see langword="null"/>。</param>
-/// <param name="Premiums">適用された個別の割増。</param>
-/// <param name="CountBonuses">適用された個別の件数加算。</param>
-/// <param name="Total">記録の合計。未計算の場合は <see langword="null"/>。</param>
-/// <param name="MissingRequirements">計算できなかった明示的な理由。</param>
-public sealed record WorkSalaryCalculation(
-    WorkRecordId WorkRecordId,
+/// <param name="Premiums">タスクへ適用された個別の割増。</param>
+/// <param name="TaskSubtotal">基本給と割増の小計。未計算の場合は <see langword="null"/>。</param>
+/// <param name="MissingRequirements">このタスクを計算できなかった明示的な理由。</param>
+public sealed record TaskSalaryCalculation(
+    WorkTaskId WorkTaskId,
     SalaryCalculationStatus Status,
     SnapshotRate? AppliedRate,
     YenAmount? BasePay,
     IReadOnlyList<AppliedPremium> Premiums,
+    YenAmount? TaskSubtotal,
+    IReadOnlyList<MissingCalculationRequirement> MissingRequirements);
+
+/// <summary>1件の訪問に対する決定論的な結果を保持します。</summary>
+/// <param name="WorkRecordId">計算対象の訪問。</param>
+/// <param name="Status">訪問内の全タスクを計算できたかどうか。</param>
+/// <param name="TaskCalculations">表示順に並んだタスクごとの計算結果。</param>
+/// <param name="CountBonuses">訪問へ適用された個別の件数加算。</param>
+/// <param name="Total">訪問の合計。未計算の場合は <see langword="null"/>。</param>
+/// <param name="MissingRequirements">全タスクから集約したタスクID付き不足理由。</param>
+public sealed record WorkSalaryCalculation(
+    WorkRecordId WorkRecordId,
+    SalaryCalculationStatus Status,
+    IReadOnlyList<TaskSalaryCalculation> TaskCalculations,
     IReadOnlyList<AppliedCountBonus> CountBonuses,
     YenAmount? Total,
-    IReadOnlyList<MissingCalculationRequirement> MissingRequirements);
+    IReadOnlyList<MissingCalculationRequirement> MissingRequirements)
+{
+    /// <summary>旧1タスク計算結果を訪問結果へ変換する一時互換コンストラクターです。</summary>
+    public WorkSalaryCalculation(
+        WorkRecordId WorkRecordId,
+        SalaryCalculationStatus Status,
+        SnapshotRate? AppliedRate,
+        YenAmount? BasePay,
+        IReadOnlyList<AppliedPremium> Premiums,
+        IReadOnlyList<AppliedCountBonus> CountBonuses,
+        YenAmount? Total,
+        IReadOnlyList<MissingCalculationRequirement> MissingRequirements)
+        : this(
+            WorkRecordId,
+            Status,
+            [CreateLegacyTaskCalculation(WorkRecordId, Status, AppliedRate, BasePay, Premiums, MissingRequirements)],
+            CountBonuses,
+            Total,
+            NormalizeLegacyMissingRequirements(WorkRecordId, MissingRequirements))
+    {
+    }
+
+    /// <summary>旧1タスク表示用に先頭タスクの適用単価を取得します。</summary>
+    public SnapshotRate? AppliedRate => TaskCalculations.Count == 1 ? TaskCalculations[0].AppliedRate : null;
+
+    /// <summary>計算済みタスクの基本給与合計を取得します。</summary>
+    public YenAmount? BasePay => Status == SalaryCalculationStatus.Calculated
+        ? new YenAmount(TaskCalculations.Aggregate(0L, static (sum, task) => checked(sum + task.BasePay!.Value.Value)))
+        : null;
+
+    /// <summary>全タスクへ適用された割増を表示順に取得します。</summary>
+    public IReadOnlyList<AppliedPremium> Premiums =>
+        TaskCalculations.SelectMany(static task => task.Premiums).ToArray();
+
+    private static TaskSalaryCalculation CreateLegacyTaskCalculation(
+        WorkRecordId workRecordId,
+        SalaryCalculationStatus status,
+        SnapshotRate? appliedRate,
+        YenAmount? basePay,
+        IReadOnlyList<AppliedPremium> premiums,
+        IReadOnlyList<MissingCalculationRequirement> missingRequirements)
+    {
+        var taskId = new WorkTaskId(workRecordId.Value);
+        var normalizedMissing = NormalizeLegacyMissingRequirements(workRecordId, missingRequirements);
+        YenAmount? subtotal = status == SalaryCalculationStatus.Calculated && basePay is not null
+            ? new YenAmount(premiums.Aggregate(basePay.Value.Value,
+                static (sum, premium) => checked(sum + premium.Amount.Value)))
+            : null;
+        return new TaskSalaryCalculation(taskId, status, appliedRate, basePay, premiums, subtotal, normalizedMissing);
+    }
+
+    private static IReadOnlyList<MissingCalculationRequirement> NormalizeLegacyMissingRequirements(
+        WorkRecordId workRecordId,
+        IReadOnlyList<MissingCalculationRequirement> missingRequirements)
+    {
+        ArgumentNullException.ThrowIfNull(missingRequirements);
+        var taskId = new WorkTaskId(workRecordId.Value);
+        return missingRequirements
+            .Select(requirement => requirement.WorkTaskId.Value == Guid.Empty
+                ? requirement with { WorkTaskId = taskId }
+                : requirement)
+            .ToArray();
+    }
+}
 
 /// <summary>副作用のない日別集計結果を保持します。</summary>
 /// <param name="WorkDate">現地勤務日。</param>

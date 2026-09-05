@@ -341,7 +341,11 @@ public sealed class WorkRecordUseCaseTests
     public async Task Preview_RejectsInvalidModeAndOverTwentyFourHours_AndHonorsCancellation()
     {
         var context = new TestContext();
-        var invalidMode = TestData.SaveCommand(new(2026, 8, 1)) with { InputMode = (WorkInputMode)999 };
+        var validCommand = TestData.SaveCommand(new(2026, 8, 1));
+        var invalidMode = validCommand with
+        {
+            Tasks = [validCommand.Tasks[0] with { InputMode = (WorkInputMode)999 }],
+        };
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -483,5 +487,168 @@ public sealed class WorkRecordUseCaseTests
         Assert.Equal(0, context.Presets.GetAllCalls);
         Assert.Equal(0, context.Works.FindCalls);
         Assert.Equal(0, context.Works.StreamRangeCalls);
+    }
+
+    [Fact]
+    public async Task Save_MultipleTasks_NormalizesOrderAndAppliesCountBonusOnce()
+    {
+        var bonus = new SnapshotCountBonus(new CountBonusId(Guid.NewGuid()), "訪問加算",
+            new YenAmount(150), new HashSet<ServiceId>(), true);
+        var context = new TestContext { Settings = { Fallback = TestData.Snapshot(bonuses: [bonus]) } };
+        var firstId = new WorkTaskId(Guid.NewGuid());
+        var secondId = new WorkTaskId(Guid.NewGuid());
+        var command = new SaveWorkRecordCommand(null, new DateOnly(2026, 8, 1),
+        [
+            new SaveWorkTaskCommand(firstId, TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(8), null),
+            new SaveWorkTaskCommand(secondId, TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(3), null),
+        ], Guid.NewGuid());
+
+        var preview = await context.WorkUseCase().PreviewAsync(command, default);
+        var result = await context.WorkUseCase().SaveAsync(command, default);
+
+        Assert.True(preview.CanSave);
+        Assert.Equal(2, preview.Tasks.Count);
+        Assert.Equal([secondId, firstId], result.WorkRecord.Tasks.Select(static task => task.Id));
+        Assert.Equal([0, 1], result.WorkRecord.Tasks.Select(static task => task.DisplayOrder.Value));
+        Assert.Equal(2, result.Calculation.TaskCalculations.Count);
+        Assert.Single(result.Calculation.CountBonuses);
+        Assert.Equal(2150, result.Calculation.Total!.Value.Value);
+        Assert.Equal(result.WorkRecord, Assert.Single(context.Works.Values));
+    }
+
+    [Fact]
+    public async Task Preview_MultipleTasks_PointsInputAndCalculationIssuesToStableTaskPaths()
+    {
+        var secondServiceId = new ServiceId(Guid.NewGuid());
+        var context = new TestContext();
+        context.Settings.Fallback = new SettingSnapshot(new SettingSnapshotId(Guid.NewGuid()), null,
+            TestData.HolidayId, new SchemaVersion(1), DateTimeOffset.UnixEpoch,
+            [
+                new SnapshotService(TestData.ServiceId, "身体", new DisplayOrder(0), true),
+                new SnapshotService(secondServiceId, "生活", new DisplayOrder(1), true),
+            ],
+            [new SnapshotTimeCategory(TestData.CategoryId, TestData.ServiceId, "60分",
+                new WorkMinutes(60), new DisplayOrder(0), true)],
+            [new SnapshotRate(TestData.ServiceId, TestData.CategoryId, RateType.FixedPerRecord,
+                new YenAmount(1000))], [], []);
+        var validId = new WorkTaskId(Guid.NewGuid());
+        var missingRateId = new WorkTaskId(Guid.NewGuid());
+        var invalidMinutesId = new WorkTaskId(Guid.NewGuid());
+        var invalid = new SaveWorkRecordCommand(null, new DateOnly(2026, 8, 1),
+        [
+            new SaveWorkTaskCommand(validId, TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), null),
+            new SaveWorkTaskCommand(invalidMinutesId, TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, default(WorkMinutes), null, null, new DisplayOrder(1), null),
+        ], Guid.NewGuid());
+        var missingRate = invalid with
+        {
+            Tasks =
+            [
+                invalid.Tasks[0],
+                new SaveWorkTaskCommand(missingRateId, secondServiceId, null, WorkInputMode.Duration,
+                    new WorkMinutes(60), null, null, new DisplayOrder(1), null),
+            ],
+        };
+
+        var invalidPreview = await context.WorkUseCase().PreviewAsync(invalid, default);
+        var missingPreview = await context.WorkUseCase().PreviewAsync(missingRate, default);
+        var invalidSave = await Assert.ThrowsAsync<ApplicationErrorException>(() =>
+            context.WorkUseCase().SaveAsync(invalid, default));
+
+        Assert.False(invalidPreview.CanSave);
+        Assert.Contains(invalidPreview.Issues, issue => issue.Field ==
+            $"Tasks[{invalidMinutesId.Value:D}].WorkMinutes");
+        Assert.Equal($"Tasks[{invalidMinutesId.Value:D}].WorkMinutes", invalidSave.Field);
+        Assert.True(missingPreview.CanSave);
+        Assert.Equal(SalaryCalculationStatus.Uncalculated, missingPreview.Calculation!.Status);
+        Assert.Contains(missingPreview.Issues, issue => issue.Field ==
+            $"Tasks[{missingRateId.Value:D}].Rate");
+    }
+
+    [Fact]
+    public async Task Save_RetryComparesEveryTaskInPayload()
+    {
+        var context = new TestContext();
+        var operationId = Guid.NewGuid();
+        var command = new SaveWorkRecordCommand(null, new DateOnly(2026, 8, 1),
+        [
+            new SaveWorkTaskCommand(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), null),
+            new SaveWorkTaskCommand(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(30), null, null, new DisplayOrder(1), null),
+        ], operationId);
+        var changedTasks = command.Tasks.ToArray();
+        changedTasks[1] = changedTasks[1] with { WorkMinutes = new WorkMinutes(45) };
+
+        var first = await context.WorkUseCase().SaveAsync(command, default);
+        var retry = await context.WorkUseCase().SaveAsync(command, default);
+        var conflict = await Assert.ThrowsAsync<ApplicationErrorException>(() =>
+            context.WorkUseCase().SaveAsync(command with { Tasks = changedTasks }, default));
+
+        Assert.Equal(first.WorkRecord, retry.WorkRecord);
+        Assert.Equal("WORK_OPERATION_CONFLICT", conflict.Code);
+        Assert.Single(context.Works.Values);
+    }
+
+    [Fact]
+    public async Task Save_EditMultipleTasks_ReplacesVisitAndPreservesTaskIds()
+    {
+        var context = new TestContext();
+        var firstId = new WorkTaskId(Guid.NewGuid());
+        var secondId = new WorkTaskId(Guid.NewGuid());
+        var existing = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), new DateOnly(2026, 8, 1),
+        [
+            new WorkTaskDto(firstId, TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration,
+                new WorkMinutes(30), null, null, new DisplayOrder(0), null),
+            new WorkTaskDto(secondId, TestData.ServiceId, TestData.CategoryId, WorkInputMode.Duration,
+                new WorkMinutes(45), null, null, new DisplayOrder(1), null),
+        ], null, null);
+        context.Works.Values.Add(existing);
+        var command = new SaveWorkRecordCommand(existing.Id, existing.WorkDate,
+        [
+            new SaveWorkTaskCommand(secondId, TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), null),
+            new SaveWorkTaskCommand(firstId, TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(90), null, null, new DisplayOrder(1), null),
+        ]);
+
+        var result = await context.WorkUseCase().SaveAsync(command, default);
+
+        Assert.Equal(existing.Id, result.WorkRecord.Id);
+        Assert.Equal([secondId, firstId], result.WorkRecord.Tasks.Select(static task => task.Id));
+        Assert.Equal([60, 90], result.WorkRecord.Tasks.Select(static task => task.WorkMinutes.Value));
+        Assert.Equal(result.WorkRecord, Assert.Single(context.Works.Values));
+    }
+
+    [Fact]
+    public async Task CopyDay_MultipleTasks_AssignsNewParentAndTaskIdsAndPreservesOrder()
+    {
+        var context = new TestContext();
+        var sourceDate = new DateOnly(2026, 8, 1);
+        var targetDate = sourceDate.AddDays(1);
+        var source = new WorkRecordDto(new WorkRecordId(Guid.NewGuid()), sourceDate,
+        [
+            new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0), null),
+            new WorkTaskDto(new WorkTaskId(Guid.NewGuid()), TestData.ServiceId, TestData.CategoryId,
+                WorkInputMode.Duration, new WorkMinutes(30), null, null, new DisplayOrder(1), null),
+        ], null, null);
+        context.Works.Values.Add(source);
+
+        var preview = await context.WorkUseCase().PreviewCopyDayAsync(sourceDate, targetDate, default);
+        var copied = Assert.Single(await context.WorkUseCase().CopyDayAsync(
+            sourceDate, targetDate, preview.ConfirmationToken, default)).WorkRecord;
+
+        Assert.NotEqual(source.Id, copied.Id);
+        Assert.Equal(source.Id, copied.SourceWorkRecordId);
+        Assert.Equal(source.Tasks.Select(static task => task.DisplayOrder),
+            copied.Tasks.Select(static task => task.DisplayOrder));
+        Assert.Equal(source.Tasks.Select(static task => task.WorkMinutes),
+            copied.Tasks.Select(static task => task.WorkMinutes));
+        Assert.Empty(source.Tasks.Select(static task => task.Id).Intersect(
+            copied.Tasks.Select(static task => task.Id)));
     }
 }

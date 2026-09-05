@@ -13,9 +13,10 @@
                 <Label Style="{StaticResource PageTitleStyle}" Text="日別一覧" />
                 <Label Style="{StaticResource SectionTitleStyle}" Text="{Binding DateText}" />
                 <Border Padding="16" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 16">
-                    <Grid ColumnDefinitions="*,Auto">
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                         <Label Text="日別給与見込み合計" />
                         <Label Grid.Column="1" FontAttributes="Bold" FontSize="24" SemanticProperties.Description="{Binding TotalText}" Text="{Binding TotalText}" />
+                        <Label Grid.Row="1" Grid.ColumnSpan="2" SemanticProperties.Description="{Binding VisitCountText}" Style="{StaticResource SupportingTextStyle}" Text="{Binding VisitCountText}" />
                     </Grid>
                 </Border>
             <Label IsVisible="{Binding HasUncalculated}" Text="{Binding UncalculatedText}" TextColor="{StaticResource Warning}" />
@@ -40,9 +41,12 @@
                 <VerticalStackLayout BindableLayout.ItemsSource="{Binding Records}" IsVisible="{Binding HasRecords}" Spacing="10">
                     <BindableLayout.ItemTemplate>
                         <DataTemplate x:DataType="calendar:DayWorkRecordRowViewModel">
-                            <Border Padding="14" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                            <Border Padding="14" BackgroundColor="{StaticResource Surface}" SemanticProperties.Description="{Binding AccessibilityText}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
                                 <VerticalStackLayout Spacing="8">
-                                    <Label FontAttributes="Bold" Text="{Binding DisplayName}" />
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <Label FontAttributes="Bold" Text="{Binding DisplayName}" />
+                                        <Label Grid.Column="1" Style="{StaticResource SupportingTextStyle}" Text="{Binding TaskCountText}" />
+                                    </Grid>
                                     <Grid ColumnDefinitions="*,Auto">
                                         <Label Text="{Binding DurationText}" />
                                         <Label Grid.Column="1" Text="{Binding AmountText}" />

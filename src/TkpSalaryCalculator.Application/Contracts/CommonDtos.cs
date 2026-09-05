@@ -14,53 +14,179 @@ public sealed record IssueDto(string Code, string? Field, string Message);
 /// <param name="Warnings">プレゼンテーション層で表示する、処理を妨げない問題。</param>
 public sealed record CommandResultDto(IReadOnlyList<IssueDto> Warnings);
 
-/// <summary>プレゼンテーション層向けの正規化済み勤務記録を表します。</summary>
-/// <param name="Id">記録識別子。</param>
-/// <param name="WorkDate">勤務を開始した現地日付。</param>
-/// <param name="ServiceId">選択されたサービス。</param>
-/// <param name="TimeCategoryId">選択された時間区分。任意時間入力の場合は <see langword="null"/>。</param>
-/// <param name="InputMode">入力モード。</param>
-/// <param name="WorkMinutes">正規化済みの勤務時間。</param>
-/// <param name="StartTime">開始時刻。存在しない場合があります。</param>
-/// <param name="EndTime">正規化済みの終了時刻。存在しない場合があります。</param>
-/// <param name="SourceServicePresetId">記録の作成に使用した入力補助プリセット。存在しない場合があります。</param>
-/// <param name="SourceBasicShiftId">シフトから記録を反映した場合の元シフト識別子。</param>
-/// <param name="SourceWorkRecordId">日単位の複製によって記録を作成した場合の元記録識別子。</param>
-public sealed record WorkRecordDto(
-    WorkRecordId Id,
-    DateOnly WorkDate,
+/// <summary>プレゼンテーション層向けの正規化済み勤務タスクを表します。</summary>
+public sealed record WorkTaskDto(
+    WorkTaskId Id,
     ServiceId ServiceId,
     TimeCategoryId? TimeCategoryId,
     WorkInputMode InputMode,
     WorkMinutes WorkMinutes,
     MinuteOfDay? StartTime,
     MinuteOfDay? EndTime,
-    ServicePresetId? SourceServicePresetId,
-    BasicShiftId? SourceBasicShiftId,
-    WorkRecordId? SourceWorkRecordId);
+    DisplayOrder DisplayOrder,
+    ServicePresetId? SourceServicePresetId)
+{
+    /// <summary>由来情報を除いたDomainタスクへ明示的に変換します。</summary>
+    public WorkTask ToDomain() =>
+        new(Id, ServiceId, TimeCategoryId, InputMode, WorkMinutes, StartTime, EndTime, DisplayOrder);
+}
 
-/// <summary>1 件の勤務記録を作成または更新するためのプレゼンテーション層からの入力を保持します。</summary>
-/// <param name="Id">更新対象の既存識別子。新規作成の場合は <see langword="null"/>。</param>
-/// <param name="WorkDate">勤務開始の現地日付。</param>
-/// <param name="ServiceId">選択されたサービス。</param>
-/// <param name="TimeCategoryId">選択された時間区分。存在しない場合があります。</param>
-/// <param name="InputMode">選択された入力モード。</param>
-/// <param name="WorkMinutes">時間入力モードで入力された勤務時間。それ以外の場合は <see langword="null"/>。</param>
-/// <param name="StartTime">必要な場合に入力された開始時刻。</param>
-/// <param name="EndTime">時刻範囲入力モードで入力された終了時刻。</param>
-/// <param name="SourceServicePresetId">入力補助に使用したプリセット。存在しない場合があります。</param>
-/// <param name="OperationId">新規保存の再試行と連続操作を一意に識別する値。更新では省略できます。</param>
-public sealed record SaveWorkRecordCommand(
-    WorkRecordId? Id,
+/// <summary>1件の訪問として保存された、1件以上の勤務タスクを保持します。</summary>
+public sealed record WorkRecordDto(
+    WorkRecordId Id,
     DateOnly WorkDate,
+    IReadOnlyList<WorkTaskDto> Tasks,
+    BasicShiftId? SourceBasicShiftId,
+    WorkRecordId? SourceWorkRecordId)
+{
+    /// <summary>旧1タスク契約を親子DTOへ変換する一時互換コンストラクターです。</summary>
+    public WorkRecordDto(
+        WorkRecordId Id,
+        DateOnly WorkDate,
+        ServiceId ServiceId,
+        TimeCategoryId? TimeCategoryId,
+        WorkInputMode InputMode,
+        WorkMinutes WorkMinutes,
+        MinuteOfDay? StartTime,
+        MinuteOfDay? EndTime,
+        ServicePresetId? SourceServicePresetId,
+        BasicShiftId? SourceBasicShiftId,
+        WorkRecordId? SourceWorkRecordId)
+        : this(Id, WorkDate,
+        [
+            new WorkTaskDto(new WorkTaskId(Id.Value), ServiceId, TimeCategoryId, InputMode, WorkMinutes,
+                StartTime, EndTime, new DisplayOrder(0), SourceServicePresetId),
+        ], SourceBasicShiftId, SourceWorkRecordId)
+    {
+    }
+
+    /// <summary>由来情報を除いたDomain訪問集約へ明示的に変換します。</summary>
+    public WorkRecord ToDomain() => new(Id, WorkDate, Tasks.Select(static task => task.ToDomain()).ToArray());
+
+    // タスク3まで旧1タスク呼出し元をコンパイル可能に保つ一時アダプター。
+    public ServiceId ServiceId
+    {
+        get => Tasks[0].ServiceId;
+        init => Tasks = ReplaceFirstTask(Tasks, task => task with { ServiceId = value });
+    }
+    public TimeCategoryId? TimeCategoryId
+    {
+        get => Tasks[0].TimeCategoryId;
+        init => Tasks = ReplaceFirstTask(Tasks, task => task with { TimeCategoryId = value });
+    }
+    public WorkInputMode InputMode
+    {
+        get => Tasks[0].InputMode;
+        init => Tasks = ReplaceFirstTask(Tasks, task => task with { InputMode = value });
+    }
+    public WorkMinutes WorkMinutes
+    {
+        get => Tasks[0].WorkMinutes;
+        init => Tasks = ReplaceFirstTask(Tasks, task => task with { WorkMinutes = value });
+    }
+    public MinuteOfDay? StartTime
+    {
+        get => Tasks[0].StartTime;
+        init => Tasks = ReplaceFirstTask(Tasks, task => task with { StartTime = value });
+    }
+    public MinuteOfDay? EndTime
+    {
+        get => Tasks[0].EndTime;
+        init => Tasks = ReplaceFirstTask(Tasks, task => task with { EndTime = value });
+    }
+    public ServicePresetId? SourceServicePresetId
+    {
+        get => Tasks[0].SourceServicePresetId;
+        init => Tasks = ReplaceFirstTask(Tasks, task => task with { SourceServicePresetId = value });
+    }
+
+    /// <summary>親情報と全タスクの値を構造的に比較します。</summary>
+    public bool Equals(WorkRecordDto? other)
+    {
+        return other is not null &&
+            Id == other.Id &&
+            WorkDate == other.WorkDate &&
+            SourceBasicShiftId == other.SourceBasicShiftId &&
+            SourceWorkRecordId == other.SourceWorkRecordId &&
+            Tasks.SequenceEqual(other.Tasks);
+    }
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Id);
+        hash.Add(WorkDate);
+        hash.Add(SourceBasicShiftId);
+        hash.Add(SourceWorkRecordId);
+        foreach (var task in Tasks)
+        {
+            hash.Add(task);
+        }
+        return hash.ToHashCode();
+    }
+
+    private static IReadOnlyList<WorkTaskDto> ReplaceFirstTask(
+        IReadOnlyList<WorkTaskDto> tasks,
+        Func<WorkTaskDto, WorkTaskDto> replace)
+    {
+        ArgumentNullException.ThrowIfNull(tasks);
+        ArgumentNullException.ThrowIfNull(replace);
+        if (tasks.Count == 0)
+        {
+            throw new ArgumentException("訪問には1件以上のタスクが必要です。", nameof(tasks));
+        }
+
+        var updated = tasks.ToArray();
+        updated[0] = replace(updated[0]);
+        return updated;
+    }
+}
+
+/// <summary>1件の勤務タスクを作成または更新するための入力を保持します。</summary>
+public sealed record SaveWorkTaskCommand(
+    WorkTaskId Id,
     ServiceId ServiceId,
     TimeCategoryId? TimeCategoryId,
     WorkInputMode InputMode,
     WorkMinutes? WorkMinutes,
     MinuteOfDay? StartTime,
     MinuteOfDay? EndTime,
-    ServicePresetId? SourceServicePresetId,
-    Guid? OperationId = null);
+    DisplayOrder DisplayOrder,
+    ServicePresetId? SourceServicePresetId);
+
+/// <summary>1件以上のタスクを持つ訪問を作成または更新する入力を保持します。</summary>
+public sealed record SaveWorkRecordCommand(
+    WorkRecordId? Id,
+    DateOnly WorkDate,
+    IReadOnlyList<SaveWorkTaskCommand> Tasks,
+    Guid? OperationId = null)
+{
+    /// <summary>親入力と全タスクの値を構造的に比較します。</summary>
+    public bool Equals(SaveWorkRecordCommand? other)
+    {
+        return other is not null &&
+            Id == other.Id &&
+            WorkDate == other.WorkDate &&
+            OperationId == other.OperationId &&
+            Tasks.SequenceEqual(other.Tasks);
+    }
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Id);
+        hash.Add(WorkDate);
+        hash.Add(OperationId);
+        foreach (var task in Tasks)
+        {
+            hash.Add(task);
+        }
+        return hash.ToHashCode();
+    }
+
+}
 
 /// <summary>勤務入力用のサービスプリセット候補を表します。</summary>
 /// <param name="Preset">現在の入力補助プリセット。</param>
@@ -80,20 +206,44 @@ public sealed record WorkInputOptionsDto(
     MonthSettingsDto Settings,
     IReadOnlyList<ServicePresetCandidateDto> PresetCandidates);
 
-/// <summary>保存を伴わない検証、正規化、および給与プレビューを保持します。</summary>
-/// <param name="NormalizedWorkMinutes">正規化に成功した場合の、算出または検証済み勤務時間。</param>
-/// <param name="NormalizedStartTime">入力または適用対象の時間条件で必要となる、正規化済み開始時刻。</param>
-/// <param name="NormalizedEndTime">必要な場合の正規化済み終了時刻。開始時刻より前の値は翌日を表します。</param>
-/// <param name="Calculation">計算済みまたは未計算の給与結果。入力自体が無効な場合は <see langword="null"/>。</param>
-/// <param name="CanSave">保存できるかどうか。入力が無効な場合は <see langword="false"/>。設定不足だけの場合は、未計算結果とともに <see langword="true"/> になる場合があります。</param>
-/// <param name="Issues">処理を妨げる入力上の問題、または処理を妨げない設定不足警告と修正案内。</param>
-public sealed record WorkRecordPreviewDto(
+/// <summary>保存を伴わずに正規化した勤務タスクと、その入力上の問題を保持します。</summary>
+public sealed record WorkTaskPreviewDto(
+    WorkTaskId WorkTaskId,
     WorkMinutes? NormalizedWorkMinutes,
     MinuteOfDay? NormalizedStartTime,
     MinuteOfDay? NormalizedEndTime,
-    WorkSalaryCalculation? Calculation,
     bool CanSave,
     IReadOnlyList<IssueDto> Issues);
+
+/// <summary>保存を伴わない訪問全体の検証、タスク別正規化、および給与プレビューを保持します。</summary>
+public sealed record WorkRecordPreviewDto(
+    IReadOnlyList<WorkTaskPreviewDto> Tasks,
+    WorkSalaryCalculation? Calculation,
+    bool CanSave,
+    IReadOnlyList<IssueDto> Issues)
+{
+    /// <summary>旧1タスク画面向けの一時互換コンストラクターです。</summary>
+    public WorkRecordPreviewDto(
+        WorkMinutes? normalizedWorkMinutes,
+        MinuteOfDay? normalizedStartTime,
+        MinuteOfDay? normalizedEndTime,
+        WorkSalaryCalculation? calculation,
+        bool canSave,
+        IReadOnlyList<IssueDto> issues)
+        : this(
+            [new WorkTaskPreviewDto(default, normalizedWorkMinutes, normalizedStartTime,
+                normalizedEndTime, canSave, issues)],
+            calculation,
+            canSave,
+            issues)
+    {
+    }
+
+    // タスク5まで旧1タスク画面をコンパイル可能に保つ一時アダプター。
+    public WorkMinutes? NormalizedWorkMinutes => Tasks.Count == 1 ? Tasks[0].NormalizedWorkMinutes : null;
+    public MinuteOfDay? NormalizedStartTime => Tasks.Count == 1 ? Tasks[0].NormalizedStartTime : null;
+    public MinuteOfDay? NormalizedEndTime => Tasks.Count == 1 ? Tasks[0].NormalizedEndTime : null;
+}
 
 /// <summary>保存済み記録と、その時点での給与状態を保持します。</summary>
 /// <param name="WorkRecord">正規化された保存済み記録。</param>
@@ -104,18 +254,25 @@ public sealed record SaveWorkRecordResultDto(
     WorkSalaryCalculation Calculation,
     IReadOnlyList<IssueDto> Warnings);
 
-/// <summary>保存済み勤務記録と、その計算根拠および結果を組み合わせます。</summary>
-/// <param name="WorkRecord">保存済みの正規化された勤務内容。</param>
+/// <summary>保存済み勤務タスクと、その計算根拠および表示名を組み合わせます。</summary>
+/// <param name="WorkTask">保存済みの正規化された勤務タスク。</param>
 /// <param name="Calculation">計算内訳または明示的な設定不足結果。</param>
 /// <param name="ServiceDisplayName">計算時の設定スナップショットに保存されたサービス表示名。</param>
 /// <param name="TimeCategoryDisplayName">計算時の設定スナップショットに保存された時間区分表示名。</param>
-/// <param name="SettingMonth">計算に使用した設定対象年月。</param>
+public sealed record WorkTaskSalaryDto(
+    WorkTaskDto WorkTask,
+    TaskSalaryCalculation Calculation,
+    string? ServiceDisplayName,
+    string? TimeCategoryDisplayName);
+
+/// <summary>保存済み訪問と、そのタスク別計算根拠および結果を組み合わせます。</summary>
 public sealed record WorkRecordSalaryDto(
     WorkRecordDto WorkRecord,
     WorkSalaryCalculation Calculation,
     string? ServiceDisplayName = null,
     string? TimeCategoryDisplayName = null,
-    YearMonth? SettingMonth = null);
+    YearMonth? SettingMonth = null,
+    IReadOnlyList<WorkTaskSalaryDto>? Tasks = null);
 
 /// <summary>勤務記録 1 件の計算内訳画面に必要なデータだけを保持します。</summary>
 /// <param name="Period">勤務日を含む、両端の日付を含む給与期間。</param>

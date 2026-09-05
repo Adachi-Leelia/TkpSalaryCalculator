@@ -21,6 +21,7 @@ public sealed class DayViewModel : ViewModelBase
     private DateOnly date;
     private string dateText = string.Empty;
     private string totalText = "0円";
+    private string visitCountText = "訪問 0件";
     private string uncalculatedText = string.Empty;
     private string successMessage = string.Empty;
     private DateTime copySourceDate;
@@ -57,6 +58,7 @@ public sealed class DayViewModel : ViewModelBase
     public DateOnly Date => date;
     public string DateText { get => dateText; private set => SetProperty(ref dateText, value); }
     public string TotalText { get => totalText; private set => SetProperty(ref totalText, value); }
+    public string VisitCountText { get => visitCountText; private set => SetProperty(ref visitCountText, value); }
     public string UncalculatedText
     {
         get => uncalculatedText;
@@ -142,11 +144,9 @@ public sealed class DayViewModel : ViewModelBase
             ShiftCandidates = shiftPreview.Candidates.Select(candidate =>
             {
                 var shift = candidate.Shift;
-                var service = serviceNames.GetValueOrDefault(shift.ServiceId, "現在の設定にないサービス");
-                var category = shift.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
-                var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
+                var (name, time) = BasicShiftDisplay.Summarize(shift, serviceNames, categoryNames, formatter);
                 var row = new ShiftCandidateRowViewModel(
-                    shift.Id, name, formatter.Duration(shift.WorkMinutes), candidate.CanApply,
+                    shift.Id, name, time, candidate.CanApply,
                     candidate.CanApply && !candidate.HasSimilarManualRecord,
                     string.Join(Environment.NewLine, candidate.Issues.Select(x => x.Message)));
                 row.SelectionChanged += (_, _) => ApplyShiftsCommand.NotifyCanExecuteChanged();
@@ -165,16 +165,23 @@ public sealed class DayViewModel : ViewModelBase
         Records = daily.Records.Select(salary =>
         {
             var record = salary.WorkRecord;
-            var service = serviceNames.GetValueOrDefault(record.ServiceId, "サービス");
-            var category = record.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
-            var name = string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
+            var orderedTasks = record.Tasks.OrderBy(task => task.DisplayOrder.Value).ToArray();
+            var taskNames = orderedTasks.Select(task =>
+            {
+                var service = serviceNames.GetValueOrDefault(task.ServiceId, "現在の設定にないサービス");
+                var category = task.TimeCategoryId is { } categoryId ? categoryNames.GetValueOrDefault(categoryId) : null;
+                return string.IsNullOrWhiteSpace(category) ? service : $"{service} / {category}";
+            }).ToArray();
+            var name = string.Join("、", taskNames);
+            var duration = "タスク時間: " + string.Join("、", orderedTasks.Select(task => formatter.Duration(task.WorkMinutes)));
             var amount = salary.Calculation.Status == SalaryCalculationStatus.Calculated && salary.Calculation.Total is { } total
                 ? formatter.Money(total)
                 : "未計算";
             return new DayWorkRecordRowViewModel(
                 record.Id,
                 name,
-                formatter.Duration(record.WorkMinutes),
+                $"タスク {orderedTasks.Length}件",
+                duration,
                 amount,
                 salary.Calculation.Status == SalaryCalculationStatus.Uncalculated,
                 () => navigator.OpenWorkEditorAsync(Date, record.Id, CancellationToken.None),
@@ -182,6 +189,7 @@ public sealed class DayViewModel : ViewModelBase
                 () => DeleteRecordAsync(record.Id, name),
                 PresentError);
         }).ToArray();
+        VisitCountText = $"訪問 {Records.Count}件";
     }
 
     public Task CopyDayAsync() => RunBusyAsync(async cancellationToken =>
@@ -325,6 +333,7 @@ public sealed class DayWorkRecordRowViewModel
     public DayWorkRecordRowViewModel(
         WorkRecordId id,
         string displayName,
+        string taskCountText,
         string durationText,
         string amountText,
         bool isUncalculated,
@@ -335,6 +344,7 @@ public sealed class DayWorkRecordRowViewModel
     {
         Id = id;
         DisplayName = displayName;
+        TaskCountText = taskCountText;
         DurationText = durationText;
         AmountText = amountText;
         IsUncalculated = isUncalculated;
@@ -345,9 +355,11 @@ public sealed class DayWorkRecordRowViewModel
 
     public WorkRecordId Id { get; }
     public string DisplayName { get; }
+    public string TaskCountText { get; }
     public string DurationText { get; }
     public string AmountText { get; }
     public bool IsUncalculated { get; }
+    public string AccessibilityText => $"訪問、{TaskCountText}、{DisplayName}、訪問合計 {AmountText}";
     public AsyncCommand EditCommand { get; }
     public AsyncCommand ShowDetailsCommand { get; }
     public AsyncCommand DeleteCommand { get; }

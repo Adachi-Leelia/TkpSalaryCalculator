@@ -8,7 +8,7 @@
 | ステータス | 初期リリース向けテスト設計 |
 | 対象 | Domain、Application、Infrastructure、PresentationおよびAndroidリリースAPK |
 | 作成日 | 2026-08-15 |
-| 最終更新日 | 2026-08-30 |
+| 最終更新日 | 2026-09-05 |
 
 ## 2. 目的と関連文書
 
@@ -452,6 +452,8 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 
 `PERF-008`は、約21.9万訪問とそのタスクを保持する一時ファイルSQLiteを生成し、ホーム用の月次・年間サマリーを1回ウォームアップ後に3回計測して、最悪値が2秒未満であることを自動回帰テストでも確認する。併せて`work_record.work_date`、`work_task(work_record_id, display_order)`および`monthly_allowance.payroll_period_year_month`の範囲・親別検索が対応索引を使用すること、およびApplicationテストで締め日履歴、訪問範囲、全タスク、設定、祝日、月額手当を必要単位で一括取得することを確認する。このホスト側回帰テストは代表実機のRelease計測を置き換えず、最終リリース判定では同じ基準データをインポートした代表実機で本節の計測を実施する。
 
+`PERF-001`～`PERF-005`、`PERF-008`および`PERF-010`のホスト側回帰では、同じ約21.9万訪問について全訪問1タスクと全訪問2タスクの両方を生成する。日別再計算、給与期間再計算、カレンダー、期間切替、期間内訳および月次・年間同時集計をそれぞれ1回ウォームアップ後に3回計測し、最悪値を記録する。金額、訪問数、タスク数、索引利用および一括読取回数も同時に検証する。`PERF-009`は100タスクの作成、並べ替えを伴う編集、再計算、親子一括保存および形式3往復を自動回帰する。これらも描画完了、UI応答性および端末メモリを含む代表実機のRelease計測を置き換えない。
+
 ## 19. アクセシビリティテスト
 
 | ID | 優先度 | 条件 | 合格条件 |
@@ -487,6 +489,17 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 | `AC-15` 日常操作の負担 | `UX-001`～`UX-007`, `A11Y-001`, `A11Y-005` |
 | `AC-16` 年間給与見込み累計 | `ANNUAL-001`～`ANNUAL-013`, `UI-015`～`UI-018`, `DB-015`～`DB-018`, `DATA-016`～`DATA-018`, `PERF-008`, `A11Y-007`, `A11Y-008` |
 | `AC-17` 1訪問への複数タスク登録 | `CALC-013`～`CALC-019`, `CALC-038`, `HIST-016`～`HIST-018`, `WORK-015`～`WORK-020`, `SHIFT-011`～`SHIFT-013`, `UI-019`～`UI-021`, `DB-019`～`DB-026`, `DATA-019`～`DATA-022`, `PERF-009`, `PERF-010`, `A11Y-009` |
+
+### 20.1 複数タスク実装テストとの対応
+
+| 実装テスト | 層 | 主な仕様ID |
+| --- | --- | --- |
+| `MultiTaskSalaryCalculatorTests` | Domain | `CALC-013`～`CALC-019`, `CALC-038` |
+| `Save_MultipleTasks_*`, `CopyDay_MultipleTasks_*`, `PERF010_MultipleTasksKeepCalendarPeriodAndAnnualReadsBatchedByRange` | Application | `WORK-016`～`WORK-020`, `CALC-014`, `PERF-010` |
+| `DB009_DB022_*`, `DB023_*`, `DB019_DB025_*`, `DATA019_*`, `DATA020_*`, `DATA021_*` | Infrastructure | `DB-019`～`DB-025`, `DATA-019`～`DATA-021` |
+| `PERF001_PERF002_PERF003_PERF004_PERF005_PERF008_PERF010_*` | Infrastructure | `PERF-001`～`PERF-005`, `PERF-008`, `PERF-010` |
+| `PERF009_OneVisitWith100TasksCanBeEditedCalculatedSavedAndFormatThreeRoundTripped` | Infrastructure | `PERF-009` |
+| `WORK015_*`, `UI019_*`, `UI020_*`, `UI021_*`, `A11Y009_*` | Presentation | `WORK-015`～`WORK-019`, `UI-019`～`UI-021`, `A11Y-009` |
 
 ## 21. テスト開始条件
 

@@ -37,15 +37,31 @@
                 </VerticalStackLayout>
             </Border>
         </DataTemplate>
+        <DataTemplate x:Key="VisitTemplate" x:DataType="home:CalculationVisitRowViewModel">
+            <Border Margin="20,14,20,0" Padding="14" BackgroundColor="{StaticResource PrimaryContainer}" SemanticProperties.Description="{Binding AccessibilityText}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 12">
+                <VerticalStackLayout Spacing="6">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label FontAttributes="Bold" FontSize="18" Text="訪問" />
+                        <Label Grid.Column="1" Style="{StaticResource SupportingTextStyle}" Text="{Binding TaskCountText}" />
+                    </Grid>
+                    <Label Text="{Binding DateText}" />
+                    <Label FontAttributes="Bold" Text="{Binding TaskSummaryText}" />
+                    <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding StatusText}" />
+                </VerticalStackLayout>
+            </Border>
+        </DataTemplate>
         <DataTemplate x:Key="WorkRecordTemplate" x:DataType="home:CalculationWorkRecordRowViewModel">
             <Border Margin="32,10,20,0" Padding="12" BackgroundColor="{StaticResource PageBackground}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
                 <VerticalStackLayout Spacing="7">
+                    <Label FontAttributes="Bold" SemanticProperties.Description="{Binding AccessibilityText}" Text="{Binding TaskTitle}" />
                     <Label FontAttributes="Bold" Text="{Binding DisplayName}" />
                     <Label Text="{Binding WorkTimeText}" />
-                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
                         <Label Text="適用基本単価" /><Label Grid.Column="1" Text="{Binding AppliedRateText}" />
                         <Label Grid.Row="1" Text="基本給与" /><Label Grid.Row="1" Grid.Column="1" Text="{Binding BasePayText}" />
+                        <Label Grid.Row="2" FontAttributes="Bold" Text="タスク小計" /><Label Grid.Row="2" Grid.Column="1" FontAttributes="Bold" Text="{Binding TaskSubtotalText}" />
                     </Grid>
+                    <Label IsVisible="{Binding HasMissingReason}" Text="{Binding MissingReasonText}" TextColor="{StaticResource Warning}" />
                 </VerticalStackLayout>
             </Border>
         </DataTemplate>
@@ -60,10 +76,11 @@
             </Border>
         </DataTemplate>
         <DataTemplate x:Key="CountBonusTemplate" x:DataType="home:CalculationCountBonusRowViewModel">
-            <Border Margin="44,6,20,0" Padding="10" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 8">
-                <Grid ColumnDefinitions="*,Auto">
-                    <Label Text="{Binding DisplayName}" />
-                    <Label Grid.Column="1" Text="{Binding AmountText}" />
+            <Border Margin="32,10,20,0" Padding="10" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 8">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                    <Label Grid.ColumnSpan="2" FontAttributes="Bold" Text="訪問の件数加算" />
+                    <Label Grid.Row="1" Text="{Binding DisplayName}" />
+                    <Label Grid.Row="1" Grid.Column="1" Text="{Binding AmountText}" />
                 </Grid>
             </Border>
         </DataTemplate>
@@ -71,8 +88,8 @@
             <Border Margin="32,6,20,4" Padding="12" BackgroundColor="{StaticResource PageBackground}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
                 <VerticalStackLayout Spacing="7">
                     <Label IsVisible="{Binding HasMissingReason}" Text="{Binding MissingReasonText}" TextColor="{StaticResource Warning}" />
-                    <Grid ColumnDefinitions="*,Auto">
-                        <Label FontAttributes="Bold" Text="勤務記録合計" />
+                    <Grid IsVisible="{Binding HasTotal}" ColumnDefinitions="*,Auto">
+                        <Label FontAttributes="Bold" Text="訪問合計" />
                         <Label Grid.Column="1" FontAttributes="Bold" Text="{Binding TotalText}" />
                     </Grid>
                     <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding SettingMonthText}" />
@@ -87,6 +104,7 @@
             PremiumTemplate="{StaticResource PremiumTemplate}"
             PremiumTotalTemplate="{StaticResource PremiumTotalTemplate}"
             SectionHeaderTemplate="{StaticResource SectionHeaderTemplate}"
+            VisitTemplate="{StaticResource VisitTemplate}"
             WorkRecordTemplate="{StaticResource WorkRecordTemplate}"
             WorkRecordTotalTemplate="{StaticResource WorkRecordTotalTemplate}" />
     </ContentPage.Resources>

@@ -8,44 +8,86 @@
     x:DataType="calendar:WorkEditorViewModel"
     Title="{Binding PageTitle}">
     <Grid RowDefinitions="*,Auto" SafeAreaEdges="All">
-        <ScrollView x:Name="EditorScroll">
-            <VerticalStackLayout Padding="20" Spacing="12">
+        <ScrollView x:Name="EditorScroll" IsEnabled="{Binding IsNotBusy}">
+            <VerticalStackLayout Padding="20" Spacing="14">
                 <Label Style="{StaticResource PageTitleStyle}" Text="{Binding PageTitle}" />
-                <Label Text="勤務日（必須）" />
-                <DatePicker Date="{Binding WorkDate, Mode=TwoWay}" Format="yyyy年M月d日" />
-                <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding SettingsMonthText}" />
-                <Label Text="よく使うサービス候補" />
-                <Picker ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding PresetCandidates}" SelectedItem="{Binding SelectedPreset, Mode=TwoWay}" Title="候補を選択" />
+                <Border Padding="14" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                    <VerticalStackLayout Spacing="6">
+                        <Label FontAttributes="Bold" Text="訪問共通の勤務日（必須）" />
+                        <DatePicker Date="{Binding WorkDate, Mode=TwoWay}" Format="yyyy年M月d日" SemanticProperties.Description="この訪問の全タスクに共通する勤務日" />
+                        <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding SettingsMonthText}" />
+                        <Label
+                            IsVisible="{Binding HasSettingsMonthChangeWarning}"
+                            SemanticProperties.Description="{Binding SettingsMonthChangeWarningText}"
+                            Text="{Binding SettingsMonthChangeWarningText}"
+                            TextColor="{StaticResource Warning}" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <Label Style="{StaticResource SectionTitleStyle}" Text="訪問内のタスク" />
+                    <Label Grid.Column="1" SemanticProperties.Description="{Binding TaskCountText}" Style="{StaticResource SupportingTextStyle}" Text="{Binding TaskCountText}" />
+                </Grid>
                 <Label IsVisible="{Binding HasUnavailableCandidates}" Style="{StaticResource SupportingTextStyle}" Text="{Binding UnavailableCandidatesText}" />
-                <Label Text="サービス（必須）" />
-                <Picker x:Name="ServicePicker" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding Services}" SelectedItem="{Binding SelectedService, Mode=TwoWay}" Title="サービスを選択" />
-                <Label Text="{Binding ServiceError}" TextColor="{StaticResource Error}" />
-                <Label IsVisible="{Binding HasTimeCategories}" Text="時間区分" />
-                <Picker x:Name="TimeCategoryPicker" IsVisible="{Binding HasTimeCategories}" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding TimeCategories}" SelectedItem="{Binding SelectedTimeCategory, Mode=TwoWay}" Title="時間区分を選択" />
-                <Label Text="{Binding TimeCategoryError}" TextColor="{StaticResource Error}" />
-                <Label Text="入力方式" />
-                <Picker ItemDisplayBinding="{Binding DisplayName}" ItemsSource="{Binding InputModes}" SelectedItem="{Binding SelectedInputMode, Mode=TwoWay}" />
-                <VerticalStackLayout IsVisible="{Binding ShowDuration}" Spacing="6">
-                    <Label Text="勤務時間（分、1～1,440）" />
-                    <Entry x:Name="WorkMinutesEntry" Keyboard="Numeric" Text="{Binding WorkMinutesText, Mode=TwoWay}" />
-                    <Label Text="{Binding WorkMinutesError}" TextColor="{StaticResource Error}" />
+
+                <VerticalStackLayout x:Name="TaskList" BindableLayout.ItemsSource="{Binding Tasks}" Spacing="12">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="calendar:WorkTaskEditorViewModel">
+                            <Border Padding="14" BackgroundColor="{StaticResource Surface}" SemanticProperties.Description="{Binding AccessibilityText}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 12">
+                                <VerticalStackLayout Spacing="10">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                                        <Label FontAttributes="Bold" FontSize="18" Text="{Binding TaskTitle}" VerticalOptions="Center" />
+                                        <Button Grid.Column="1" Command="{Binding MoveUpCommand}" IsEnabled="{Binding CanMoveUp}" SemanticProperties.Description="このタスクを上へ移動" Style="{StaticResource SecondaryButtonStyle}" Text="↑" />
+                                        <Button Grid.Column="2" Command="{Binding MoveDownCommand}" IsEnabled="{Binding CanMoveDown}" SemanticProperties.Description="このタスクを下へ移動" Style="{StaticResource SecondaryButtonStyle}" Text="↓" />
+                                        <Button Grid.Column="3" Command="{Binding DeleteCommand}" IsEnabled="{Binding CanRemove}" SemanticProperties.Description="{Binding DeleteAccessibilityText}" Style="{StaticResource DestructiveButtonStyle}" Text="削除" />
+                                    </Grid>
+
+                                    <Label Text="よく使うサービス候補" />
+                                    <Picker ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding PresetCandidates}" SelectedItem="{Binding SelectedPreset, Mode=TwoWay}" Title="候補を選択" />
+                                    <Label Text="サービス（必須）" />
+                                    <Picker AutomationId="{Binding ServiceAutomationId}" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding Services}" SelectedItem="{Binding SelectedService, Mode=TwoWay}" Title="サービスを選択" />
+                                    <Label Text="{Binding ServiceError}" TextColor="{StaticResource Error}" />
+                                    <Label IsVisible="{Binding HasTimeCategories}" Text="時間区分" />
+                                    <Picker AutomationId="{Binding TimeCategoryAutomationId}" IsVisible="{Binding HasTimeCategories}" ItemDisplayBinding="{Binding PickerText}" ItemsSource="{Binding TimeCategories}" SelectedItem="{Binding SelectedTimeCategory, Mode=TwoWay}" Title="時間区分または任意時間を選択" />
+                                    <Label Text="{Binding TimeCategoryError}" TextColor="{StaticResource Error}" />
+                                    <Label Text="入力方式" />
+                                    <Picker ItemDisplayBinding="{Binding DisplayName}" ItemsSource="{Binding InputModes}" SelectedItem="{Binding SelectedInputMode, Mode=TwoWay}" />
+                                    <VerticalStackLayout IsVisible="{Binding ShowDuration}" Spacing="6">
+                                        <Label Text="勤務時間（分、1～1,440）" />
+                                        <Entry AutomationId="{Binding WorkMinutesAutomationId}" Keyboard="Numeric" Text="{Binding WorkMinutesText, Mode=TwoWay}" />
+                                        <Label Text="{Binding WorkMinutesError}" TextColor="{StaticResource Error}" />
+                                    </VerticalStackLayout>
+                                    <VerticalStackLayout IsVisible="{Binding ShowStartTime}" Spacing="6">
+                                        <Label Text="開始時刻" />
+                                        <TimePicker AutomationId="{Binding StartTimeAutomationId}" Time="{Binding StartTime, Mode=TwoWay}" />
+                                        <Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" />
+                                    </VerticalStackLayout>
+                                    <VerticalStackLayout IsVisible="{Binding ShowEndTime}" Spacing="6">
+                                        <Label Text="終了時刻" />
+                                        <TimePicker AutomationId="{Binding EndTimeAutomationId}" Time="{Binding EndTime, Mode=TwoWay}" />
+                                        <Label Style="{StaticResource SupportingTextStyle}" Text="終了時刻が開始時刻以前の場合は翌日として扱います。" />
+                                        <Label Text="{Binding EndTimeError}" TextColor="{StaticResource Error}" />
+                                    </VerticalStackLayout>
+                                    <Border Padding="10" BackgroundColor="{StaticResource PageBackground}" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 8">
+                                        <VerticalStackLayout Spacing="4">
+                                            <Label FontAttributes="Bold" Text="{Binding PreviewText}" />
+                                            <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding NormalizedTimeText}" />
+                                        </VerticalStackLayout>
+                                    </Border>
+                                    <Label IsVisible="{Binding HasTaskIssues}" Text="{Binding TaskIssueMessage}" TextColor="{StaticResource Warning}" />
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
                 </VerticalStackLayout>
-                <VerticalStackLayout IsVisible="{Binding ShowStartTime}" Spacing="6">
-                    <Label Text="開始時刻" />
-                    <TimePicker x:Name="StartTimePicker" Time="{Binding StartTime, Mode=TwoWay}" />
-                    <Label Text="{Binding StartTimeError}" TextColor="{StaticResource Error}" />
-                </VerticalStackLayout>
-                <VerticalStackLayout IsVisible="{Binding ShowEndTime}" Spacing="6">
-                    <Label Text="終了時刻" />
-                    <TimePicker x:Name="EndTimePicker" Time="{Binding EndTime, Mode=TwoWay}" />
-                    <Label Style="{StaticResource SupportingTextStyle}" Text="終了時刻が開始時刻以前の場合は翌日として扱います。" />
-                    <Label Text="{Binding EndTimeError}" TextColor="{StaticResource Error}" />
-                </VerticalStackLayout>
-                <Button Command="{Binding PreviewCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="給与をプレビュー" />
+
+                <Button Command="{Binding AddTaskCommand}" SemanticProperties.Description="この訪問の末尾に空のタスクを追加" Style="{StaticResource SecondaryButtonStyle}" Text="タスクを追加" />
+                <Button Command="{Binding PreviewCommand}" Style="{StaticResource SecondaryButtonStyle}" Text="訪問全体をプレビュー" />
                 <Border Padding="14" BackgroundColor="{StaticResource PrimaryContainer}" Stroke="{StaticResource Primary}" StrokeShape="RoundRectangle 12">
                     <VerticalStackLayout Spacing="6">
-                        <Label FontAttributes="Bold" Text="{Binding PreviewText}" />
-                        <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding NormalizedTimeText}" />
+                        <Label Text="{Binding PreviewText}" />
+                        <Label IsVisible="{Binding HasCountBonus}" Text="{Binding CountBonusText}" />
+                        <Label FontAttributes="Bold" FontSize="20" IsVisible="{Binding HasVisitTotal}" SemanticProperties.Description="{Binding VisitTotalText}" Text="{Binding VisitTotalText}" />
                     </VerticalStackLayout>
                 </Border>
                 <Label IsVisible="{Binding HasIssues}" Text="{Binding IssueMessage}" TextColor="{StaticResource Warning}" />
@@ -53,6 +95,6 @@
                 <BoxView HeightRequest="12" />
             </VerticalStackLayout>
         </ScrollView>
-        <controls:FixedSaveBar Grid.Row="1" IsSaving="{Binding IsBusy}" SaveCommand="{Binding SaveCommand}" SaveText="保存" />
+        <controls:FixedSaveBar Grid.Row="1" IsSaving="{Binding IsBusy}" SaveCommand="{Binding SaveCommand}" SaveText="訪問を保存" />
     </Grid>
 </ContentPage>
