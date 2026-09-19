@@ -107,7 +107,13 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
                                 ["type"] = query.Type,
                             };
                             for (var index = 0; index < reader.FieldCount; index++)
-                                values[reader.GetName(index)] = reader.IsDBNull(index) ? null : reader.GetValue(index);
+                            {
+                                var column = reader.GetName(index);
+                                if (query.Type == "work_record" && column == "is_count_bonus_enabled")
+                                    values[WorkRecordJsonContract.CountBonusProperty] = reader.GetBoolean(index);
+                                else
+                                    values[column] = reader.IsDBNull(index) ? null : reader.GetValue(index);
+                            }
                             var element = JsonSerializer.SerializeToElement(values);
                             await records.Writer.WriteAsync(
                                 new DataTransferRecord<JsonElement>(query.Section, sequence++, element),
@@ -271,7 +277,7 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
             FROM basic_shift_task ORDER BY basic_shift_id, display_order;
             """),
         new(DataTransferSection.WorkRecords, 0, "work_record", """
-            SELECT id, work_date, source_basic_shift_id, source_work_record_id, save_operation_id,
+            SELECT id, work_date, is_count_bonus_enabled, source_basic_shift_id, source_work_record_id, save_operation_id,
                    created_at_utc, updated_at_utc
             FROM work_record ORDER BY work_date, id;
             """),
@@ -307,7 +313,8 @@ public sealed class SqliteExportDataSource(SqliteDatabase database) : IExportDat
 public sealed class SqliteImportStagingRepository : IImportStagingRepository
 {
     private const string FormatName = "tkp-salary-calculator";
-    private const int FormatVersion = 3;
+    private const int FormatVersion = 4;
+    private const int ParentChildFormatVersion = 3;
     private const int LegacyFormatVersionOne = 1;
     private const int LegacyFormatVersionTwo = 2;
     private readonly SqliteDatabase liveDatabase;
@@ -424,7 +431,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         if (RequiredString(header, "format") != FormatName)
             throw new InvalidDataException("The import format is not supported.");
         var version = RequiredInt32(header, "formatVersion");
-        if (version is not LegacyFormatVersionOne and not LegacyFormatVersionTwo and not FormatVersion)
+        if (version is not LegacyFormatVersionOne and not LegacyFormatVersionTwo and not ParentChildFormatVersion and not FormatVersion)
             throw new InvalidDataException($"Export format version {version} is not supported.");
         await ValidateRecordTypesForVersionAsync(stage, version, cancellationToken).ConfigureAwait(false);
         await ValidateAnnualSummarySettingRecordAsync(stage, version, cancellationToken).ConfigureAwait(false);
@@ -446,13 +453,13 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             }
             foreach (var table in InsertOrder)
             {
-                if (version != FormatVersion &&
+                if (version < ParentChildFormatVersion &&
                     table.Name is ("basic_shift" or "basic_shift_task" or "work_record" or "work_task"))
                     continue;
-                await InsertStagedTableAsync(stage, context.Connection, context.Transaction, table, token)
+                await InsertStagedTableAsync(stage, context.Connection, context.Transaction, table, version, token)
                     .ConfigureAwait(false);
             }
-            if (version != FormatVersion)
+            if (version < ParentChildFormatVersion)
             {
                 await InsertLegacyBasicShiftsAsync(stage, context.Connection, context.Transaction, token)
                     .ConfigureAwait(false);
@@ -803,7 +810,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         int formatVersion,
         CancellationToken cancellationToken)
     {
-        if (formatVersion == FormatVersion) return;
+        if (formatVersion >= ParentChildFormatVersion) return;
         await using var command = stage.CreateCommand();
         command.CommandText = """
             SELECT COUNT(*) FROM staged_record
@@ -870,9 +877,9 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
                 parent.CommandText = """
                     INSERT INTO work_record(
                         id, work_date, source_basic_shift_id, source_work_record_id, save_operation_id,
-                        created_at_utc, updated_at_utc)
+                        created_at_utc, updated_at_utc, is_count_bonus_enabled)
                     VALUES($id, $work_date, $source_basic_shift_id, $source_work_record_id,
-                        $save_operation_id, $created_at_utc, $updated_at_utc);
+                        $save_operation_id, $created_at_utc, $updated_at_utc, 1);
                     """;
                 foreach (var column in new[]
                          {
@@ -933,7 +940,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
     }
 
     private static async Task InsertStagedTableAsync(SqliteConnection stage, SqliteConnection candidate,
-        SqliteTransaction transaction, TableSpec table, CancellationToken cancellationToken)
+        SqliteTransaction transaction, TableSpec table, int formatVersion, CancellationToken cancellationToken)
     {
         await using var select = stage.CreateCommand();
         select.CommandText = "SELECT json FROM staged_record WHERE record_type = $type ORDER BY sequence;";
@@ -942,13 +949,13 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             using var document = JsonDocument.Parse(reader.GetString(0));
-            await InsertElementAsync(candidate, transaction, table, document.RootElement, cancellationToken)
+            await InsertElementAsync(candidate, transaction, table, document.RootElement, formatVersion, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
 
     private static async Task InsertElementAsync(SqliteConnection connection, SqliteTransaction transaction,
-        TableSpec table, JsonElement element, CancellationToken cancellationToken)
+        TableSpec table, JsonElement element, int formatVersion, CancellationToken cancellationToken)
     {
         var names = string.Join(", ", table.Columns);
         var parameters = string.Join(", ", table.Columns.Select((_, index) => $"$p{index}"));
@@ -959,7 +966,11 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         {
             var column = table.Columns[index];
             object value = DBNull.Value;
-            if (element.TryGetProperty(column, out var property) && property.ValueKind != JsonValueKind.Null)
+            if (table.Name == "work_record" && column == "is_count_bonus_enabled")
+            {
+                value = formatVersion < FormatVersion || WorkRecordJsonContract.ReadCountBonusEnabled(element) ? 1L : 0L;
+            }
+            else if (element.TryGetProperty(column, out var property) && property.ValueKind != JsonValueKind.Null)
             {
                 value = property.ValueKind switch
                 {
@@ -1034,7 +1045,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
             initialSnapshotId = reader.GetString(0);
             var metadataVersion = reader.GetInt32(1);
             if (metadataVersion != expectedFormatVersion ||
-                expectedFormatVersion is not LegacyFormatVersionOne and not LegacyFormatVersionTwo and not FormatVersion)
+                expectedFormatVersion is not LegacyFormatVersionOne and not LegacyFormatVersionTwo and not ParentChildFormatVersion and not FormatVersion)
                 throw new InvalidDataException(
                     $"Metadata export format version {metadataVersion} does not match header version {expectedFormatVersion}.");
         }
@@ -1406,7 +1417,7 @@ public sealed class SqliteImportStagingRepository : IImportStagingRepository
         new("service_preset", "id", "display_name", "service_id", "time_category_id", "default_work_minutes", "display_order", "is_enabled", "created_at_utc", "updated_at_utc"),
         new("basic_shift", "id", "weekday", "display_order", "is_enabled", "created_at_utc", "updated_at_utc"),
         new("basic_shift_task", "id", "basic_shift_id", "service_preset_id", "service_id", "time_category_id", "input_mode", "work_minutes", "start_time_minutes", "end_time_minutes", "display_order", "created_at_utc", "updated_at_utc"),
-        new("work_record", "id", "work_date", "source_basic_shift_id", "source_work_record_id", "save_operation_id", "created_at_utc", "updated_at_utc"),
+        new("work_record", "id", "work_date", "is_count_bonus_enabled", "source_basic_shift_id", "source_work_record_id", "save_operation_id", "created_at_utc", "updated_at_utc"),
         new("work_task", "id", "work_record_id", "service_id", "time_category_id", "input_mode", "work_minutes", "start_time_minutes", "end_time_minutes", "display_order", "source_service_preset_id", "created_at_utc", "updated_at_utc"),
         new("closing_rule_history", "id", "effective_from_year_month", "closing_day", "is_end_of_month", "created_at_utc"),
         new("monthly_allowance", "id", "payroll_period_year_month", "display_name", "amount_yen", "created_at_utc", "updated_at_utc"),

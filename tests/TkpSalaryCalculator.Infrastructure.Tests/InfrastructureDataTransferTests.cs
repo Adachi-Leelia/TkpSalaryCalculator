@@ -85,8 +85,10 @@ public sealed partial class InfrastructureResilienceTests
         Assert.Equal(beforeSalary, afterSalary);
     }
 
-    [Fact]
-    public async Task DATA019_FormatThreeRoundTripPreservesMultipleTasksAndTheirOrder()
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task DATA019_DATA023_FormatThreeAndFourImportPreservesMultipleTasksAndTheirOrder(int inputVersion)
     {
         await using var source = await TestDatabase.CreateCompleteAsync(1);
         var workRecordId = TestDatabase.WorkId(0);
@@ -123,7 +125,7 @@ public sealed partial class InfrastructureResilienceTests
         Assert.Equal(2, beforeSalary.TaskCount);
         Assert.Equal(1, beforeSalary.CountBonusItemCount);
         Assert.Equal(150, beforeSalary.CountBonus);
-        Assert.Equal(3, exported["formatVersion"]!.GetValue<int>());
+        Assert.Equal(4, exported["formatVersion"]!.GetValue<int>());
         Assert.Equal(2, exported["data"]!.AsArray().Count(node =>
             node!["value"]!["type"]!.GetValue<string>() == "work_task"));
         Assert.Equal(2, exported["data"]!.AsArray().Count(node =>
@@ -131,6 +133,17 @@ public sealed partial class InfrastructureResilienceTests
         Assert.DoesNotContain(exported["data"]!.AsArray(), node =>
             node!["value"]!["type"]!.GetValue<string>() is "work_record" or "basic_shift" &&
             node["value"]!.AsObject().ContainsKey("tasks"));
+
+        if (inputVersion == 3)
+        {
+            exported["formatVersion"] = 3;
+            foreach (var item in exported["data"]!.AsArray())
+            {
+                var value = item!["value"]!.AsObject();
+                if (value["type"]!.GetValue<string>() == "app_metadata") value["export_format_version"] = 3;
+                if (value["type"]!.GetValue<string>() == "work_record") value.Remove("isCountBonusEnabled");
+            }
+        }
 
         // File occurrence order is not a foreign-key insertion contract: put every child before its parent.
         exported["data"] = new JsonArray(exported["data"]!.AsArray()
@@ -149,6 +162,7 @@ public sealed partial class InfrastructureResilienceTests
 
         var work = await new SqliteWorkRecordRepository(destination.Database, clock)
             .FindAsync(new WorkRecordId(workRecordId), default);
+        Assert.True(work!.IsCountBonusEnabled);
         Assert.Equal(sourceWork, work);
         var shift = await new SqliteBasicShiftRepository(destination.Database, clock)
             .FindAsync(new BasicShiftId(shiftId), default);
@@ -197,6 +211,8 @@ public sealed partial class InfrastructureResilienceTests
     private static async Task VerifyLargeStreamingRoundTripAsync(int recordCount)
     {
         await using var source = await TestDatabase.CreateCompleteAsync(recordCount);
+        await using (var sourceConnection = await source.OpenAsync())
+            await ExecuteAsync(sourceConnection, "UPDATE work_record SET is_count_bonus_enabled = rowid % 2;");
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 4, 0, 0, TimeSpan.Zero));
         var transferPath = Path.Combine(source.Root, $"transfer-{recordCount}.json");
         var stopwatch = Stopwatch.StartNew();
@@ -236,6 +252,10 @@ public sealed partial class InfrastructureResilienceTests
         Assert.Equal(recordCount, await ScalarLongAsync(connection,
             $"SELECT COUNT(*) FROM work_task WHERE service_id = '{source.ServiceId:D}' " +
             $"AND time_category_id = '{source.CompleteTimeCategoryId:D}' AND work_minutes = 60;"));
+        Assert.Equal(recordCount / 2, await ScalarLongAsync(connection,
+            "SELECT COUNT(*) FROM work_record WHERE is_count_bonus_enabled = 0;"));
+        Assert.Equal((recordCount + 1) / 2, await ScalarLongAsync(connection,
+            "SELECT COUNT(*) FROM work_record WHERE is_count_bonus_enabled = 1;"));
         Assert.Equal("ok", await ScalarStringAsync(connection, "PRAGMA integrity_check;"));
         Assert.Equal(0L, await CountRowsAsync(connection, "PRAGMA foreign_key_check;"));
         Assert.True(stopwatch.Elapsed > TimeSpan.Zero);
@@ -359,7 +379,7 @@ public sealed partial class InfrastructureResilienceTests
                 INSERT INTO monthly_allowance VALUES($allowance, 202608, 'Complete Allowance', 1000, $now, $now);
                 INSERT INTO setting_month VALUES(202608, $snapshot, $now, $now);
                 UPDATE app_metadata SET initial_setup_status = 'Completed', initial_setup_step = NULL,
-                    initial_snapshot_id = $snapshot, export_format_version = 3, created_at_utc = $now,
+                    initial_snapshot_id = $snapshot, export_format_version = 4, created_at_utc = $now,
                     updated_at_utc = $now WHERE id = 1;
                 """;
             Add(command, "$holiday", "40000000-0000-4000-8000-000000000004");

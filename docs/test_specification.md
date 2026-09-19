@@ -8,7 +8,7 @@
 | ステータス | 初期リリース向けテスト設計 |
 | 対象 | Domain、Application、Infrastructure、PresentationおよびAndroidリリースAPK |
 | 作成日 | 2026-08-15 |
-| 最終更新日 | 2026-09-12 |
+| 最終更新日 | 2026-09-19 |
 
 ## 2. 目的と関連文書
 
@@ -536,7 +536,7 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 
 ### 20.1 複数タスク実装テストとの対応
 
-以下は件数手当選択対応前の実装テストとの対応である。形式4へ更新したケースと追加ケースの実装・実行結果は後続タスクで更新し、既存の形式3テストの成功を形式4の検証済みとして扱わない。
+以下は複数タスク対応の実装テストとの対応である。タスク3で転送テストを形式4へ更新し、形式3の入力互換テストも維持した。件数手当選択の追加テストは20.2節に記載する。
 
 | 実装テスト | 層 | 主な仕様ID |
 | --- | --- | --- |
@@ -544,12 +544,21 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 | `Save_MultipleTasks_*`, `CopyDay_MultipleTasks_*`, `PERF010_MultipleTasksKeepCalendarPeriodAndAnnualReadsBatchedByRange` | Application | `WORK-016`～`WORK-020`, `CALC-014`, `PERF-010` |
 | `DB009_DB022_*`, `DB023_*`, `DB019_DB025_*`, `DATA019_*`, `DATA020_*`, `DATA021_*` | Infrastructure | `DB-019`～`DB-025`, `DATA-019`～`DATA-021` |
 | `PERF001_PERF002_PERF003_PERF004_PERF005_PERF008_PERF010_*` | Infrastructure | `PERF-001`～`PERF-005`, `PERF-008`, `PERF-010` |
-| `PERF009_OneVisitWith100TasksCanBeEditedCalculatedSavedAndFormatThreeRoundTripped` | Infrastructure | `PERF-009` |
+| `PERF009_OneVisitWith100TasksCanBeEditedCalculatedSavedAndFormatFourRoundTripped` | Infrastructure | `PERF-009` |
 | `WORK015_*`, `UI019_*`, `UI020_*`, `UI021_*`, `A11Y009_*` | Presentation | `WORK-015`～`WORK-019`, `UI-019`～`UI-021`, `A11Y-009` |
 
 ### 20.2 件数手当選択の要件・受入条件対応
 
-[タスク定義書7節](work_record_count_bonus_toggle_task_definition.md#7-受入条件検証)の管理IDすべてを、要件IDと実装時に使用するテストIDへ対応付ける。2026-09-12のタスク2で`CALC-040`～`CALC-044`を`MultiTaskSalaryCalculatorTests.Calc040_*`～`Calc044_*`へ実装し、実行済み。`ParentChildContractTests`で既定ON・ON／OFFのDomain変換・構造比較を、`MultiTaskSalaryCalculatorTests.MixedSelectionsPreserveDailyPeriodAndAnnualTotals`でDomain集計の金額と選択保持を検証した。`CALC-045`のApplication経路および画面・保存・複製・転送・Android操作を含む残りの検証は後続タスクで実施する。
+[タスク定義書7節](work_record_count_bonus_toggle_task_definition.md#7-受入条件検証)の管理IDすべてを、要件IDと実装時に使用するテストIDへ対応付ける。2026-09-12のタスク2で`CALC-040`～`CALC-044`を`MultiTaskSalaryCalculatorTests.Calc040_*`～`Calc044_*`へ実装し、実行済み。`ParentChildContractTests`で既定ON・ON／OFFのDomain変換・構造比較を、`MultiTaskSalaryCalculatorTests.MixedSelectionsPreserveDailyPeriodAndAnnualTotals`でDomain集計の金額と選択保持を検証した。タスク3では以下の移行・永続化・転送テストを追加・更新した。`CALC-045`の登録経路、`DB-031`の最終データ変更日時との一括確定・同一操作IDの競合判定、および画面・複製・基本シフト反映・Android操作を含む残りの検証はタスク4～6で実施する。
+
+| 実装テスト | タスク3で確認する範囲 |
+| --- | --- |
+| `DB027_DB028_*`, `DB029_*`, `DB030_*` | 6→7移行、給与内訳・日別・期間・年間の一致、再起動後のOFF保持、移行失敗のロールバック・再試行、DBの0/1制約 |
+| `DB020_DB021_DB024_DB031_*` | ON／OFFの追加・更新・全読取、全タスクとの一括保存、子保存失敗時の選択値のロールバック |
+| `LegacyVersionOneImportBackfillsDecemberAnnualClosingMonth`, `DATA020_*`, `DATA019_DATA023_*` | 形式1～3のON補完と親子変換、形式1の年間締め月補完、次回の形式4出力 |
+| `DATA024_*`, `DATA025_*` | ON／OFF混在・複数タスク・給与集計の往復、値欠落・不正型・将来版の拒否、既存DBの保持 |
+| `DATA012_DATA026_*` | OFFを含む転送取消、全置換後の同梱データ再投入失敗時の復元・再試行・一時ファイル清掃 |
+| `DATA010_DATA022_*` | ON／OFF混在の4,096件・219,000件の逐次転送と全件保持 |
 
 | 受入条件 | 要件ID | テストID | 主な検証層 |
 | --- | --- | --- | --- |
@@ -571,7 +580,7 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 | `CB-16` 不正入力・取消・失敗 | `FR-DATA-04`, `FR-DATA-05`, `FR-DATA-08` | `DATA-025`, `DATA-026` | Infrastructure |
 | `CB-17` Android操作・読み上げ | `FR-WORK-08`, `FR-SHIFT-04`, `AC-18` | `A11Y-010` | Android実機・エミュレーター |
 
-関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。タスク2では`dotnet test --no-restore`でDomain 154件、Application 127件、Infrastructure 69件、App 158件の計508件が成功した。ON／OFF混在データで`DATA-010`・`DATA-022`の逐次処理と有界メモリ、および`PERF-001`～`PERF-010`の既存集計性能・100タスクストレスを維持する。Android確認は5節の環境で行い、未実施項目はリリース検証として明記する。
+関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。タスク2では`dotnet test --no-restore`でDomain 154件、Application 127件、Infrastructure 69件、App 158件の計508件が成功した。2026-09-19のタスク3では同じ4プロジェクトを`dotnet test --no-restore`で実行し、Domain 154件、Application 127件、Infrastructure 86件、App 158件の計525件が成功した。InfrastructureはLongRunningも含めて全件実行し、ON／OFF混在の4,096件・219,000件の逐次転送、既存集計性能および100タスクストレスの回帰テストを通過した。Android操作は未実施であり、タスク4～6の登録経路・画面対応後に5節の環境でリリース検証する。
 
 ## 21. テスト開始条件
 

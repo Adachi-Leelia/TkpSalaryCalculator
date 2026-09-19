@@ -585,19 +585,20 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         {
             command.Transaction = transaction;
             command.CommandText = upsert ? """
-                INSERT INTO work_record(id, work_date, source_basic_shift_id, source_work_record_id,
+                INSERT INTO work_record(id, work_date, is_count_bonus_enabled, source_basic_shift_id, source_work_record_id,
                     save_operation_id, created_at_utc, updated_at_utc)
-                VALUES($id, $date, $shift, $source,
+                VALUES($id, $date, $countBonus, $shift, $source,
                     COALESCE((SELECT save_operation_id FROM work_record WHERE id = $id), $operation),
                     $now, $now)
                 ON CONFLICT(id) DO UPDATE SET work_date = excluded.work_date,
+                    is_count_bonus_enabled = excluded.is_count_bonus_enabled,
                     source_basic_shift_id = excluded.source_basic_shift_id,
                     source_work_record_id = excluded.source_work_record_id,
                     updated_at_utc = excluded.updated_at_utc;
                 """ : """
-                INSERT INTO work_record(id, work_date, source_basic_shift_id, source_work_record_id,
+                INSERT INTO work_record(id, work_date, is_count_bonus_enabled, source_basic_shift_id, source_work_record_id,
                     save_operation_id, created_at_utc, updated_at_utc)
-                VALUES($id, $date, $shift, $source, $operation, $now, $now);
+                VALUES($id, $date, $countBonus, $shift, $source, $operation, $now, $now);
                 """;
             BindParent(command, value, operationId ?? SqliteValue.Id(value.Id.Value), now);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -636,6 +637,7 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
     {
         command.Parameters.AddValue("$id", SqliteValue.Id(value.Id.Value));
         command.Parameters.AddValue("$date", SqliteValue.Date(value.WorkDate));
+        command.Parameters.AddValue("$countBonus", value.IsCountBonusEnabled ? 1 : 0);
         command.Parameters.AddValue("$shift", value.SourceBasicShiftId is { } shift ? SqliteValue.Id(shift.Value) : null);
         command.Parameters.AddValue("$source", value.SourceWorkRecordId is { } source ? SqliteValue.Id(source.Value) : null);
         command.Parameters.AddValue("$operation", operationId);
@@ -759,7 +761,8 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
                     reader.GetNullableString("source_basic_shift_id") is { } shift
                         ? new BasicShiftId(SqliteValue.Guid(shift)) : null,
                     reader.GetNullableString("source_work_record_id") is { } source
-                        ? new WorkRecordId(SqliteValue.Guid(source)) : null);
+                        ? new WorkRecordId(SqliteValue.Guid(source)) : null,
+                    reader.GetBoolean("is_count_bonus_enabled"));
                 builders.Add(id, builder);
                 order.Add(id);
             }
@@ -786,7 +789,7 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
             if (builder.Tasks.Count == 0)
                 throw new InvalidDataException($"Work record {id.Value:D} has no tasks.");
             var value = new WorkRecordDto(id, builder.WorkDate, builder.Tasks,
-                builder.SourceBasicShiftId, builder.SourceWorkRecordId);
+                builder.SourceBasicShiftId, builder.SourceWorkRecordId, builder.IsCountBonusEnabled);
             Validate(value);
             result.Add(value);
         }
@@ -794,7 +797,7 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
     }
 
     private const string SelectParentAndTasksSql = """
-        SELECT wr.id AS record_id, wr.work_date, wr.source_basic_shift_id,
+        SELECT wr.id AS record_id, wr.work_date, wr.is_count_bonus_enabled, wr.source_basic_shift_id,
                wr.source_work_record_id, task.id AS task_id, task.service_id,
                task.time_category_id, task.input_mode, task.work_minutes, task.start_time_minutes,
                task.end_time_minutes, task.display_order AS task_display_order,
@@ -807,7 +810,8 @@ public sealed class SqliteWorkRecordRepository(SqliteDatabase database, IUtcCloc
         WorkRecordId Id,
         DateOnly WorkDate,
         BasicShiftId? SourceBasicShiftId,
-        WorkRecordId? SourceWorkRecordId)
+        WorkRecordId? SourceWorkRecordId,
+        bool IsCountBonusEnabled)
     {
         internal List<WorkTaskDto> Tasks { get; } = [];
     }

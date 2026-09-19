@@ -259,10 +259,11 @@ public sealed partial class InfrastructureResilienceTests
     }
 
     [Fact]
-    public async Task DATA012_CancellationDuringPrepareDeletesStageAndCandidateAndKeepsLiveDatabase()
+    public async Task DATA012_DATA026_CancellationDuringPrepareDeletesStageAndCandidateAndKeepsLiveDatabase()
     {
         await using var source = await TestDatabase.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 2, 0, 0, TimeSpan.Zero));
+        await AddLiveMarkerAsync(source, clock);
         var exported = await ExportAsync(source, clock);
         await using var destination = await TestDatabase.CreateSeededAsync();
         var existing = await AddLiveMarkerAsync(destination, clock);
@@ -293,10 +294,11 @@ public sealed partial class InfrastructureResilienceTests
     }
 
     [Fact]
-    public async Task DATA012_BootstrapFailureCanBeRetriedInSameProcessAndRemovesTemporaryBackups()
+    public async Task DATA012_DATA026_BootstrapFailureCanBeRetriedInSameProcessAndRemovesTemporaryBackups()
     {
         await using var source = await TestDatabase.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 16, 2, 30, 0, TimeSpan.Zero));
+        var sourceRecord = await AddLiveMarkerAsync(source, clock);
         var exported = await ExportAsync(source, clock);
         await using var destination = await TestDatabase.CreateSeededAsync();
         var existing = await AddLiveMarkerAsync(destination, clock);
@@ -334,6 +336,8 @@ public sealed partial class InfrastructureResilienceTests
 
         await useCase.CommitImportAsync(preview.Id, default);
 
+        Assert.Equal(sourceRecord, await new SqliteWorkRecordRepository(destination.Database, clock)
+            .FindAsync(sourceRecord.Id, default));
         Assert.Null(await new SqliteWorkRecordRepository(destination.Database, clock)
             .FindAsync(existing.Id, default));
         await using (var live = await destination.OpenPooledAsync())
@@ -389,7 +393,7 @@ public sealed partial class InfrastructureResilienceTests
             new WorkTaskDto(new WorkTaskId(id.Value), new ServiceId(database.ServiceId), null,
                 WorkInputMode.Duration, new WorkMinutes(45), null, null,
                 new DisplayOrder(0), null),
-        ], null, null);
+        ], null, null, IsCountBonusEnabled: false);
         await new SqliteWorkRecordRepository(database.Database, clock).UpsertAsync(marker, default);
         return marker;
     }
