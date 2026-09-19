@@ -126,13 +126,15 @@ public sealed record TaskSalaryCalculation(
 /// <param name="CountBonuses">訪問へ適用された個別の件数加算。</param>
 /// <param name="Total">訪問の合計。未計算の場合は <see langword="null"/>。</param>
 /// <param name="MissingRequirements">全タスクから集約したタスクID付き不足理由。</param>
+/// <param name="IsCountBonusEnabled">計算入力で指定された訪問全体の件数手当の選択。</param>
 public sealed record WorkSalaryCalculation(
     WorkRecordId WorkRecordId,
     SalaryCalculationStatus Status,
     IReadOnlyList<TaskSalaryCalculation> TaskCalculations,
     IReadOnlyList<AppliedCountBonus> CountBonuses,
     YenAmount? Total,
-    IReadOnlyList<MissingCalculationRequirement> MissingRequirements)
+    IReadOnlyList<MissingCalculationRequirement> MissingRequirements,
+    bool IsCountBonusEnabled = true)
 {
     /// <summary>計算済みタスクの基本給与合計を取得します。</summary>
     public YenAmount? BasePay => Status == SalaryCalculationStatus.Calculated

@@ -5,8 +5,10 @@ namespace TkpSalaryCalculator.Application.Tests;
 
 public sealed class ParentChildContractTests
 {
-    [Fact]
-    public void WorkRecordDtoConvertsAllTasksToDomainWithoutOriginMetadata()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WorkRecordDtoConvertsAllTasksToDomainWithoutOriginMetadata(bool isCountBonusEnabled)
     {
         var recordId = new WorkRecordId(Guid.NewGuid());
         var firstId = new WorkTaskId(Guid.NewGuid());
@@ -22,16 +24,45 @@ public sealed class ParentChildContractTests
                     WorkInputMode.Duration, new WorkMinutes(30), null, null, new DisplayOrder(1), null),
             ],
             new BasicShiftId(Guid.NewGuid()),
-            new WorkRecordId(Guid.NewGuid()));
+            new WorkRecordId(Guid.NewGuid()),
+            isCountBonusEnabled);
 
         var domain = dto.ToDomain();
 
         Assert.Equal(recordId, domain.Id);
+        Assert.Equal(isCountBonusEnabled, domain.IsCountBonusEnabled);
         Assert.Equal([firstId, secondId], domain.Tasks.Select(task => task.Id));
         Assert.Equal([0, 1], domain.Tasks.Select(task => task.DisplayOrder.Value));
         Assert.DoesNotContain(
             typeof(TkpSalaryCalculator.Domain.Models.WorkTask).GetProperties(),
             property => property.Name.Contains("Source", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WorkContractsDefaultToEnabledAndIncludeSelectionInStructuralEquality()
+    {
+        var date = new DateOnly(2026, 8, 15);
+        var record = TestData.Work(date);
+        var command = TestData.SaveCommand(date);
+
+        Assert.True(record.IsCountBonusEnabled);
+        Assert.True(record.ToDomain().IsCountBonusEnabled);
+        Assert.True(command.IsCountBonusEnabled);
+
+        var disabledRecord = record with { IsCountBonusEnabled = false };
+        var disabledCommand = command with { IsCountBonusEnabled = false };
+        Assert.NotEqual(record, disabledRecord);
+        Assert.NotEqual(command, disabledCommand);
+        Assert.False(disabledRecord.ToDomain().IsCountBonusEnabled);
+
+        var recordCopy = disabledRecord with { Tasks = disabledRecord.Tasks.ToArray() };
+        var commandCopy = disabledCommand with { Tasks = disabledCommand.Tasks.ToArray() };
+        Assert.Equal(disabledRecord, recordCopy);
+        Assert.Equal(disabledRecord.GetHashCode(), recordCopy.GetHashCode());
+        Assert.Equal(disabledCommand, commandCopy);
+        Assert.Equal(disabledCommand.GetHashCode(), commandCopy.GetHashCode());
+        Assert.True(TestData.Work(date).IsCountBonusEnabled);
+        Assert.True(TestData.SaveCommand(date).IsCountBonusEnabled);
     }
 
     [Fact]

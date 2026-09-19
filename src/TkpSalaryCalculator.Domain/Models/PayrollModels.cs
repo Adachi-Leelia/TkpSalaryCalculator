@@ -129,7 +129,7 @@ public sealed record WorkTask
 public sealed record WorkRecord
 {
     /// <summary>訪問を生成します。</summary>
-    public WorkRecord(WorkRecordId Id, DateOnly WorkDate, IReadOnlyList<WorkTask> Tasks)
+    public WorkRecord(WorkRecordId Id, DateOnly WorkDate, IReadOnlyList<WorkTask> Tasks, bool IsCountBonusEnabled = true)
     {
         DomainIdGuard.NotEmpty(Id.Value, nameof(Id));
         ArgumentNullException.ThrowIfNull(Tasks);
@@ -160,6 +160,7 @@ public sealed record WorkRecord
 
         this.Id = Id;
         this.WorkDate = WorkDate;
+        this.IsCountBonusEnabled = IsCountBonusEnabled;
         this.Tasks = new ReadOnlyCollection<WorkTask>(ordered);
     }
 
@@ -168,6 +169,9 @@ public sealed record WorkRecord
 
     /// <summary>訪問のローカル勤務日を取得します。</summary>
     public DateOnly WorkDate { get; }
+
+    /// <summary>訪問全体へ件数加算を適用するかどうかを取得します。既定値はONです。</summary>
+    public bool IsCountBonusEnabled { get; }
 
     /// <summary>表示順に並んだ勤務タスクを取得します。</summary>
     public IReadOnlyList<WorkTask> Tasks { get; }

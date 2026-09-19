@@ -549,7 +549,7 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 
 ### 20.2 件数手当選択の要件・受入条件対応
 
-[タスク定義書7節](work_record_count_bonus_toggle_task_definition.md#7-受入条件検証)の管理IDすべてを、要件IDと実装時に使用するテストIDへ対応付ける。各行の検証は未実施であり、実装テスト名は後続タスクで記録する。
+[タスク定義書7節](work_record_count_bonus_toggle_task_definition.md#7-受入条件検証)の管理IDすべてを、要件IDと実装時に使用するテストIDへ対応付ける。2026-09-12のタスク2で`CALC-040`～`CALC-044`を`MultiTaskSalaryCalculatorTests.Calc040_*`～`Calc044_*`へ実装し、実行済み。`ParentChildContractTests`で既定ON・ON／OFFのDomain変換・構造比較を、`MultiTaskSalaryCalculatorTests.MixedSelectionsPreserveDailyPeriodAndAnnualTotals`でDomain集計の金額と選択保持を検証した。`CALC-045`のApplication経路および画面・保存・複製・転送・Android操作を含む残りの検証は後続タスクで実施する。
 
 | 受入条件 | 要件ID | テストID | 主な検証層 |
 | --- | --- | --- | --- |
@@ -571,7 +571,7 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 | `CB-16` 不正入力・取消・失敗 | `FR-DATA-04`, `FR-DATA-05`, `FR-DATA-08` | `DATA-025`, `DATA-026` | Infrastructure |
 | `CB-17` Android操作・読み上げ | `FR-WORK-08`, `FR-SHIFT-04`, `AC-18` | `A11Y-010` | Android実機・エミュレーター |
 
-関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。ON／OFF混在データで`DATA-010`・`DATA-022`の逐次処理と有界メモリ、および`PERF-001`～`PERF-010`の既存集計性能・100タスクストレスを維持する。Android確認は5節の環境で行い、未実施項目はリリース検証として明記する。
+関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。タスク2では`dotnet test --no-restore`でDomain 154件、Application 127件、Infrastructure 69件、App 158件の計508件が成功した。ON／OFF混在データで`DATA-010`・`DATA-022`の逐次処理と有界メモリ、および`PERF-001`～`PERF-010`の既存集計性能・100タスクストレスを維持する。Android確認は5節の環境で行い、未実施項目はリリース検証として明記する。
 
 ## 21. テスト開始条件
 
