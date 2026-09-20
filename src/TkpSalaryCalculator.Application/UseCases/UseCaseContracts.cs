@@ -248,7 +248,8 @@ public interface IBasicShiftUseCase
     Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken);
 
     /// <summary>指定日 1 日分の未保存の反映プレビューを構築します。</summary>
-    Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken);
+    Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken,
+        IReadOnlyDictionary<BasicShiftId, bool>? countBonusSelections = null);
 
     /// <summary>選択した候補を独立した勤務記録として原子的に保存します。</summary>
     Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(

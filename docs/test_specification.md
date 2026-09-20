@@ -8,7 +8,7 @@
 | ステータス | 初期リリース向けテスト設計 |
 | 対象 | Domain、Application、Infrastructure、PresentationおよびAndroidリリースAPK |
 | 作成日 | 2026-08-15 |
-| 最終更新日 | 2026-09-19 |
+| 最終更新日 | 2026-09-21 |
 
 ## 2. 目的と関連文書
 
@@ -549,7 +549,7 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 
 ### 20.2 件数手当選択の要件・受入条件対応
 
-[タスク定義書7節](work_record_count_bonus_toggle_task_definition.md#7-受入条件検証)の管理IDすべてを、要件IDと実装時に使用するテストIDへ対応付ける。2026-09-12のタスク2で`CALC-040`～`CALC-044`を`MultiTaskSalaryCalculatorTests.Calc040_*`～`Calc044_*`へ実装し、実行済み。`ParentChildContractTests`で既定ON・ON／OFFのDomain変換・構造比較を、`MultiTaskSalaryCalculatorTests.MixedSelectionsPreserveDailyPeriodAndAnnualTotals`でDomain集計の金額と選択保持を検証した。タスク3では以下の移行・永続化・転送テストを追加・更新した。`CALC-045`の登録経路、`DB-031`の最終データ変更日時との一括確定・同一操作IDの競合判定、および画面・複製・基本シフト反映・Android操作を含む残りの検証はタスク4～6で実施する。
+[タスク定義書7節](work_record_count_bonus_toggle_task_definition.md#7-受入条件検証)の管理IDすべてを、要件IDと実装時に使用するテストIDへ対応付ける。2026-09-12のタスク2で`CALC-040`～`CALC-044`を`MultiTaskSalaryCalculatorTests.Calc040_*`～`Calc044_*`へ実装し、実行済み。`ParentChildContractTests`で既定ON・ON／OFFのDomain変換・構造比較を、`MultiTaskSalaryCalculatorTests.MixedSelectionsPreserveDailyPeriodAndAnnualTotals`でDomain集計の金額と選択保持を検証した。タスク3では以下の移行・永続化・転送テストを追加・更新した。2026-09-21のタスク4では`CountBonusRegistrationTests`に24ケースを追加し、登録後の`CALC-045`、`WORK-021`のApplication経路、`WORK-022`～`WORK-025`、`SHIFT-014`～`SHIFT-016`を検証した。選択・全タスク・最終変更日時のロールバックと同一操作IDの競合判定もApplication層で検証済み。個別テストの対応は[Applicationテスト対応表](../tests/TkpSalaryCalculator.Application.Tests/SPEC_COVERAGE.md#countbonusregistrationtests)に記録する。画面とAndroid操作の検証はタスク5～6で実施する。
 
 | 実装テスト | タスク3で確認する範囲 |
 | --- | --- |
@@ -580,7 +580,7 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 | `CB-16` 不正入力・取消・失敗 | `FR-DATA-04`, `FR-DATA-05`, `FR-DATA-08` | `DATA-025`, `DATA-026` | Infrastructure |
 | `CB-17` Android操作・読み上げ | `FR-WORK-08`, `FR-SHIFT-04`, `AC-18` | `A11Y-010` | Android実機・エミュレーター |
 
-関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。タスク2では`dotnet test --no-restore`でDomain 154件、Application 127件、Infrastructure 69件、App 158件の計508件が成功した。2026-09-19のタスク3では同じ4プロジェクトを`dotnet test --no-restore`で実行し、Domain 154件、Application 127件、Infrastructure 86件、App 158件の計525件が成功した。InfrastructureはLongRunningも含めて全件実行し、ON／OFF混在の4,096件・219,000件の逐次転送、既存集計性能および100タスクストレスの回帰テストを通過した。Android操作は未実施であり、タスク4～6の登録経路・画面対応後に5節の環境でリリース検証する。
+関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。タスク2では`dotnet test --no-restore`でDomain 154件、Application 127件、Infrastructure 69件、App 158件の計508件が成功した。2026-09-19のタスク3では同じ4プロジェクトを`dotnet test --no-restore`で実行し、Domain 154件、Application 127件、Infrastructure 86件、App 158件の計525件が成功した。2026-09-21のタスク4では同じコマンドでDomain 154件、Application 151件、Infrastructure 86件、App 158件の計549件が成功した。InfrastructureはLongRunningも含めて全件実行し、ON／OFF混在の4,096件・219,000件の逐次転送、既存集計性能および100タスクストレスの回帰テストを通過した。Android操作は未実施であり、タスク5の画面対応後にタスク6として5節の環境でリリース検証する。
 
 ## 21. テスト開始条件
 

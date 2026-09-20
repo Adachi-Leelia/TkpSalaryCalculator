@@ -1,4 +1,5 @@
 using TkpSalaryCalculator.Domain.ValueObjects;
+using TkpSalaryCalculator.Domain.Contracts;
 
 namespace TkpSalaryCalculator.Application.Contracts;
 
@@ -109,7 +110,14 @@ public sealed record BasicShiftCandidateDto(
     bool CanApply,
     bool IsAlreadyApplied,
     bool HasSimilarManualRecord,
-    IReadOnlyList<IssueDto> Issues);
+    IReadOnlyList<IssueDto> Issues)
+{
+    /// <summary>この反映候補だけの件数手当選択。基本シフト本体には保存しません。</summary>
+    public bool IsCountBonusEnabled { get; init; } = true;
+
+    /// <summary>選択値を適用した未保存の給与プレビュー。</summary>
+    public WorkSalaryCalculation? Calculation { get; init; }
+}
 
 /// <summary>1 日分の、未保存のシフト反映プレビューを保持します。</summary>
 /// <param name="WorkDate">選択した日付。</param>
@@ -118,9 +126,20 @@ public sealed record BasicShiftCandidateDto(
 public sealed record BasicShiftPreviewDto(
     DateOnly WorkDate,
     IReadOnlyList<BasicShiftCandidateDto> Candidates,
-    int ExistingWorkRecordCount);
+    int ExistingWorkRecordCount)
+{
+    /// <summary>候補・選択値・既存訪問・設定を確定時に再確認する値。</summary>
+    public string? ConfirmationToken { get; init; }
+}
 
 /// <summary>選択したシフト候補を独立した勤務記録として確定します。</summary>
 /// <param name="WorkDate">選択した日付。</param>
 /// <param name="BasicShiftIds">選択した元シフト。</param>
-public sealed record ApplyBasicShiftsCommand(DateOnly WorkDate, IReadOnlyList<BasicShiftId> BasicShiftIds);
+public sealed record ApplyBasicShiftsCommand(DateOnly WorkDate, IReadOnlyList<BasicShiftId> BasicShiftIds)
+{
+    /// <summary>候補ごとの選択。省略した候補はON。指定時は同じ選択のプレビュー確認が必須です。</summary>
+    public IReadOnlyDictionary<BasicShiftId, bool>? CountBonusSelections { get; init; }
+
+    /// <summary>同じ選択で取得したプレビューの確認値。</summary>
+    public string? ConfirmationToken { get; init; }
+}

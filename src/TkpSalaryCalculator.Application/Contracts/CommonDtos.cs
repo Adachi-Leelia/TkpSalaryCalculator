@@ -216,7 +216,11 @@ public sealed record CopyDayConfirmationToken(
     DateOnly TargetDate,
     int ExpectedTargetExistingWorkRecordCount,
     SettingSnapshotId ExpectedEffectiveSnapshotId,
-    HolidayCalendarVersionId ExpectedHolidayCalendarVersionId);
+    HolidayCalendarVersionId ExpectedHolidayCalendarVersionId)
+{
+    /// <summary>選択値を含む複製元の全訪問・タスクの確認値。</summary>
+    public string SourceContentFingerprint { get; init; } = string.Empty;
+}
 
 /// <summary>1 日分の勤務記録を複製するための未保存の確認データを保持します。</summary>
 /// <param name="SourceDate">複製元の現地日付。</param>

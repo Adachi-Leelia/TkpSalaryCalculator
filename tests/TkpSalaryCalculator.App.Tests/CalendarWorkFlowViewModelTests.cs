@@ -1253,7 +1253,8 @@ public sealed class CalendarWorkFlowViewModelTests
             Task.FromResult<IReadOnlyList<BasicShiftDto>>([]);
         public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+        public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken,
+            IReadOnlyDictionary<BasicShiftId, bool>? countBonusSelections = null) =>
             Task.FromResult(Preview ?? new BasicShiftPreviewDto(workDate, [], 0));
         public Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(ApplyBasicShiftsCommand command, CancellationToken cancellationToken)
         {

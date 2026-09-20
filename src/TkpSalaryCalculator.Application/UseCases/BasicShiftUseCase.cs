@@ -85,15 +85,16 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
     }
 
     /// <inheritdoc />
-    public async Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken)
+    public async Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken,
+        IReadOnlyDictionary<BasicShiftId, bool>? countBonusSelections = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var snapshot = await settings.GetEffectiveForMonthAsync(ApplicationSupport.ToYearMonth(workDate), cancellationToken).ConfigureAwait(false);
+        var snapshot = await ResolvePreviewSettingsAsync(ApplicationSupport.ToYearMonth(workDate), cancellationToken).ConfigureAwait(false);
         var source = await GetForWeekdayAsync(workDate.DayOfWeek, cancellationToken).ConfigureAwait(false);
         var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
         var existing = new List<WorkRecordDto>();
         await foreach (var item in records.StreamRangeAsync(workDate, workDate, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false)) existing.Add(item);
-        return BuildPreview(workDate, source, existing, snapshot, calendar, calculator);
+        return BuildPreview(workDate, source, existing, snapshot, calendar, calculator, countBonusSelections);
     }
 
     /// <inheritdoc />
@@ -106,14 +107,20 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
         foreach (var id in command.BasicShiftIds) ApplicationSupport.ValidateId(id.Value, nameof(command.BasicShiftIds));
         if (command.BasicShiftIds.Distinct().Count() != command.BasicShiftIds.Count)
             throw new ApplicationErrorException("SHIFT_SELECTION_DUPLICATED", "同じ基本シフトが複数回選択されています。", "BasicShiftIds");
+        // 呼出元による辞書の変更で、確認と保存の選択値がずれないように固定します。
+        var selections = command.CountBonusSelections?.ToDictionary(pair => pair.Key, pair => pair.Value);
+        if (selections is not null && command.ConfirmationToken is null) throw PreviewChanged();
         return await transactions.ExecuteAsync(async token =>
         {
-            var snapshot = await settings.EnsureForMonthAsync(ApplicationSupport.ToYearMonth(command.WorkDate), token).ConfigureAwait(false);
+            var month = ApplicationSupport.ToYearMonth(command.WorkDate);
+            var snapshot = await ResolvePreviewSettingsAsync(month, token).ConfigureAwait(false);
             var all = await shifts.GetForWeekdayAsync(command.WorkDate.DayOfWeek, token).ConfigureAwait(false);
             var existing = new List<WorkRecordDto>();
             await foreach (var item in records.StreamRangeAsync(command.WorkDate, command.WorkDate, token).WithCancellation(token).ConfigureAwait(false)) existing.Add(item);
             var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, token).ConfigureAwait(false);
-            var preview = BuildPreview(command.WorkDate, all, existing, snapshot, calendar, calculator);
+            var preview = BuildPreview(command.WorkDate, all, existing, snapshot, calendar, calculator, selections);
+            if (command.ConfirmationToken is not null && command.ConfirmationToken != preview.ConfirmationToken)
+                throw PreviewChanged();
             var selected = new List<BasicShiftDto>();
             foreach (var id in command.BasicShiftIds)
             {
@@ -128,10 +135,13 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
                 selected.Add(candidate.Shift);
             }
             var results = new List<SaveWorkRecordResultDto>(selected.Count);
+            snapshot = await settings.TryEnsureForMonthAsync(month, snapshot.Id, snapshot.HolidayCalendarVersionId, token)
+                .ConfigureAwait(false) ?? throw PreviewChanged();
+            calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, token).ConfigureAwait(false);
             var calculationSnapshot = ApplicationSupport.ForCalculationDate(snapshot, command.WorkDate, calendar);
             foreach (var shift in selected)
             {
-                var work = CreateVisit(shift, command.WorkDate);
+                var work = CreateVisit(shift, command.WorkDate, isCountBonusEnabled: selections?.GetValueOrDefault(shift.Id, true) ?? true);
                 var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(work),
                     calculationSnapshot, calendar));
                 await records.UpsertAsync(work, token).ConfigureAwait(false);
@@ -144,11 +154,15 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
 
     internal static BasicShiftPreviewDto BuildPreview(DateOnly workDate, IReadOnlyList<BasicShiftDto> source,
         IReadOnlyList<WorkRecordDto> existing, SettingSnapshot snapshot, HolidayCalendar calendar,
-        ISalaryCalculator calculator)
+        ISalaryCalculator calculator, IReadOnlyDictionary<BasicShiftId, bool>? countBonusSelections = null)
     {
+        if (countBonusSelections is not null && countBonusSelections.Keys.Any(id => !source.Any(shift => shift.Id == id)))
+            throw new ApplicationErrorException("SHIFT_NOT_FOUND", "選択した基本シフトが見つかりませんでした。");
         var calculationSnapshot = ApplicationSupport.ForCalculationDate(snapshot, workDate, calendar);
         var candidates = source.OrderBy(x => x.DisplayOrder.Value).ThenBy(x => x.Id.Value).Select(shift =>
         {
+            var isCountBonusEnabled = countBonusSelections?.GetValueOrDefault(shift.Id, true) ?? true;
+            WorkSalaryCalculation? calculation = null;
             var issues = new List<IssueDto>();
             var already = existing.Any(x => x.SourceBasicShiftId == shift.Id);
             if (!shift.IsEnabled) issues.Add(ApplicationSupport.Issue("SHIFT_DISABLED", "この基本シフトは無効になっています。"));
@@ -172,8 +186,8 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
             var blocking = !shift.IsEnabled || already || issues.Any(x => x.Code is "WORK_SERVICE_UNAVAILABLE" or "WORK_TIME_CATEGORY_UNAVAILABLE" or "SHIFT_START_REQUIRED_FOR_PREMIUM");
             if (!blocking)
             {
-                var candidate = CreateVisit(shift, workDate, preserveTaskIds: true);
-                var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(candidate),
+                var candidate = CreateVisit(shift, workDate, preserveTaskIds: true, isCountBonusEnabled: isCountBonusEnabled);
+                calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(candidate),
                     calculationSnapshot, calendar));
                 if (calculation.Status == SalaryCalculationStatus.Uncalculated)
                 {
@@ -186,17 +200,46 @@ public sealed class BasicShiftUseCase(IBasicShiftRepository shifts, IWorkRecordR
                     blocking = true;
                 }
             }
-            return new BasicShiftCandidateDto(shift, !blocking, already, similar, issues);
+            return new BasicShiftCandidateDto(shift, !blocking, already, similar, issues)
+            {
+                IsCountBonusEnabled = isCountBonusEnabled,
+                Calculation = calculation,
+            };
         }).ToArray();
-        return new(workDate, candidates, existing.Count);
+        return new(workDate, candidates, existing.Count)
+        {
+            ConfirmationToken = ConfirmationFingerprint.Create(new
+            {
+                workDate, snapshot.Id, snapshot.HolidayCalendarVersionId,
+                Candidates = candidates.Select(candidate => new { candidate.Shift, candidate.IsCountBonusEnabled }).ToArray(),
+                Existing = ConfirmationFingerprint.ForRecords(existing),
+            }),
+        };
     }
 
-    private static WorkRecordDto CreateVisit(BasicShiftDto shift, DateOnly workDate, bool preserveTaskIds = false) =>
+    private async Task<SettingSnapshot> ResolvePreviewSettingsAsync(YearMonth month, CancellationToken cancellationToken)
+    {
+        var existing = await settings.FindForMonthAsync(month, cancellationToken).ConfigureAwait(false);
+        if (existing is not null) return existing;
+        var effective = await settings.GetEffectiveForMonthAsync(month, cancellationToken).ConfigureAwait(false);
+        var latestHoliday = await holidays.GetLatestVerifiedVersionIdAsync(cancellationToken).ConfigureAwait(false);
+        // 未確定月の祝日版もプレビューと確定で一致させます。Idは確定時の比較用に元設定の値を維持します。
+        return effective.HolidayCalendarVersionId == latestHoliday ? effective :
+            new SettingSnapshot(effective.Id, effective.BasedOnId, latestHoliday,
+                effective.SchemaVersion, effective.CreatedAtUtc, effective.Services, effective.TimeCategories,
+                effective.Rates, effective.Premiums, effective.CountBonuses);
+    }
+
+    private static ApplicationErrorException PreviewChanged() =>
+        new("SHIFT_PREVIEW_STALE", "反映内容または件数手当の選択が変更されました。内容を確認してからもう一度反映してください。");
+
+    private static WorkRecordDto CreateVisit(BasicShiftDto shift, DateOnly workDate, bool preserveTaskIds = false,
+        bool isCountBonusEnabled = true) =>
         new(new WorkRecordId(Guid.NewGuid()), workDate,
             shift.Tasks.OrderBy(task => task.DisplayOrder.Value).Select(task => new WorkTaskDto(
                 new WorkTaskId(preserveTaskIds ? task.Id.Value : Guid.NewGuid()), task.ServiceId, task.TimeCategoryId,
                 task.InputMode, task.WorkMinutes, task.StartTime, task.EndTime, task.DisplayOrder, task.ServicePresetId)).ToArray(),
-            shift.Id, null);
+            shift.Id, null, isCountBonusEnabled);
 
     private sealed record TaskContent(ServiceId ServiceId, TimeCategoryId? TimeCategoryId, WorkInputMode InputMode,
         WorkMinutes WorkMinutes, MinuteOfDay? StartTime, MinuteOfDay? EndTime);

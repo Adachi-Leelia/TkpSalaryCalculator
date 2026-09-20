@@ -189,7 +189,7 @@ public sealed class WorkRecordUseCase(
                 })
                 .ToArray();
             var dto = new WorkRecordDto(normalizedCommand.Id!.Value, normalizedCommand.WorkDate,
-                normalizedTasks, existing?.SourceBasicShiftId, existing?.SourceWorkRecordId);
+                normalizedTasks, existing?.SourceBasicShiftId, existing?.SourceWorkRecordId, normalizedCommand.IsCountBonusEnabled);
             if (command.Id is null)
             {
                 var operationId = command.OperationId!.Value;
@@ -227,6 +227,7 @@ public sealed class WorkRecordUseCase(
     private static bool SameInput(WorkRecordDto left, WorkRecordDto right)
     {
         return left.WorkDate == right.WorkDate &&
+            left.IsCountBonusEnabled == right.IsCountBonusEnabled &&
             left.SourceBasicShiftId == right.SourceBasicShiftId &&
             left.SourceWorkRecordId == right.SourceWorkRecordId &&
             left.Tasks.SequenceEqual(right.Tasks);
@@ -265,6 +266,7 @@ public sealed class WorkRecordUseCase(
         var targetMonth = ApplicationSupport.ToYearMonth(targetDate);
         var (snapshot, confirmationToken) = await ResolveCopyTargetSettingsAsync(
             sourceDate, targetDate, targetMonth, target.Count, cancellationToken).ConfigureAwait(false);
+        confirmationToken = confirmationToken with { SourceContentFingerprint = ConfirmationFingerprint.ForRecords(source) };
         if (source.Count != 0 && sourceDate < targetDate)
         {
             var calendar = await holidays.GetAsync(snapshot.HolidayCalendarVersionId, cancellationToken).ConfigureAwait(false);
@@ -315,6 +317,8 @@ public sealed class WorkRecordUseCase(
             var source = new List<WorkRecordDto>();
             await foreach (var item in records.StreamRangeAsync(sourceDate, sourceDate, token).WithCancellation(token).ConfigureAwait(false)) source.Add(item);
             if (source.Count == 0) throw new ApplicationErrorException("COPY_DAY_SOURCE_EMPTY", "複製元の日付に勤務記録がありません。");
+            if (confirmationToken.SourceContentFingerprint != ConfirmationFingerprint.ForRecords(source))
+                throw CopyDayPreviewChanged();
             var targetCount = 0;
             await foreach (var _ in records.StreamRangeAsync(targetDate, targetDate, token).WithCancellation(token).ConfigureAwait(false)) targetCount++;
             if (targetCount != confirmationToken.ExpectedTargetExistingWorkRecordCount)
@@ -344,7 +348,7 @@ public sealed class WorkRecordUseCase(
                     targetDate,
                     old.Tasks.Select(task => task with { Id = new WorkTaskId(Guid.NewGuid()) }).ToArray(),
                     null,
-                    old.Id);
+                    old.Id, old.IsCountBonusEnabled);
                 var calculation = calculator.Calculate(new WorkSalaryCalculationRequest(ApplicationSupport.ToDomain(copied),
                     ApplicationSupport.ForCalculationDate(snapshot, targetDate, calendar), calendar));
                 await records.UpsertAsync(copied, token).ConfigureAwait(false);
@@ -374,7 +378,7 @@ public sealed class WorkRecordUseCase(
     }
 
     private static ApplicationErrorException CopyDayPreviewChanged() =>
-        new("COPY_DAY_PREVIEW_STALE", "複製前の設定が変更されました。内容を確認してからもう一度複製してください。");
+        new("COPY_DAY_PREVIEW_STALE", "複製元の勤務内容または複製先の設定が変更されました。内容を確認してからもう一度複製してください。");
 
     private WorkRecordPreviewDto PreviewCore(
         SaveWorkRecordCommand command,
@@ -451,7 +455,7 @@ public sealed class WorkRecordUseCase(
             })
             .ToArray();
         var dto = new WorkRecordDto(command.Id ?? new WorkRecordId(Guid.NewGuid()), command.WorkDate,
-            normalizedTasks, existing?.SourceBasicShiftId, existing?.SourceWorkRecordId);
+            normalizedTasks, existing?.SourceBasicShiftId, existing?.SourceWorkRecordId, command.IsCountBonusEnabled);
         var calculation = ApplicationSupport.Calculate(dto, snapshot, calendar, calculator);
         errors.AddRange(ApplicationSupport.CalculationIssues(calculation));
         return new(previews, calculation, true, errors);
