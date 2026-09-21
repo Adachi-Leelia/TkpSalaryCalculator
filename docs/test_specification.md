@@ -580,7 +580,9 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 | `CB-16` 不正入力・取消・失敗 | `FR-DATA-04`, `FR-DATA-05`, `FR-DATA-08` | `DATA-025`, `DATA-026` | Infrastructure |
 | `CB-17` Android操作・読み上げ | `FR-WORK-08`, `FR-SHIFT-04`, `AC-18` | `A11Y-010` | Android実機・エミュレーター |
 
-関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。タスク2では`dotnet test --no-restore`でDomain 154件、Application 127件、Infrastructure 69件、App 158件の計508件が成功した。2026-09-19のタスク3では同じ4プロジェクトを`dotnet test --no-restore`で実行し、Domain 154件、Application 127件、Infrastructure 86件、App 158件の計525件が成功した。2026-09-21のタスク4では同じコマンドでDomain 154件、Application 151件、Infrastructure 86件、App 158件の計549件が成功した。InfrastructureはLongRunningも含めて全件実行し、ON／OFF混在の4,096件・219,000件の逐次転送、既存集計性能および100タスクストレスの回帰テストを通過した。Android操作は未実施であり、タスク5の画面対応後にタスク6として5節の環境でリリース検証する。
+関連するDomain・Application・Infrastructure・Presentationの既存回帰テストも実施する。タスク2では`dotnet test --no-restore`でDomain 154件、Application 127件、Infrastructure 69件、App 158件の計508件が成功した。2026-09-19のタスク3では同じ4プロジェクトを`dotnet test --no-restore`で実行し、Domain 154件、Application 127件、Infrastructure 86件、App 158件の計525件が成功した。2026-09-21のタスク4では同じコマンドでDomain 154件、Application 151件、Infrastructure 86件、App 158件の計549件が成功した。InfrastructureはLongRunningも含めて全件実行し、ON／OFF混在の4,096件・219,000件の逐次転送、既存集計性能および100タスクストレスの回帰テストを通過した。Android操作は未実施であり、タスク6として5節の環境でリリース検証する。
+
+2026-09-21のタスク5では、`CalendarWorkFlowViewModelTests`に13ケース、`CalculationDetailViewModelTests`に4ケースを追加し、Appテスト175件が成功した。Domain 154件、Application 151件、Infrastructure 86件の回帰も成功し、計566件すべて成功・スキップなし。Infrastructureの約21.9万件の逐次転送も実行した。`WORK-021`、`UI-022`～`UI-026`、`SHIFT-014`／`SHIFT-016`の画面層について、保存値の復元、選択保持、離脱確認、保存失敗・再試行、最新入力のプレビュー採用、日付別設定の遅延、反映確認・取消、OFF／ON適用なし／未計算の表示を検証した。`UI-025`は既存の変更世代通知への接続を自動確認し、Android画面を通した日別・期間・月次・年間表示の確認はタスク6に残す。Android向けDebugビルドは警告0・エラー0で成功した。`A11Y-010`の実機・エミュレーター操作は未実施。
 
 ## 21. テスト開始条件
 

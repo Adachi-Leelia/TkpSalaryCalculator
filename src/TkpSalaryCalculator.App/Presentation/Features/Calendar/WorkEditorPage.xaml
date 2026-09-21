@@ -15,6 +15,14 @@
                     <VerticalStackLayout Spacing="6">
                         <Label FontAttributes="Bold" Text="訪問共通の勤務日（必須）" />
                         <DatePicker Date="{Binding WorkDate, Mode=TwoWay}" Format="yyyy年M月d日" SemanticProperties.Description="この訪問の全タスクに共通する勤務日" />
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                            <Label Text="件数手当を加算する" VerticalOptions="Center" />
+                            <Switch Grid.Column="1" Grid.RowSpan="2" MinimumHeightRequest="48" MinimumWidthRequest="48"
+                                    AutomationId="WorkCountBonusSwitch" IsToggled="{Binding IsCountBonusEnabled, Mode=TwoWay}"
+                                    SemanticProperties.Description="{Binding CountBonusAccessibilityText}" />
+                            <Label Grid.Row="1" Text="{Binding CountBonusSelectionText}" />
+                        </Grid>
+                        <Label Style="{StaticResource SupportingTextStyle}" Text="この実績の件数手当すべてに適用します。金額は当日の設定で計算します。" />
                         <Label Style="{StaticResource SupportingTextStyle}" Text="{Binding SettingsMonthText}" />
                         <Label
                             IsVisible="{Binding HasSettingsMonthChangeWarning}"

@@ -40,6 +40,24 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     private WorkTaskEditorViewModel? firstInvalidTask;
     private WorkEditorScreenDto? editorScreen;
     private SaveWorkRecordCommand? previewedCommand;
+    private bool isCountBonusEnabled = true;
+    private long inputRevision;
+
+    public bool IsCountBonusEnabled
+    {
+        get => isCountBonusEnabled;
+        set
+        {
+            if (!SetProperty(ref isCountBonusEnabled, value)) return;
+            OnPropertyChanged(nameof(CountBonusSelectionText));
+            OnPropertyChanged(nameof(CountBonusAccessibilityText));
+            InputChanged();
+            if (!isInitializing && editorScreen is not null) _ = PreviewAsync();
+        }
+    }
+
+    public string CountBonusSelectionText => IsCountBonusEnabled ? "加算する" : "加算しない";
+    public string CountBonusAccessibilityText => $"この訪問の件数手当を加算する、現在は{CountBonusSelectionText}";
 
     public WorkEditorViewModel(
         IWorkRecordUseCase workRecords,
@@ -171,6 +189,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
 
     public void Initialize(DateOnly date, WorkRecordId? id)
     {
+        inputRevision++;
         InvalidateTrackedLoad();
         operationId = Guid.NewGuid();
         hasSaved = false;
@@ -222,6 +241,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             {
                 var preview = await PreviewCoreAsync(cancellationToken);
                 if (preview is null || !preview.CanSave) return;
+                command = previewedCommand!;
             }
 
             var saveTask = workRecords.SaveAsync(
@@ -285,6 +305,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             var date = DateOnly.FromDateTime(WorkDate);
             editorScreen = await workRecords.GetEditorScreenAsync(date, WorkRecordId, cancellationToken);
             var existing = editorScreen.ExistingRecord;
+            IsCountBonusEnabled = existing?.IsCountBonusEnabled ?? true;
             if (WorkRecordId is not null && existing is null)
                 throw new InvalidOperationException("編集する訪問が見つかりませんでした。");
 
@@ -313,6 +334,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
         {
             Tasks.Clear();
             presetCandidates = [];
+            IsCountBonusEnabled = true;
             services = [];
             allTimeCategories = [];
             premiums = [];
@@ -336,30 +358,42 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
 
     private async Task<WorkRecordPreviewDto?> PreviewCoreAsync(CancellationToken cancellationToken)
     {
-        await EnsureOptionsForSelectedDateAsync(cancellationToken);
-        var command = BuildCommand(out var localIssues);
-        if (command is null)
+        while (true)
         {
-            PresentIssues(localIssues);
-            CanSave = false;
-            return null;
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            var revision = inputRevision;
+            await EnsureOptionsForSelectedDateAsync(cancellationToken);
+            if (revision != inputRevision) continue;
+            var command = BuildCommand(out var localIssues);
+            if (command is null)
+            {
+                PresentIssues(localIssues);
+                CanSave = false;
+                return null;
+            }
 
-        var screen = editorScreen ?? throw new InvalidOperationException("勤務入力画面のデータを読み込んでください。");
-        var preview = await workRecords.PreviewForEditorAsync(command, screen, cancellationToken);
-        previewedCommand = preview.CanSave ? command : null;
-        ApplyPreview(preview);
-        return preview;
+            var screen = editorScreen ?? throw new InvalidOperationException("勤務入力画面のデータを読み込んでください。");
+            var preview = await workRecords.PreviewForEditorAsync(command, screen, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (revision != inputRevision) continue;
+            previewedCommand = preview.CanSave ? command : null;
+            ApplyPreview(preview);
+            return preview;
+        }
     }
 
     private async Task EnsureOptionsForSelectedDateAsync(CancellationToken cancellationToken)
     {
         var selectedDate = DateOnly.FromDateTime(WorkDate);
         if (selectedDate == optionsDate) return;
+        var revision = inputRevision;
+        var screen = await workRecords.GetEditorScreenAsync(selectedDate, WorkRecordId, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (revision != inputRevision) return;
         isInitializing = true;
         try
         {
-            editorScreen = await workRecords.GetEditorScreenAsync(selectedDate, WorkRecordId, cancellationToken);
+            editorScreen = screen;
             PopulateOptions(editorScreen.InputOptions, editorScreen.HolidayCalendar, editorScreen.ExistingRecord);
             foreach (var task in Tasks)
                 task.UpdateOptions(presetCandidates, services, allTimeCategories);
@@ -504,7 +538,10 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
             WorkRecordId,
             DateOnly.FromDateTime(WorkDate),
             commands,
-            WorkRecordId is null ? operationId : null);
+            WorkRecordId is null ? operationId : null)
+        {
+            IsCountBonusEnabled = IsCountBonusEnabled,
+        };
     }
 
     private void ApplyPreview(WorkRecordPreviewDto preview)
@@ -525,16 +562,13 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
 
         if (preview.Calculation?.Status == SalaryCalculationStatus.Calculated && preview.Calculation.Total is { } total)
         {
-            CountBonusText = preview.Calculation.CountBonuses.Count == 0
-                ? "訪問の件数加算: なし"
-                : "訪問の件数加算: " + string.Join("、", preview.Calculation.CountBonuses
-                    .Select(bonus => $"{bonus.DisplayName} {formatter.Money(bonus.Amount)}"));
+            CountBonusText = CountBonusDisplay.Summary(IsCountBonusEnabled, preview.Calculation, formatter);
             VisitTotalText = $"訪問合計 {formatter.Money(total)}";
             PreviewText = "全タスクを含む訪問の給与見込みです。";
         }
         else if (preview.Calculation?.Status == SalaryCalculationStatus.Uncalculated)
         {
-            CountBonusText = string.Empty;
+            CountBonusText = CountBonusDisplay.Summary(IsCountBonusEnabled, preview.Calculation, formatter);
             VisitTotalText = string.Empty;
             PreviewText = "未計算（勤務内容は保存できます）。不足しているタスクを確認してください。";
         }
@@ -600,6 +634,7 @@ public sealed class WorkEditorViewModel : EditableViewModelBase
     private void InputChanged()
     {
         if (isInitializing) return;
+        inputRevision++;
         previewedCommand = null;
         MarkDirty();
         CanSave = false;

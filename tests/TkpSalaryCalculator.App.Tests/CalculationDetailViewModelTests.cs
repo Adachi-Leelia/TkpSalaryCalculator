@@ -11,6 +11,40 @@ public sealed class CalculationDetailViewModelTests
     private static readonly ServiceId ServiceId = new(Guid.Parse("10000000-0000-0000-0000-000000000001"));
     private static readonly TimeCategoryId CategoryId = new(Guid.Parse("20000000-0000-0000-0000-000000000001"));
 
+    [Theory]
+    [InlineData(false, false, "件数手当：加算しない（0円）")]
+    [InlineData(true, false, "件数手当：加算する（適用なし）（0円）")]
+    [InlineData(false, true, "件数手当：加算しない")]
+    [InlineData(true, true, "件数手当：加算する")]
+    public async Task UI024_CountBonusChoiceIsDistinctFromNoMatchingRuleAndUncalculated(
+        bool enabled, bool uncalculated, string expected)
+    {
+        var record = CalculatedRecord(RecordId);
+        record = record with
+        {
+            WorkRecord = record.WorkRecord with { IsCountBonusEnabled = enabled },
+            Calculation = record.Calculation with
+            {
+                IsCountBonusEnabled = enabled,
+                CountBonuses = [],
+                Status = uncalculated ? SalaryCalculationStatus.Uncalculated : SalaryCalculationStatus.Calculated,
+                Total = uncalculated ? null : new YenAmount(1_500),
+            },
+        };
+        var vm = CreateViewModel(new SalaryStub { Summary = Summary([record]) });
+        vm.SetPayrollPeriod(PeriodKey);
+        await vm.LoadAsync();
+        var bonus = Assert.Single(vm.Rows.OfType<CalculationCountBonusRowViewModel>());
+        Assert.Equal(expected, bonus.DisplayName);
+        var total = Assert.Single(vm.Rows.OfType<CalculationWorkRecordTotalRowViewModel>());
+        if (uncalculated)
+        {
+            Assert.DoesNotContain("円", bonus.DisplayName + bonus.AmountText);
+            Assert.DoesNotContain("円", total.TotalText);
+        }
+        else Assert.Equal("1,500円", total.TotalText);
+    }
+
     [Fact]
     public async Task SCRCALC01_DisplaysPeriodDayAndWorkRecordBreakdownsFromSummaryDto()
     {
@@ -182,7 +216,9 @@ public sealed class CalculationDetailViewModelTests
         Assert.Contains("サービス・単価", row.MissingReasonText);
         Assert.Equal("未計算", row.TotalText);
         Assert.False(row.HasTotal);
-        Assert.Empty(viewModel.Rows.OfType<CalculationCountBonusRowViewModel>());
+        var countBonus = Assert.Single(viewModel.Rows.OfType<CalculationCountBonusRowViewModel>());
+        Assert.Equal("件数手当：加算する", countBonus.DisplayName);
+        Assert.Empty(countBonus.AmountText);
     }
 
     [Fact]

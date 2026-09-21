@@ -28,7 +28,7 @@ public sealed class DayViewModel : ViewModelBase
     private DateTime copySourceMaximumDate;
     private IReadOnlyList<DayWorkRecordRowViewModel> records = [];
     private IReadOnlyList<ShiftCandidateRowViewModel> shiftCandidates = [];
-    private int existingWorkRecordCount;
+    private long shiftRevision;
 
     public DayViewModel(
         ISalaryQueryUseCase salaryQuery,
@@ -115,6 +115,7 @@ public sealed class DayViewModel : ViewModelBase
 
     public void SetDate(DateOnly value)
     {
+        shiftRevision++;
         if (date != value) InvalidateTrackedLoad();
         date = value;
         CopySourceMaximumDate = value.AddDays(-1).ToDateTime(TimeOnly.MinValue);
@@ -140,7 +141,7 @@ public sealed class DayViewModel : ViewModelBase
         if (basicShifts is not null)
         {
             var shiftPreview = screen.BasicShiftPreview;
-            existingWorkRecordCount = shiftPreview.ExistingWorkRecordCount;
+            shiftRevision++;
             ShiftCandidates = shiftPreview.Candidates.Select(candidate =>
             {
                 var shift = candidate.Shift;
@@ -149,13 +150,22 @@ public sealed class DayViewModel : ViewModelBase
                     shift.Id, name, time, candidate.CanApply,
                     candidate.CanApply && !candidate.HasSimilarManualRecord,
                     string.Join(Environment.NewLine, candidate.Issues.Select(x => x.Message)));
-                row.SelectionChanged += (_, _) => ApplyShiftsCommand.NotifyCanExecuteChanged();
+                row.ApplyPreview(candidate, formatter);
+                row.CountBonusChanged += (_, _) =>
+                {
+                    shiftRevision++;
+                    _ = RefreshShiftPreviewAsync();
+                };
+                row.SelectionChanged += (_, _) =>
+                {
+                    shiftRevision++;
+                    ApplyShiftsCommand.NotifyCanExecuteChanged();
+                };
                 return row;
             }).ToArray();
         }
         else
         {
-            existingWorkRecordCount = daily.Records.Count;
             ShiftCandidates = [];
         }
 
@@ -239,21 +249,62 @@ public sealed class DayViewModel : ViewModelBase
         if (basicShifts is null) return;
         var selected = ShiftCandidates.Where(x => x.CanChoose && x.IsSelected).ToArray();
         if (selected.Length == 0) return;
+        var revision = shiftRevision;
+        var targetDate = Date;
+        var selections = ShiftCandidates.ToDictionary(row => row.Id, row => row.IsCountBonusEnabled);
+        var preview = await basicShifts.PreviewForDateAsync(targetDate, cancellationToken, selections);
+        var settings = await workRecords.GetSettingsForDateAsync(targetDate, cancellationToken);
+        if (revision != shiftRevision) return;
+        foreach (var row in selected)
+        {
+            var candidate = preview.Candidates.Single(candidate => candidate.Shift.Id == row.Id);
+            if (!candidate.CanApply) throw new InvalidOperationException("反映候補が変わりました。一覧を再読み込みしてください。");
+            row.UpdateDescription(candidate, settings, formatter);
+            row.ApplyPreview(candidate, formatter);
+        }
         var warningLines = selected.Where(x => x.HasWarning).Select(x => $"・{x.DisplayName}: {x.WarningText}");
         var message = $"対象日: {formatter.Date(Date)}{Environment.NewLine}" +
                       $"反映する勤務記録: {selected.Length}件{Environment.NewLine}" +
-                      $"既存の勤務記録: {existingWorkRecordCount}件{Environment.NewLine}" +
-                      string.Join(Environment.NewLine, selected.Select(x => $"・{x.DisplayName} / {x.DurationText}")) +
+                      $"既存の勤務記録: {preview.ExistingWorkRecordCount}件{Environment.NewLine}" +
+                      string.Join(Environment.NewLine, selected.Select(x => $"・{x.DisplayName} / {x.DurationText} / {x.PreviewText}")) +
                       (warningLines.Any() ? $"{Environment.NewLine}重複の可能性:{Environment.NewLine}{string.Join(Environment.NewLine, warningLines)}" : string.Empty) +
                       $"{Environment.NewLine}{Environment.NewLine}確定するまで給与には含まれません。";
         var confirmed = await dialogs.ConfirmAsync("基本シフトを反映", message, "確定して追加", "キャンセル", cancellationToken);
         if (!confirmed) return;
-        var results = await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(Date, selected.Select(x => x.Id).ToArray()), cancellationToken);
+        if (revision != shiftRevision) return;
+        var results = await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(targetDate, selected.Select(x => x.Id).ToArray())
+        {
+            CountBonusSelections = selections,
+            ConfirmationToken = preview.ConfirmationToken,
+        }, cancellationToken);
         sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
         var generation = CaptureTrackedDataGeneration();
         SuccessMessage = $"基本シフトから勤務記録を{results.Count}件追加しました。";
         await LoadCoreAsync(cancellationToken);
         AcceptDataGeneration(generation);
+    });
+
+    public Task RefreshShiftPreviewAsync() => RunBusyAsync(async cancellationToken =>
+    {
+        if (basicShifts is null) return;
+        while (true)
+        {
+            var revision = shiftRevision;
+            var preview = await basicShifts.PreviewForDateAsync(Date, cancellationToken,
+                ShiftCandidates.ToDictionary(row => row.Id, row => row.IsCountBonusEnabled));
+            var settings = await workRecords.GetSettingsForDateAsync(Date, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (revision != shiftRevision) continue;
+            foreach (var row in ShiftCandidates)
+                if (preview.Candidates.FirstOrDefault(candidate => candidate.Shift.Id == row.Id) is { } candidate)
+                {
+                    row.UpdateDescription(candidate, settings, formatter);
+                    row.ApplyPreview(candidate, formatter);
+                }
+                else throw new InvalidOperationException("反映候補が変わりました。一覧を再読み込みしてください。");
+            ApplyShiftsCommand.NotifyCanExecuteChanged();
+            return;
+        }
     });
 
     private string BuildCopyPreviewMessage(CopyDayPreviewDto preview)
@@ -293,6 +344,50 @@ public sealed class DayViewModel : ViewModelBase
 public sealed class ShiftCandidateRowViewModel : ObservableObject
 {
     private bool isSelected;
+    private bool isCountBonusEnabled = true;
+    private string previewText = string.Empty;
+
+    public event EventHandler? CountBonusChanged;
+    public bool IsCountBonusEnabled
+    {
+        get => isCountBonusEnabled;
+        set
+        {
+            if (!CanChoose || !SetProperty(ref isCountBonusEnabled, value)) return;
+            PreviewText = "選択した内容で再計算しています。";
+            OnPropertyChanged(nameof(CountBonusSelectionText));
+            OnPropertyChanged(nameof(CountBonusAccessibilityText));
+            CountBonusChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+    public string CountBonusSelectionText => CountBonusDisplay.Selection(IsCountBonusEnabled);
+    public string CountBonusAccessibilityText => $"{DisplayName}、{DurationText}、件数手当を加算する、現在は{CountBonusSelectionText}";
+    public string PreviewText { get => previewText; private set => SetProperty(ref previewText, value); }
+
+    public void ApplyPreview(BasicShiftCandidateDto candidate, JapaneseDisplayFormatter formatter)
+    {
+        CanChoose = candidate.CanApply;
+        WarningText = string.Join(Environment.NewLine, candidate.Issues.Select(issue => issue.Message));
+        OnPropertyChanged(nameof(CanChoose));
+        OnPropertyChanged(nameof(WarningText));
+        OnPropertyChanged(nameof(HasWarning));
+        PreviewText = CountBonusDisplay.Summary(IsCountBonusEnabled, candidate.Calculation, formatter) +
+            (candidate.Calculation?.Status == SalaryCalculationStatus.Calculated && candidate.Calculation.Total is { } total
+                ? $" / 訪問合計 {formatter.Money(total)}"
+                : " / 未計算") +
+            (candidate.Issues.Count == 0 ? string.Empty : Environment.NewLine +
+                string.Join(Environment.NewLine, candidate.Issues.Select(issue => issue.Message)));
+    }
+
+    public void UpdateDescription(BasicShiftCandidateDto candidate, MonthSettingsDto settings, JapaneseDisplayFormatter formatter)
+    {
+        (DisplayName, DurationText) = BasicShiftDisplay.Summarize(candidate.Shift,
+            settings.Snapshot.Services.ToDictionary(service => service.Id, service => service.DisplayName),
+            settings.Snapshot.TimeCategories.ToDictionary(category => category.Id, category => category.DisplayName), formatter);
+        OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(DurationText));
+        OnPropertyChanged(nameof(CountBonusAccessibilityText));
+    }
 
     public ShiftCandidateRowViewModel(
         BasicShiftId id,
@@ -312,10 +407,10 @@ public sealed class ShiftCandidateRowViewModel : ObservableObject
 
     public event EventHandler? SelectionChanged;
     public BasicShiftId Id { get; }
-    public string DisplayName { get; }
-    public string DurationText { get; }
-    public bool CanChoose { get; }
-    public string WarningText { get; }
+    public string DisplayName { get; private set; }
+    public string DurationText { get; private set; }
+    public bool CanChoose { get; private set; }
+    public string WarningText { get; private set; }
     public bool HasWarning => !string.IsNullOrWhiteSpace(WarningText);
     public bool IsSelected
     {
