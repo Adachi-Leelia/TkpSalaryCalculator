@@ -96,6 +96,72 @@ public sealed class SettingsAndSalaryUseCaseTests
         Assert.Equal(1000, result.ReplacementCalculatedSubtotal.Value);
     }
 
+    [Theory]
+    [InlineData("amount", false)]
+    [InlineData("amount", true)]
+    [InlineData("disable", false)]
+    [InlineData("disable", true)]
+    [InlineData("service", false)]
+    [InlineData("service", true)]
+    [InlineData("copy", false)]
+    [InlineData("copy", true)]
+    public async Task HIST019_CountBonusSettingsChangesExcludeOffVisitsAndPreserveSelections(
+        string change, bool includeOnVisit)
+    {
+        var context = new TestContext();
+        var month = new YearMonth(2026, 8);
+        var bonusId = new CountBonusId(Guid.NewGuid());
+        var otherServiceId = new ServiceId(Guid.NewGuid());
+        var template = TestData.Snapshot();
+        SettingSnapshot WithBonus(SnapshotCountBonus bonus) => new(
+            new SettingSnapshotId(Guid.NewGuid()), null, template.HolidayCalendarVersionId,
+            template.SchemaVersion, DateTimeOffset.UnixEpoch,
+            [.. template.Services, new SnapshotService(otherServiceId, "対象外", new DisplayOrder(1), true)],
+            template.TimeCategories, template.Rates, template.Premiums, [bonus]);
+        var current = WithBonus(new SnapshotCountBonus(bonusId, "件数手当", new YenAmount(150),
+            new HashSet<ServiceId>(), true));
+        var changed = WithBonus(new SnapshotCountBonus(bonusId, "件数手当", new YenAmount(300),
+            change == "service" ? new HashSet<ServiceId> { otherServiceId } : new HashSet<ServiceId>(),
+            change != "disable"));
+        context.Settings.Months[month] = current;
+        context.Settings.Months[month.AddMonths(-1)] = changed;
+        context.Settings.Months[month.AddMonths(1)] = current;
+        var off = TestData.Work(new(2026, 8, 1)) with { IsCountBonusEnabled = false };
+        context.Works.Values.Add(off);
+        if (includeOnVisit) context.Works.Values.Add(TestData.Work(off.WorkDate));
+        var originalRecords = context.Works.Values.ToArray();
+        var replacement = new SettingSnapshotReplacementDto(changed.Services, changed.TimeCategories,
+            changed.Rates, changed.Premiums, changed.CountBonuses);
+        var useCase = new MonthSettingsUseCase(context.Settings, context.Works, context.Holidays,
+            context.Salary, context.Transactions, context.Metadata, context.Clock);
+
+        var preview = change == "copy"
+            ? await useCase.PreviewCopyPreviousMonthAsync(month, default)
+            : await useCase.PreviewReplacementAsync(month, replacement, default);
+
+        var expected = includeOnVisit ? (change is "disable" or "service" ? 2000 : 2300) : 1000;
+        Assert.Empty(preview.Issues);
+        Assert.Equal(includeOnVisit ? 1 : 0, preview.AffectedWorkRecordCount);
+        Assert.Equal(includeOnVisit ? 2150 : 1000, preview.CurrentCalculatedSubtotal.Value);
+        Assert.Equal(expected, preview.ReplacementCalculatedSubtotal.Value);
+        Assert.Equal(current.Id, context.Settings.Months[month].Id);
+        Assert.Equal(originalRecords, context.Works.Values.ToArray());
+
+        var saved = change == "copy"
+            ? await useCase.CopyPreviousMonthAsync(month, preview.ConfirmationToken, default)
+            : await useCase.CloneAndReplaceAsync(month, replacement, preview.ConfirmationToken, default);
+
+        Assert.Equal(changed.CountBonuses, saved.Snapshot.CountBonuses);
+        Assert.Equal(changed.Id, context.Settings.Months[month.AddMonths(-1)].Id);
+        Assert.Equal(current.Id, context.Settings.Months[month.AddMonths(1)].Id);
+        Assert.Equal(originalRecords, context.Works.Values.ToArray());
+        Assert.False(context.Works.Values.Single(record => record.Id == off.Id).IsCountBonusEnabled);
+        var day = await new SalaryQueryUseCase(context.Works, context.Settings, context.Holidays,
+            context.Closing, context.Allowances, context.Shifts, context.Salary, context.Periods,
+            context.AnnualSettings).GetDayAsync(off.WorkDate, default);
+        Assert.Equal(expected, day.CalculatedSubtotal.Value);
+    }
+
     [Fact]
     public async Task PreviewReplacement_CountsAffectedVisitOnceWhenAllOfItsTasksChange()
     {

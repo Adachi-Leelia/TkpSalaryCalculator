@@ -85,6 +85,7 @@ Task 4 adds 24 Application cases. Device restart and UI state restoration in WOR
 |---|---|
 | `CloneAndReplace_ChangesOnlyTargetMonthAndMarksChanged` | HIST-001, HIST-002 |
 | `PreviewReplacement_ReportsAffectedRecordsAndHasNoSideEffects` | HIST-013 |
+| `HIST019_CountBonusSettingsChangesExcludeOffVisitsAndPreserveSelections` | HIST-019, FR-COUNT-04 (amount/target service change, disable, previous-month copy; OFF-only and mixed visits) |
 | `PreviewReplacement_CountsAffectedVisitOnceWhenAllOfItsTasksChange` | HIST-017 |
 | `PreviewReplacement_NullChild_ReturnsSafeValidationIssue` | APP-VALIDATION |
 | `CopyPreviousMonth_UsesLatestHolidayAndKeepsOtherMonths` | HIST-009, HIST-014 |

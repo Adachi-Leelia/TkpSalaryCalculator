@@ -584,6 +584,8 @@ SQLiteの`:memory:`だけでなく一時ファイルDBでもテストし、WAL�
 
 2026-09-21のタスク5では、`CalendarWorkFlowViewModelTests`に13ケース、`CalculationDetailViewModelTests`に4ケースを追加し、Appテスト175件が成功した。Domain 154件、Application 151件、Infrastructure 86件の回帰も成功し、計566件すべて成功・スキップなし。Infrastructureの約21.9万件の逐次転送も実行した。`WORK-021`、`UI-022`～`UI-026`、`SHIFT-014`／`SHIFT-016`の画面層について、保存値の復元、選択保持、離脱確認、保存失敗・再試行、最新入力のプレビュー採用、日付別設定の遅延、反映確認・取消、OFF／ON適用なし／未計算の表示を検証した。`UI-025`は既存の変更世代通知への接続を自動確認し、Android画面を通した日別・期間・月次・年間表示の確認はタスク6に残す。Android向けDebugビルドは警告0・エラー0で成功した。`A11Y-010`の実機・エミュレーター操作は未実施。
 
+2026-09-21のタスク6では、CB-08／`HIST-019`の検証不足を補う`SettingsAndSalaryUseCaseTests.HIST019_CountBonusSettingsChangesExcludeOffVisitsAndPreserveSelections`を追加した。件数加算の金額変更・対象サービス変更・無効化・前月コピーをOFFのみ／ON混在で実行する8ケースで、影響件数・差額と保存後の選択・給与額、他年月の不変を確認した。Domain 154件、Application 159件、Infrastructure 86件、App 175件の計574件が成功（失敗・スキップなし）。大容量転送、集計性能、100タスクの回帰とAndroid Debugビルドも成功した。接続端末・エミュレーターがないため、`A11Y-010`とAndroid画面を通した`UI-025`、代表実機のRelease性能は未実施。受入条件別の証跡・ホスト計測値・残る操作手順は[タスク6検証記録](work_record_count_bonus_toggle_verification.md)を参照する。これらの未実施項目が解消するまでタスク6全体とリリース受入は完了扱いにしない。
+
 ## 21. テスト開始条件
 
 - 対象機能の要件と設計がレビュー済みである。
