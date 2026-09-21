@@ -21,6 +21,7 @@
 
   <!-- UI を起動しない net10.0 テストで、MAUI 非依存の実ファイルだけを直接検証します。 -->
   <ItemGroup>
+    <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\CountBonusDisplay.cs" Link="Production\CountBonusDisplay.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Navigation\NavigationRoutes.cs" Link="Production\NavigationRoutes.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Navigation\AppRootNavigation.cs" Link="Production\AppRootNavigation.cs" />
     <Compile Include="..\..\src\TkpSalaryCalculator.App\Presentation\Common\ObservableObject.cs" Link="Production\ObservableObject.cs" />

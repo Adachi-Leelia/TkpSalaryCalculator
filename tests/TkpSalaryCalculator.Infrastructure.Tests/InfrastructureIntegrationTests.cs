@@ -259,7 +259,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
             Assert.Equal(35L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM holiday_date;"));
             Assert.Equal(12L, await ScalarLongAsync(connection,
                 "SELECT closing_month FROM annual_summary_setting WHERE id = 1;"));
-            Assert.Equal(3L, await ScalarLongAsync(connection,
+            Assert.Equal(4L, await ScalarLongAsync(connection,
                 "SELECT export_format_version FROM app_metadata WHERE id = 1;"));
         }
         finally
@@ -576,10 +576,10 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         await migrated.InitializeAsync();
 
         await using var connection = await fixture.OpenRawAsync();
-        Assert.Equal(6L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(7L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
         Assert.Equal(1L, await ScalarLongAsync(connection,
             "SELECT COUNT(*) FROM annual_summary_setting WHERE id = 1 AND closing_month = 12;"));
-        Assert.Equal(3L, await ScalarLongAsync(connection,
+        Assert.Equal(4L, await ScalarLongAsync(connection,
             "SELECT export_format_version FROM app_metadata WHERE id = 1;"));
         Assert.Equal(allowance, Assert.Single(await new SqliteMonthlyAllowanceRepository(migrated, clock)
             .GetForPeriodAsync(allowance.PayrollPeriodKey, default)));
@@ -868,7 +868,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task PERF009_OneVisitWith100TasksCanBeEditedCalculatedSavedAndFormatThreeRoundTripped()
+    public async Task PERF009_OneVisitWith100TasksCanBeEditedCalculatedSavedAndFormatFourRoundTripped()
     {
         await using var source = await DatabaseFixture.CreateSeededAsync();
         var clock = new FixedClock(new DateTimeOffset(2026, 8, 29, 8, 30, 0, TimeSpan.Zero));
@@ -897,7 +897,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         await CreateTransferUseCase(source.Database, source.StagingPath, clock)
             .ExportAsync(exported, "1.0.1", default);
         var document = JsonNode.Parse(exported.ToArray())!.AsObject();
-        Assert.Equal(3, document["formatVersion"]!.GetValue<int>());
+        Assert.Equal(4, document["formatVersion"]!.GetValue<int>());
 
         await using var destination = await DatabaseFixture.CreateAsync();
         var destinationTransfer = CreateTransferUseCase(destination.Database, destination.StagingPath, clock);
@@ -1120,11 +1120,12 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         Assert.Equal(preview.BasicShiftCount, preview.BasicShiftTaskCount);
         Assert.Equal(12, (await new SqliteAnnualSummarySettingRepository(destination.Database, clock)
             .GetClosingMonthAsync(default)).Value);
-        Assert.Equal(3, (await new SqliteAppMetadataRepository(destination.Database, clock)
+        Assert.Equal(4, (await new SqliteAppMetadataRepository(destination.Database, clock)
             .GetAsync(default)).ExportFormatVersion);
         var importedRecord = await new SqliteWorkRecordRepository(destination.Database, clock)
             .FindAsync(legacyRecord.Id, default);
         Assert.Equal(new WorkTaskId(legacyRecord.Id.Value), Assert.Single(importedRecord!.Tasks).Id);
+        Assert.True(importedRecord.IsCountBonusEnabled);
     }
 
     [Fact]
@@ -1168,7 +1169,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
         Assert.Equal(beforeSalary, await ReadSalaryTotalsAsync(destination.Database, clock));
         Assert.Equal(4, (await new SqliteAnnualSummarySettingRepository(destination.Database, clock)
             .GetClosingMonthAsync(default)).Value);
-        Assert.Equal(3, (await new SqliteAppMetadataRepository(destination.Database, clock)
+        Assert.Equal(4, (await new SqliteAppMetadataRepository(destination.Database, clock)
             .GetAsync(default)).ExportFormatVersion);
     }
 
@@ -1240,7 +1241,7 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
             },
             // Initial snapshot has no applicable rate after this removal.
             data => RemoveRecords(data, "snapshot_rate"),
-            data => FindValue(data, "app_metadata")["export_format_version"] = 4,
+            data => FindValue(data, "app_metadata")["export_format_version"] = 5,
             data => FindValue(data, "setting_snapshot")["schema_version"] = 2,
             // Unreferenced holiday IDs must also be canonical UUIDs.
             data => data.Add(new JsonObject
@@ -1505,6 +1506,9 @@ public sealed class InfrastructureIntegrationTests(ITestOutputHelper output)
                 "end_time_minutes", "source_service_preset_id"]);
         RemoveRecords(data, "basic_shift_task");
         RemoveRecords(data, "work_task");
+        foreach (var parent in data.Select(item => item!["value"]!.AsObject())
+                     .Where(value => value["type"]!.GetValue<string>() == "work_record"))
+            parent.Remove("isCountBonusEnabled");
         FindValue(data, "app_metadata")["export_format_version"] = formatVersion;
         if (formatVersion == 1) RemoveRecords(data, "annual_summary_setting");
 

@@ -14,8 +14,10 @@ public sealed class ParentChildSqliteTests
     private static readonly DateTimeOffset Now =
         new(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
 
-    [Fact]
-    public async Task DB020_DB021_DB024_WorkRecordRepositoryRoundTripsReplacesAndDeletesEveryTaskAtomically()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DB020_DB021_DB024_DB031_WorkRecordRepositoryRoundTripsReplacesAndDeletesEveryTaskAtomically(bool enabled)
     {
         await using var fixture = await ParentChildDatabase.CreateAsync();
         var services = await fixture.GetServiceIdsAsync();
@@ -25,7 +27,7 @@ public sealed class ParentChildSqliteTests
             new WorkRecordId(Guid.NewGuid()),
             new DateOnly(2026, 9, 1),
             WorkTask(services[0], 0, 30),
-            WorkTask(services[1], 1, 45));
+            WorkTask(services[1], 1, 45)) with { IsCountBonusEnabled = enabled };
 
         Assert.True(await repository.TryInsertAsync(original, operationId, default));
         Assert.False(await repository.TryInsertAsync(
@@ -47,7 +49,7 @@ public sealed class ParentChildSqliteTests
             original.Id,
             original.WorkDate.AddDays(1),
             original.Tasks[1] with { DisplayOrder = new DisplayOrder(0), WorkMinutes = new WorkMinutes(60) },
-            WorkTask(services[0], 1, 90));
+            WorkTask(services[0], 1, 90)) with { IsCountBonusEnabled = !enabled };
         repository = new SqliteWorkRecordRepository(fixture.Database, new FixedClock(Now.AddHours(1)));
         await repository.UpsertAsync(replacement, default);
         Assert.Equal(replacement, await repository.FindAsync(original.Id, default));
@@ -69,7 +71,7 @@ public sealed class ParentChildSqliteTests
         var invalid = WorkRecord(
             original.Id,
             original.WorkDate.AddDays(2),
-            WorkTask(new ServiceId(Guid.NewGuid()), 0, 120));
+            WorkTask(new ServiceId(Guid.NewGuid()), 0, 120)) with { IsCountBonusEnabled = enabled };
         await Assert.ThrowsAsync<SqliteException>(() => repository.UpsertAsync(invalid, default));
         Assert.Equal(replacement, await repository.FindAsync(original.Id, default));
 
@@ -208,7 +210,7 @@ public sealed class ParentChildSqliteTests
         Assert.Equal(beforeSalary.TaskCalculations[0].BasePay, afterSalary.TaskCalculations[0].BasePay);
 
         await using var connection = await fixture.OpenAsync();
-        Assert.Equal(6L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        Assert.Equal(7L, await ScalarLongAsync(connection, "PRAGMA user_version;"));
         Assert.Equal("ok", await ScalarStringAsync(connection, "PRAGMA integrity_check;"));
         Assert.Equal(0L, await ScalarLongAsync(connection, """
             SELECT COUNT(*) FROM pragma_table_info('work_record')

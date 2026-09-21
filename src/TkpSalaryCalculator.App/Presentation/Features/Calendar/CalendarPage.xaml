@@ -105,6 +105,7 @@
             InputTransparent="False">
             <Border
                 Padding="18"
+                IsEnabled="{Binding IsNotBusy}"
                 BackgroundColor="{StaticResource Surface}"
                 HorizontalOptions="Fill"
                 Stroke="{StaticResource Outline}"
@@ -126,11 +127,22 @@
                             <BindableLayout.ItemTemplate>
                                 <DataTemplate x:DataType="calendar:ShiftCandidateRowViewModel">
                                     <Border Padding="10" Stroke="{StaticResource Outline}" StrokeShape="RoundRectangle 10">
-                                        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                                        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8">
                                             <CheckBox IsChecked="{Binding IsSelected}" IsEnabled="{Binding CanChoose}" />
                                             <Label Grid.Column="1" FontAttributes="Bold" Text="{Binding DisplayName}" />
                                             <Label Grid.Row="1" Grid.Column="1" Text="{Binding DurationText}" />
                                             <Label Grid.Row="2" Grid.Column="1" IsVisible="{Binding HasWarning}" Text="{Binding WarningText}" TextColor="{StaticResource Warning}" />
+                                            <VerticalStackLayout Grid.Row="3" Grid.ColumnSpan="2" Spacing="6">
+                                                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                                    <Label Text="件数手当を加算する" VerticalOptions="Center" />
+                                                    <Switch Grid.Column="1" Grid.RowSpan="2" MinimumHeightRequest="48" MinimumWidthRequest="48"
+                                                            IsEnabled="{Binding CanChoose}" IsToggled="{Binding IsCountBonusEnabled, Mode=TwoWay}"
+                                                            SemanticProperties.Description="{Binding CountBonusAccessibilityText}" />
+                                                    <Label Grid.Row="1" Text="{Binding CountBonusSelectionText}" />
+                                                </Grid>
+                                                <Label Style="{StaticResource SupportingTextStyle}" Text="この実績の件数手当すべてに適用します。金額は当日の設定で計算します。" />
+                                                <Label Text="{Binding PreviewText}" SemanticProperties.Description="{Binding PreviewText}" />
+                                            </VerticalStackLayout>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>

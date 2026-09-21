@@ -8,6 +8,18 @@ using TkpSalaryCalculator.Infrastructure.Sqlite;
 
 namespace TkpSalaryCalculator.Infrastructure.DataTransfer;
 
+/// <summary>形式4の訪問レコードに追加された必須booleanを扱います。</summary>
+internal static class WorkRecordJsonContract
+{
+    internal const string CountBonusProperty = "isCountBonusEnabled";
+
+    internal static bool ReadCountBonusEnabled(JsonElement element) =>
+        element.TryGetProperty(CountBonusProperty, out var value) &&
+        value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : throw new InvalidDataException($"Required boolean property '{CountBonusProperty}' is missing or invalid.");
+}
+
 /// <summary>データレコードを単一 JSON 文書へ逐次書き込みます。</summary>
 public sealed class StreamingJsonExportStream : IJsonExportStream
 {

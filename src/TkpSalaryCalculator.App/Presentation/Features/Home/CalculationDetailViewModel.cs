@@ -321,7 +321,11 @@ public sealed class CalculationDetailViewModel : ViewModelBase
                 formatter.Money(premium.Amount))));
         }
 
-        if (calculation.Status == SalaryCalculationStatus.Calculated)
+        if (!calculation.IsCountBonusEnabled || calculation.CountBonuses.Count == 0 ||
+            calculation.Status != SalaryCalculationStatus.Calculated)
+            rows.Add(new CalculationCountBonusRowViewModel(
+                CountBonusDisplay.Summary(calculation.IsCountBonusEnabled, calculation, formatter), string.Empty));
+        else if (calculation.Status == SalaryCalculationStatus.Calculated)
             rows.AddRange(calculation.CountBonuses.Select(bonus => new CalculationCountBonusRowViewModel(
                 bonus.DisplayName,
                 formatter.Money(bonus.Amount))));

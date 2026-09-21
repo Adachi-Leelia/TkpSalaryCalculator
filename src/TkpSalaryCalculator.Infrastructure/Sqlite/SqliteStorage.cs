@@ -42,9 +42,9 @@ public sealed class TimeZoneLocalDateConverter(TimeZoneInfo timeZone) : ILocalDa
 /// <summary>接続設定、スキーマ更新および Ambient トランザクションを所有します。</summary>
 public sealed class SqliteDatabase
 {
-    public const int CurrentSchemaVersion = 6;
+    public const int CurrentSchemaVersion = 7;
     public const int CurrentSettingSnapshotSchemaVersion = 1;
-    public const int CurrentExportFormatVersion = 3;
+    public const int CurrentExportFormatVersion = 4;
     public const int CurrentBundledBootstrapVersion = 1;
 
     private readonly string connectionString;
@@ -274,8 +274,37 @@ public sealed class SqliteDatabase
             3 => await MigrateFromThreeToFourAsync(connection, cancellationToken).ConfigureAwait(false),
             4 => await MigrateFromFourToFiveAsync(connection, cancellationToken).ConfigureAwait(false),
             5 => await MigrateFromFiveToSixAsync(connection, cancellationToken).ConfigureAwait(false),
+            6 => await MigrateFromSixToSevenAsync(connection, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"No migration from schema version {fromVersion} is available."),
         };
+    }
+
+    private static async Task<int> MigrateFromSixToSevenAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        try
+        {
+            // Observe each statement's failure before updating the version or committing.
+            await ExecuteNonQueryAsync(connection, transaction, """
+                ALTER TABLE work_record
+                ADD COLUMN is_count_bonus_enabled INTEGER NOT NULL DEFAULT 1
+                CHECK (is_count_bonus_enabled IN (0, 1));
+                """, cancellationToken).ConfigureAwait(false);
+            await ExecuteNonQueryAsync(connection, transaction,
+                "UPDATE app_metadata SET export_format_version = 4 WHERE id = 1;", cancellationToken)
+                .ConfigureAwait(false);
+            await ExecuteNonQueryAsync(connection, transaction, "PRAGMA user_version = 7;", cancellationToken)
+                .ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return 7;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async Task<int> MigrateFromFiveToSixAsync(

@@ -51,7 +51,7 @@ public enum DataTransferSection
     ServicePresets,
     /// <summary>基本シフト。</summary>
     BasicShifts,
-    /// <summary>勤務記録。</summary>
+    /// <summary>訪問とタスクの個別レコード。形式4の訪問には必須booleanのisCountBonusEnabledを含めます。</summary>
     WorkRecords,
     /// <summary>祝日カレンダーのバージョンと日付。</summary>
     Holidays,

@@ -25,6 +25,8 @@ public sealed class CalendarViewModel : ViewModelBase
     private YearMonth displayedMonth;
     private DateOnly? selectedDate;
     private DateOnly? shiftPreviewDate;
+    private string? shiftConfirmationToken;
+    private long shiftRevision;
     private string selectedDateText = string.Empty;
     private string selectedTotalText = "0円";
     private string selectedRecordCountText = "勤務記録はありません";
@@ -248,6 +250,13 @@ public sealed class CalendarViewModel : ViewModelBase
                 shift.Id, name, time, candidate.CanApply,
                 candidate.CanApply && !candidate.HasSimilarManualRecord,
                 string.Join(Environment.NewLine, candidate.Issues.Select(x => x.Message)));
+            row.ApplyPreview(candidate, formatter);
+            row.CountBonusChanged += (_, _) =>
+            {
+                shiftRevision++;
+                shiftConfirmationToken = null;
+                _ = RefreshShiftPreviewAsync();
+            };
             row.SelectionChanged += (_, _) =>
             {
                 ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
@@ -259,7 +268,32 @@ public sealed class CalendarViewModel : ViewModelBase
             ? "既存の勤務記録はありません。"
             : $"既存の勤務記録 {preview.ExistingWorkRecordCount}件";
         shiftPreviewDate = preview.WorkDate;
+        shiftConfirmationToken = preview.ConfirmationToken;
         IsShiftConfirmationVisible = true;
+    });
+
+    public Task RefreshShiftPreviewAsync() => RunBusyAsync(async cancellationToken =>
+    {
+        if (basicShifts is null) return;
+        while (shiftPreviewDate is { } date && IsShiftConfirmationVisible)
+        {
+            var revision = shiftRevision;
+            var selections = ShiftCandidates.ToDictionary(row => row.Id, row => row.IsCountBonusEnabled);
+            var preview = await basicShifts.PreviewForDateAsync(date, cancellationToken, selections);
+            var settings = workRecords is null ? null : await workRecords.GetSettingsForDateAsync(date, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (revision != shiftRevision) continue;
+            foreach (var row in ShiftCandidates)
+                if (preview.Candidates.FirstOrDefault(candidate => candidate.Shift.Id == row.Id) is { } candidate)
+                {
+                    if (settings is not null) row.UpdateDescription(candidate, settings, formatter);
+                    row.ApplyPreview(candidate, formatter);
+                }
+                else throw new InvalidOperationException("反映候補が変わりました。確認を閉じて、もう一度開いてください。");
+            shiftConfirmationToken = preview.ConfirmationToken;
+            ApplySelectedShiftsCommand.NotifyCanExecuteChanged();
+            return;
+        }
     });
 
     public Task ApplySelectedShiftsAsync() => RunBusyAsync(async cancellationToken =>
@@ -271,7 +305,13 @@ public sealed class CalendarViewModel : ViewModelBase
             .ToArray();
         if (selectedIds.Length == 0) return;
 
-        await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(date, selectedIds), cancellationToken);
+        if (shiftConfirmationToken is null)
+            throw new InvalidOperationException("件数手当のプレビューを更新してから確定してください。");
+        await basicShifts.ApplyAsync(new ApplyBasicShiftsCommand(date, selectedIds)
+        {
+            CountBonusSelections = ShiftCandidates.ToDictionary(row => row.Id, row => row.IsCountBonusEnabled),
+            ConfirmationToken = shiftConfirmationToken,
+        }, cancellationToken);
         sessionState.NotifyDataChanged(AppDataChangeKind.WorkRecords | AppDataChangeKind.BackupStatus);
         var generation = CaptureTrackedDataGeneration();
         CloseShiftConfirmation();
@@ -384,6 +424,8 @@ public sealed class CalendarViewModel : ViewModelBase
 
     private void CloseShiftConfirmation()
     {
+        shiftRevision++;
+        shiftConfirmationToken = null;
         IsShiftConfirmationVisible = false;
         ShiftCandidates = [];
         ShiftExistingWorkText = string.Empty;

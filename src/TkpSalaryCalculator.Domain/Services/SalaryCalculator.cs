@@ -83,11 +83,13 @@ public sealed class SalaryCalculator : ISalaryCalculator
                 AsReadOnly(taskCalculations),
                 EmptyReadOnly<AppliedCountBonus>(),
                 null,
-                AsReadOnly(allMissingRequirements));
+                AsReadOnly(allMissingRequirements),
+                workRecord.IsCountBonusEnabled);
         }
 
-        var countBonuses = CalculateCountBonuses(
-            workRecord.Tasks.Select(static task => task.ServiceId), snapshot.CountBonuses);
+        var countBonuses = workRecord.IsCountBonusEnabled
+            ? CalculateCountBonuses(workRecord.Tasks.Select(static task => task.ServiceId), snapshot.CountBonuses)
+            : [];
         var total = MoneyMath.Sum(
             taskCalculations.Select(static task => task.TaskSubtotal!.Value.Value)
                 .Concat(countBonuses.Select(static item => item.Amount.Value)));
@@ -98,7 +100,8 @@ public sealed class SalaryCalculator : ISalaryCalculator
             AsReadOnly(taskCalculations),
             AsReadOnly(countBonuses),
             new YenAmount(total),
-            EmptyReadOnly<MissingCalculationRequirement>());
+            EmptyReadOnly<MissingCalculationRequirement>(),
+            workRecord.IsCountBonusEnabled);
     }
 
     /// <inheritdoc />
@@ -407,7 +410,8 @@ public sealed class SalaryCalculator : ISalaryCalculator
                     AsReadOnly(task.MissingRequirements)))),
                 AsReadOnly(record.CountBonuses),
                 record.Total,
-                AsReadOnly(record.MissingRequirements)));
+                AsReadOnly(record.MissingRequirements),
+                record.IsCountBonusEnabled));
         }
 
         return AsReadOnly(normalized);
@@ -423,6 +427,11 @@ public sealed class SalaryCalculator : ISalaryCalculator
         ArgumentNullException.ThrowIfNull(record.TaskCalculations, parameterName);
         ArgumentNullException.ThrowIfNull(record.CountBonuses, parameterName);
         ArgumentNullException.ThrowIfNull(record.MissingRequirements, parameterName);
+        if (!record.IsCountBonusEnabled && record.CountBonuses.Count != 0)
+        {
+            throw new ArgumentException("件数手当がOFFの訪問に件数加算を含めることはできません。", parameterName);
+        }
+
         if (record.TaskCalculations.Count == 0 ||
             record.TaskCalculations.Any(static item => item is null) ||
             record.CountBonuses.Any(static item => item is null) ||

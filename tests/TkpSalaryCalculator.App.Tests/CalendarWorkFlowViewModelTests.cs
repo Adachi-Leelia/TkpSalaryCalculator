@@ -9,6 +9,229 @@ public sealed class CalendarWorkFlowViewModelTests
     private static readonly WorkRecordId RecordId = new(Guid.Parse("40000000-0000-0000-0000-000000000001"));
 
     [Fact]
+    public async Task UI022_CountBonusSelectionSurvivesTaskChangesAndDateAndPublishesSave()
+    {
+        var fixture = new EditorFixture();
+        await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        Assert.True(fixture.ViewModel.IsCountBonusEnabled);
+        var generation = fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords);
+        fixture.ViewModel.IsCountBonusEnabled = false;
+        Assert.True(fixture.ViewModel.IsDirty);
+        Assert.False(fixture.Work.LastPreviewCommand!.IsCountBonusEnabled);
+        Assert.Contains("加算しない", fixture.ViewModel.CountBonusAccessibilityText);
+        await fixture.ViewModel.AddTaskAsync();
+        var added = fixture.ViewModel.Tasks[1];
+        added.SelectedPreset = fixture.ViewModel.PresetCandidates[0];
+        await fixture.ViewModel.MoveTaskUpAsync(added);
+        await fixture.ViewModel.DeleteTaskAsync(added);
+        fixture.ViewModel.WorkDate = fixture.ViewModel.WorkDate.AddMonths(1);
+        fixture.SelectDefaultPreset();
+        Assert.False(fixture.ViewModel.IsCountBonusEnabled);
+        Assert.Empty(fixture.Work.Saved);
+        await fixture.ViewModel.SaveAsync();
+        Assert.False(Assert.Single(fixture.Work.Saved).IsCountBonusEnabled);
+        Assert.False(fixture.ViewModel.IsDirty);
+        Assert.True(fixture.Session.GetDataGeneration(AppDataChangeKind.WorkRecords) > generation);
+    }
+
+    [Fact]
+    public async Task WORK021_ReopenRestoresOffAndNextNewVisitDefaultsOn()
+    {
+        var fixture = new EditorFixture();
+        fixture.Work.Stored.Add(Record() with { IsCountBonusEnabled = false });
+        fixture.ViewModel.Initialize(TargetDate, RecordId);
+        await fixture.ViewModel.LoadAsync();
+        Assert.False(fixture.ViewModel.IsCountBonusEnabled);
+        Assert.False(fixture.ViewModel.IsDirty);
+        Assert.Equal("件数手当：加算しない（0円）", fixture.ViewModel.CountBonusText);
+        fixture.ViewModel.Initialize(TargetDate, null);
+        await fixture.ViewModel.LoadAsync();
+        Assert.True(fixture.ViewModel.IsCountBonusEnabled);
+        Assert.False(fixture.ViewModel.IsDirty);
+    }
+
+    [Fact]
+    public async Task UI022_ToggleAloneTriggersLeaveConfirmationAndSaveFailureKeepsSelection()
+    {
+        var work = new WorkUseCaseStub();
+        work.Stored.Add(Record());
+        var dialogs = new DialogStub { Result = false };
+        var vm = new WorkEditorViewModel(work, new CalendarNavigatorStub(), new IssuePresenter(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), dialogs, new AppSessionState(TargetDate));
+        vm.Initialize(TargetDate, RecordId);
+        await vm.LoadAsync();
+        vm.IsCountBonusEnabled = false;
+        Assert.False(await vm.CanLeaveAsync());
+        Assert.True(work.Stored[0].IsCountBonusEnabled);
+        work.SaveException = new InvalidOperationException("保存失敗");
+        await vm.SaveAsync();
+        Assert.True(vm.HasError);
+        Assert.True(vm.IsDirty);
+        Assert.False(vm.IsCountBonusEnabled);
+        Assert.Empty(work.Saved);
+        work.SaveException = null;
+        await vm.SaveAsync();
+        Assert.False(Assert.Single(work.Saved).IsCountBonusEnabled);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UI023_ObsoletePreviewCannotOverwriteLatestToggleDateOrTasks(bool saving)
+    {
+        var fixture = new EditorFixture();
+        await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        var gate = new TaskCompletionSource<WorkRecordPreviewDto>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Work.AsyncPreviewFactory = command => fixture.Work.PreviewCalls == 1
+            ? gate.Task : Task.FromResult(fixture.Work.PreviewFactory(command));
+        var displayed = new List<string>();
+        fixture.ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(WorkEditorViewModel.VisitTotalText)) displayed.Add(fixture.ViewModel.VisitTotalText);
+        };
+        var operation = saving ? fixture.ViewModel.SaveAsync() : fixture.ViewModel.PreviewAsync();
+        fixture.ViewModel.IsCountBonusEnabled = false;
+        fixture.ViewModel.IsCountBonusEnabled = true;
+        fixture.ViewModel.IsCountBonusEnabled = false;
+        fixture.ViewModel.WorkDate = TargetDate.AddMonths(1).ToDateTime(TimeOnly.MinValue);
+        FirstTask(fixture.ViewModel).WorkMinutesText = "90";
+        gate.SetResult(new WorkRecordPreviewDto([], Calculated(RecordId, 9_999), true, []));
+        await operation;
+        Assert.DoesNotContain(displayed, text => text.Contains("9,999"));
+        Assert.False(fixture.Work.LastPreviewCommand!.IsCountBonusEnabled);
+        Assert.Equal(TargetDate.AddMonths(1), fixture.Work.LastPreviewCommand.WorkDate);
+        Assert.Equal(90, FirstTask(fixture.Work.LastPreviewCommand).WorkMinutes!.Value.Value);
+        Assert.Equal("件数手当：加算しない（0円）", fixture.ViewModel.CountBonusText);
+        if (saving)
+        {
+            var saved = Assert.Single(fixture.Work.Saved);
+            Assert.False(saved.IsCountBonusEnabled);
+            Assert.Equal(TargetDate.AddMonths(1), saved.WorkDate);
+        }
+    }
+
+    [Fact]
+    public async Task UI024_UI026_OffUncalculatedShowsNoZeroAndCanSave()
+    {
+        var fixture = new EditorFixture();
+        fixture.Work.PreviewFactory = UncalculatedPreview;
+        await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        fixture.ViewModel.IsCountBonusEnabled = false;
+        Assert.Equal("件数手当：加算しない", fixture.ViewModel.CountBonusText);
+        Assert.Empty(fixture.ViewModel.VisitTotalText);
+        Assert.True(fixture.ViewModel.CanSave);
+        Assert.Contains("基本単価", fixture.ViewModel.IssueMessage);
+        await fixture.ViewModel.SaveAsync();
+        Assert.False(Assert.Single(fixture.Work.Saved).IsCountBonusEnabled);
+    }
+
+    [Fact]
+    public async Task UI023_DateOptionsLoadingCannotResetTheLatestChoiceOrDate()
+    {
+        var fixture = new EditorFixture();
+        await fixture.ViewModel.LoadAsync();
+        fixture.SelectDefaultPreset();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Work.EditorScreenGate = gate.Task;
+        fixture.ViewModel.WorkDate = TargetDate.AddMonths(1).ToDateTime(TimeOnly.MinValue);
+        var preview = fixture.ViewModel.PreviewAsync();
+        fixture.ViewModel.IsCountBonusEnabled = false;
+        fixture.ViewModel.WorkDate = TargetDate.AddMonths(2).ToDateTime(TimeOnly.MinValue);
+        gate.SetResult();
+        await preview;
+        Assert.False(fixture.Work.LastPreviewCommand!.IsCountBonusEnabled);
+        Assert.Equal(TargetDate.AddMonths(2), fixture.Work.LastPreviewCommand.WorkDate);
+        Assert.Equal(TargetDate.AddMonths(2), fixture.Work.LastPreviewScreenDate);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SHIFT014_CalendarConfirmsIndependentSelectionsOrCancelsWithoutSaving(bool cancel)
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, 2);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var candidates = Enumerable.Range(0, 2).Select(index => new BasicShiftCandidateDto(
+            new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), TargetDate.DayOfWeek,
+                [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category,
+                    WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))],
+                new DisplayOrder(index), true), true, false, false, [])).ToArray();
+        var shifts = new BasicShiftUseCaseStub { Preview = new BasicShiftPreviewDto(TargetDate, candidates, 0) };
+        var session = new AppSessionState(TargetDate);
+        var vm = new CalendarViewModel(query, new CalendarNavigatorStub(), session, new ClockStub(), new LocalDateStub(),
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), shifts, new WorkUseCaseStub());
+        await vm.LoadAsync();
+        await vm.ConfirmShiftCandidatesAsync();
+        Assert.All(vm.ShiftCandidates, row => Assert.True(row.IsCountBonusEnabled));
+        var generation = session.GetDataGeneration(AppDataChangeKind.WorkRecords);
+        vm.ShiftCandidates[1].IsCountBonusEnabled = false;
+        Assert.Contains("1,800円", vm.ShiftCandidates[1].PreviewText);
+        Assert.Contains("加算しない", vm.ShiftCandidates[1].CountBonusAccessibilityText);
+        Assert.Null(shifts.Applied);
+        Assert.Equal(generation, session.GetDataGeneration(AppDataChangeKind.WorkRecords));
+        if (cancel)
+        {
+            vm.CancelShiftConfirmation();
+            Assert.Null(shifts.Applied);
+            await vm.ConfirmShiftCandidatesAsync();
+            Assert.All(vm.ShiftCandidates, row => Assert.True(row.IsCountBonusEnabled));
+        }
+        else
+        {
+            await vm.ApplySelectedShiftsAsync();
+            Assert.True(shifts.Applied!.CountBonusSelections![candidates[0].Shift.Id]);
+            Assert.False(shifts.Applied.CountBonusSelections[candidates[1].Shift.Id]);
+            Assert.Equal("confirmed:True,False", shifts.Applied.ConfirmationToken);
+            Assert.True(session.GetDataGeneration(AppDataChangeKind.WorkRecords) > generation);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SHIFT016_StaleShiftPreviewCannotRestoreOldSelectionOrCancelledConfirmation(bool cancel)
+    {
+        var query = new SalaryQueryStub();
+        query.Months[new YearMonth(2026, 8)] = Month(2026, 8, TargetDate, 0, 0, 1);
+        query.Days[TargetDate] = EmptyDay(TargetDate);
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), TargetDate.DayOfWeek,
+            [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
+        var shifts = new BasicShiftUseCaseStub
+        {
+            Preview = new BasicShiftPreviewDto(TargetDate, [new BasicShiftCandidateDto(shift, true, false, false, [])], 0),
+        };
+        var vm = new CalendarViewModel(query, new CalendarNavigatorStub(), new AppSessionState(TargetDate),
+            new ClockStub(), new LocalDateStub(), new JapaneseDisplayFormatter(), new UserErrorPresenter(), shifts, new WorkUseCaseStub());
+        await vm.LoadAsync();
+        await vm.ConfirmShiftCandidatesAsync();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        shifts.PreviewGate = gate.Task;
+        var preview = vm.RefreshShiftPreviewAsync();
+        vm.ShiftCandidates[0].IsCountBonusEnabled = false;
+        if (cancel) vm.CancelShiftConfirmation();
+        gate.SetResult();
+        await preview;
+        if (cancel)
+        {
+            Assert.False(vm.IsShiftConfirmationVisible);
+            Assert.Empty(vm.ShiftCandidates);
+            Assert.Null(shifts.Applied);
+        }
+        else
+        {
+            Assert.Contains("1,800円", vm.ShiftCandidates[0].PreviewText);
+            await vm.ApplySelectedShiftsAsync();
+            Assert.False(shifts.Applied!.CountBonusSelections![shift.Id]);
+            Assert.Equal("confirmed:False", shifts.Applied.ConfirmationToken);
+        }
+    }
+
+    [Fact]
     public async Task PERF05_CalendarReloadsOnlyAfterDependentChangeUnlessReloadIsManual()
     {
         var query = new SalaryQueryStub();
@@ -31,6 +254,35 @@ public sealed class CalendarWorkFlowViewModelTests
         await viewModel.LoadAsync();
 
         Assert.Equal(3, query.CalendarScreenCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SHIFT014_DayConfirmationShowsAndSavesTheSelectedBonusChoice(bool confirmed)
+    {
+        var shift = new BasicShiftDto(new BasicShiftId(Guid.NewGuid()), TargetDate.DayOfWeek,
+            [new BasicShiftTaskDto(new BasicShiftTaskId(Guid.NewGuid()), null, Service, Category,
+                WorkInputMode.Duration, new WorkMinutes(60), null, null, new DisplayOrder(0))], new DisplayOrder(0), true);
+        var preview = new BasicShiftPreviewDto(TargetDate, [new BasicShiftCandidateDto(shift, true, false, false, [])], 0);
+        var query = new SalaryQueryStub { ShiftPreview = preview };
+        var shifts = new BasicShiftUseCaseStub { Preview = preview };
+        var dialogs = new DialogStub { Result = confirmed };
+        var vm = new DayViewModel(query, new WorkUseCaseStub(), new CalendarNavigatorStub(), dialogs,
+            new JapaneseDisplayFormatter(), new UserErrorPresenter(), new AppSessionState(TargetDate), shifts);
+        vm.SetDate(TargetDate);
+        await vm.LoadAsync();
+        vm.ShiftCandidates[0].IsCountBonusEnabled = false;
+        Assert.Null(shifts.Applied);
+        await vm.ApplyShiftsAsync();
+        Assert.Contains("件数手当：加算しない（0円）", dialogs.LastMessage);
+        Assert.Contains("1,800円", dialogs.LastMessage);
+        if (confirmed)
+        {
+            Assert.False(shifts.Applied!.CountBonusSelections![shift.Id]);
+            Assert.Equal("confirmed:False", shifts.Applied.ConfirmationToken);
+        }
+        else Assert.Null(shifts.Applied);
     }
 
     [Fact]
@@ -1069,6 +1321,7 @@ public sealed class CalendarWorkFlowViewModelTests
 
     private sealed class SalaryQueryStub : ISalaryQueryUseCase
     {
+        public BasicShiftPreviewDto? ShiftPreview { get; init; }
         public Task<HomeSalarySummaryDto> GetHomeSalarySummaryAsync(
             PayrollPeriodKey payrollPeriodKey,
             CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -1095,7 +1348,7 @@ public sealed class CalendarWorkFlowViewModelTests
             return Task.FromResult(new DayScreenDto(
                 Days.GetValueOrDefault(workDate, EmptyDay(workDate)),
                 Options().Settings with { YearMonth = new YearMonth(workDate.Year, workDate.Month) },
-                new BasicShiftPreviewDto(workDate, [], Days.GetValueOrDefault(workDate, EmptyDay(workDate)).Records.Count)));
+                ShiftPreview ?? new BasicShiftPreviewDto(workDate, [], Days.GetValueOrDefault(workDate, EmptyDay(workDate)).Records.Count)));
         }
         public Task<IReadOnlyList<CalendarDayDto>> GetCalendarMonthAsync(YearMonth yearMonth, CancellationToken cancellationToken) =>
             Task.FromResult(Months[yearMonth]);
@@ -1137,12 +1390,16 @@ public sealed class CalendarWorkFlowViewModelTests
                 task.Id, task.WorkMinutes ?? new WorkMinutes(60), task.StartTime,
                 task.EndTime, true, [])).ToArray(),
             Calculated(command.Id ?? RecordId, 1_200), true, []);
+        public Func<SaveWorkRecordCommand, Task<WorkRecordPreviewDto>>? AsyncPreviewFactory { get; set; }
+        public Task? EditorScreenGate { get; set; }
+        public DateOnly? LastPreviewScreenDate { get; private set; }
 
         public async Task<WorkEditorScreenDto> GetEditorScreenAsync(
             DateOnly workDate, WorkRecordId? workRecordId, CancellationToken cancellationToken)
         {
             var options = await GetInputOptionsAsync(workDate, cancellationToken);
             var existing = workRecordId is null ? null : Stored.FirstOrDefault(x => x.Id == workRecordId);
+            if (EditorScreenGate is not null) await EditorScreenGate;
             return new(options, existing,
                 new HolidayCalendar(options.Settings.Snapshot.HolidayCalendarVersionId, HolidayDates));
         }
@@ -1167,11 +1424,14 @@ public sealed class CalendarWorkFlowViewModelTests
         {
             PreviewCalls++;
             LastPreviewCommand = command;
-            return Task.FromResult(PreviewFactory(command));
+            return AsyncPreviewFactory?.Invoke(command) ?? Task.FromResult(PreviewFactory(command));
         }
         public Task<WorkRecordPreviewDto> PreviewForEditorAsync(
-            SaveWorkRecordCommand command, WorkEditorScreenDto screen, CancellationToken cancellationToken) =>
-            PreviewAsync(command, cancellationToken);
+            SaveWorkRecordCommand command, WorkEditorScreenDto screen, CancellationToken cancellationToken)
+        {
+            LastPreviewScreenDate = screen.InputOptions.WorkDate;
+            return PreviewAsync(command, cancellationToken);
+        }
         public async Task<SaveWorkRecordResultDto> SaveAsync(SaveWorkRecordCommand command, CancellationToken cancellationToken)
         {
             if (SaveException is not null) throw SaveException;
@@ -1183,7 +1443,10 @@ public sealed class CalendarWorkFlowViewModelTests
                 command.Tasks.Select(task => new WorkTaskDto(
                     task.Id, task.ServiceId, task.TimeCategoryId, task.InputMode,
                     task.WorkMinutes ?? new WorkMinutes(60), task.StartTime, task.EndTime,
-                    task.DisplayOrder, task.SourceServicePresetId)).ToArray(), null, null);
+                    task.DisplayOrder, task.SourceServicePresetId)).ToArray(), null, null)
+            {
+                IsCountBonusEnabled = command.IsCountBonusEnabled,
+            };
             return new SaveWorkRecordResultDto(record, PreviewFactory(command).Calculation!, []);
         }
         public Task DeleteAsync(WorkRecordId id, CancellationToken cancellationToken)
@@ -1248,13 +1511,29 @@ public sealed class CalendarWorkFlowViewModelTests
     {
         public BasicShiftPreviewDto? Preview { get; init; }
         public ApplyBasicShiftsCommand? Applied { get; private set; }
+        public Task? PreviewGate { get; set; }
 
         public Task<IReadOnlyList<BasicShiftDto>> GetForWeekdayAsync(DayOfWeek weekday, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<BasicShiftDto>>([]);
         public Task<BasicShiftDto> SaveAsync(SaveBasicShiftCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task DeleteAsync(BasicShiftId id, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
-            Task.FromResult(Preview ?? new BasicShiftPreviewDto(workDate, [], 0));
+        public async Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken,
+            IReadOnlyDictionary<BasicShiftId, bool>? countBonusSelections = null)
+        {
+            var preview = Preview ?? new BasicShiftPreviewDto(workDate, [], 0);
+            var result = preview with
+            {
+                ConfirmationToken = "confirmed:" + string.Join(",", preview.Candidates.Select(candidate =>
+                    countBonusSelections?.GetValueOrDefault(candidate.Shift.Id, true) ?? true)),
+                Candidates = preview.Candidates.Select(candidate => candidate with
+                {
+                    IsCountBonusEnabled = countBonusSelections?.GetValueOrDefault(candidate.Shift.Id, true) ?? true,
+                    Calculation = Calculated(RecordId, (countBonusSelections?.GetValueOrDefault(candidate.Shift.Id, true) ?? true) ? 1_950 : 1_800),
+                }).ToArray(),
+            };
+            if (PreviewGate is not null) await PreviewGate;
+            return result;
+        }
         public Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(ApplyBasicShiftsCommand command, CancellationToken cancellationToken)
         {
             Applied = command;

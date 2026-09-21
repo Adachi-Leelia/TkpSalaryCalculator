@@ -853,7 +853,8 @@ public sealed class SettingsViewModelTests
             DeletedId = id;
             return Task.CompletedTask;
         }
-        public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken) =>
+        public Task<BasicShiftPreviewDto> PreviewForDateAsync(DateOnly workDate, CancellationToken cancellationToken,
+            IReadOnlyDictionary<BasicShiftId, bool>? countBonusSelections = null) =>
             throw new NotSupportedException();
         public Task<IReadOnlyList<SaveWorkRecordResultDto>> ApplyAsync(
             ApplyBasicShiftsCommand command, CancellationToken cancellationToken) =>

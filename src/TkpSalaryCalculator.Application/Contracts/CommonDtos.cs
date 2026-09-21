@@ -37,10 +37,11 @@ public sealed record WorkRecordDto(
     DateOnly WorkDate,
     IReadOnlyList<WorkTaskDto> Tasks,
     BasicShiftId? SourceBasicShiftId,
-    WorkRecordId? SourceWorkRecordId)
+    WorkRecordId? SourceWorkRecordId,
+    bool IsCountBonusEnabled = true)
 {
     /// <summary>由来情報を除いたDomain訪問集約へ明示的に変換します。</summary>
-    public WorkRecord ToDomain() => new(Id, WorkDate, Tasks.Select(static task => task.ToDomain()).ToArray());
+    public WorkRecord ToDomain() => new(Id, WorkDate, Tasks.Select(static task => task.ToDomain()).ToArray(), IsCountBonusEnabled);
 
     /// <summary>親情報と全タスクの値を構造的に比較します。</summary>
     public bool Equals(WorkRecordDto? other)
@@ -50,6 +51,7 @@ public sealed record WorkRecordDto(
             WorkDate == other.WorkDate &&
             SourceBasicShiftId == other.SourceBasicShiftId &&
             SourceWorkRecordId == other.SourceWorkRecordId &&
+            IsCountBonusEnabled == other.IsCountBonusEnabled &&
             Tasks.SequenceEqual(other.Tasks);
     }
 
@@ -61,6 +63,7 @@ public sealed record WorkRecordDto(
         hash.Add(WorkDate);
         hash.Add(SourceBasicShiftId);
         hash.Add(SourceWorkRecordId);
+        hash.Add(IsCountBonusEnabled);
         foreach (var task in Tasks)
         {
             hash.Add(task);
@@ -86,7 +89,8 @@ public sealed record SaveWorkRecordCommand(
     WorkRecordId? Id,
     DateOnly WorkDate,
     IReadOnlyList<SaveWorkTaskCommand> Tasks,
-    Guid? OperationId = null)
+    Guid? OperationId = null,
+    bool IsCountBonusEnabled = true)
 {
     /// <summary>親入力と全タスクの値を構造的に比較します。</summary>
     public bool Equals(SaveWorkRecordCommand? other)
@@ -95,6 +99,7 @@ public sealed record SaveWorkRecordCommand(
             Id == other.Id &&
             WorkDate == other.WorkDate &&
             OperationId == other.OperationId &&
+            IsCountBonusEnabled == other.IsCountBonusEnabled &&
             Tasks.SequenceEqual(other.Tasks);
     }
 
@@ -105,6 +110,7 @@ public sealed record SaveWorkRecordCommand(
         hash.Add(Id);
         hash.Add(WorkDate);
         hash.Add(OperationId);
+        hash.Add(IsCountBonusEnabled);
         foreach (var task in Tasks)
         {
             hash.Add(task);
@@ -210,7 +216,11 @@ public sealed record CopyDayConfirmationToken(
     DateOnly TargetDate,
     int ExpectedTargetExistingWorkRecordCount,
     SettingSnapshotId ExpectedEffectiveSnapshotId,
-    HolidayCalendarVersionId ExpectedHolidayCalendarVersionId);
+    HolidayCalendarVersionId ExpectedHolidayCalendarVersionId)
+{
+    /// <summary>選択値を含む複製元の全訪問・タスクの確認値。</summary>
+    public string SourceContentFingerprint { get; init; } = string.Empty;
+}
 
 /// <summary>1 日分の勤務記録を複製するための未保存の確認データを保持します。</summary>
 /// <param name="SourceDate">複製元の現地日付。</param>

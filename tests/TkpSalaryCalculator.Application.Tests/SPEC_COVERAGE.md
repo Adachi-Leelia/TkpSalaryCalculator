@@ -4,6 +4,27 @@ This table is the traceability source for every test in this project. IDs refer 
 `docs/test_specification.md`; `APP-*` identifies Application contract, validation,
 or orchestration coverage that complements the end-to-end specification case.
 
+## CountBonusRegistrationTests
+
+| Test | Specification |
+|---|---|
+| `Work_PreviewSaveReopenAndNewVisit_PreserveSelection` | WORK-021 (Application), WORK-022 |
+| `Work_EditDateAndTasks_PreviewMatchesSavedSelection` | WORK-022 |
+| `Work_OffWithMissingRate_RemainsUncalculatedAndCanSave` | CALC-044, WORK-005 |
+| `Work_RetryIsIdempotentAndChangedSelectionConflicts` | WORK-024 |
+| `Work_ConcurrentSelectionChangeConflicts` | WORK-024 |
+| `Work_FailureRollsBackSelectionAndTasks_ThenRetrySucceeds` | WORK-024 |
+| `Copy_MixedSelections_UsesTargetSettingsAndNewIds` | WORK-023 |
+| `Copy_SourceChangesInvalidateConfirmation` | WORK-025 |
+| `Work_SavedMixedSelectionsFlowToDailyMonthlyAndAnnualSalary` | CALC-045, WORK-022 |
+| `CancelledCommands_DoNotPersistSelections` | WORK-024, SHIFT-003 |
+| `Shift_NewMonthPreviewAndApplyUseSameHolidayVersion` | SHIFT-004, SHIFT-016 |
+| `Shift_MixedSelections_PreviewIsReadOnlyAndApplyMatches` | SHIFT-014, SHIFT-016 |
+| `Shift_ChangedConfirmationIsRejected` | SHIFT-016 |
+| `Shift_SimilarityIgnoresSelectionAndFailedBatchRollsBack` | SHIFT-010, SHIFT-014, SHIFT-015 |
+
+Task 4 adds 24 Application cases. Device restart and UI state restoration in WORK-021 remain covered by the Infrastructure suite and the subsequent Presentation/device tasks respectively.
+
 ## ArchitectureTests
 
 | Test | Specification |
@@ -64,6 +85,7 @@ or orchestration coverage that complements the end-to-end specification case.
 |---|---|
 | `CloneAndReplace_ChangesOnlyTargetMonthAndMarksChanged` | HIST-001, HIST-002 |
 | `PreviewReplacement_ReportsAffectedRecordsAndHasNoSideEffects` | HIST-013 |
+| `HIST019_CountBonusSettingsChangesExcludeOffVisitsAndPreserveSelections` | HIST-019, FR-COUNT-04 (amount/target service change, disable, previous-month copy; OFF-only and mixed visits) |
 | `PreviewReplacement_CountsAffectedVisitOnceWhenAllOfItsTasksChange` | HIST-017 |
 | `PreviewReplacement_NullChild_ReturnsSafeValidationIssue` | APP-VALIDATION |
 | `CopyPreviousMonth_UsesLatestHolidayAndKeepsOtherMonths` | HIST-009, HIST-014 |
